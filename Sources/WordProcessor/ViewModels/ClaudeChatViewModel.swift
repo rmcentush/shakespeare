@@ -388,7 +388,7 @@ final class ClaudeChatViewModel {
         }
     }
 
-    private static func prepareDocumentContext(_ html: String) -> String {
+    nonisolated private static func prepareDocumentContext(_ html: String) -> String {
         guard !html.isEmpty else { return "" }
 
         var text = html.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
