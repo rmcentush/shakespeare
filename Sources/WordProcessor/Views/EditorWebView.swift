@@ -41,7 +41,8 @@ struct EditorWebView: NSViewRepresentable {
         // Inject theme CSS each time the editor signals ready (handles initial load + process restart)
         if viewModel.isEditorReady && context.coordinator.lastThemeReadyCount != viewModel.editorReadyCount {
             context.coordinator.lastThemeReadyCount = viewModel.editorReadyCount
-            let themeCSS = FontManager.shared.fullThemeCSS()
+            let appearance = UserDefaults.standard.string(forKey: "editorAppearance") ?? "system"
+            let themeCSS = FontManager.shared.themedCSS(for: appearance)
             viewModel.setThemeCSS(themeCSS)
         }
     }

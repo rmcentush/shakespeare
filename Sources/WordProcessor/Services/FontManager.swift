@@ -44,6 +44,28 @@ final class FontManager {
         cachedFontFaceCSS + "\n" + generateCSS()
     }
 
+    func themedCSS(for appearance: String) -> String {
+        switch appearance {
+        case "light":
+            return fullThemeCSS() + """
+
+            html, body { background: #ffffff !important; color: #1a1a1a !important; }
+            .editor-content { color: #1a1a1a !important; }
+            """
+        case "dark":
+            return fullThemeCSS() + """
+
+            html, body { background: #1e1e1e !important; color: #e0e0e0 !important; }
+            .editor-content { color: #e0e0e0 !important; }
+            .editor-content blockquote { border-left-color: #555 !important; color: #aaa !important; }
+            .editor-content code, .editor-content pre { background: #2d2d2d !important; }
+            .editor-content hr { border-top-color: #444 !important; }
+            """
+        default:
+            return fullThemeCSS()
+        }
+    }
+
     /// Generate @font-face CSS for all bundled font families
     /// Uses relative URLs (relative to editor.html in the same Resources directory)
     func fontFaceCSS(fontsDirectoryURL: URL?) -> String {

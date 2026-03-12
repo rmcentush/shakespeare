@@ -60,7 +60,8 @@ struct ContentView: View {
                 editorViewModel.loadContent(document.htmlContent)
             }
             .onReceive(NotificationCenter.default.publisher(for: .fontSettingsChanged)) { _ in
-                let css = FontManager.shared.fullThemeCSS()
+                let appearance = UserDefaults.standard.string(forKey: "editorAppearance") ?? "system"
+                let css = FontManager.shared.themedCSS(for: appearance)
                 editorViewModel.setThemeCSS(css)
             }
             .onDisappear {

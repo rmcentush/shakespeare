@@ -12,8 +12,7 @@ struct ToolbarView: View {
                 get: { fontManager.currentFont },
                 set: { newFont in
                     fontManager.currentFont = newFont
-                    fontManager.save()
-                    NotificationCenter.default.post(name: .fontSettingsChanged, object: nil)
+                    persistTypographySettings()
                 }
             )) {
                 Text("Lyon Text").tag("Lyon Text")
@@ -26,6 +25,20 @@ struct ToolbarView: View {
                 Text("Helvetica Neue").tag("Helvetica Neue")
             }
             .frame(width: 140)
+
+            Picker("", selection: Binding(
+                get: { Int(fontManager.currentSize.rounded()) },
+                set: { newSize in
+                    fontManager.currentSize = Double(newSize)
+                    persistTypographySettings()
+                }
+            )) {
+                ForEach(Array(12...28), id: \.self) { size in
+                    Text("\(size) px").tag(size)
+                }
+            }
+            .frame(width: 78)
+            .help("Font Size")
 
             Divider()
                 .frame(height: 20)
@@ -147,6 +160,11 @@ struct ToolbarView: View {
             viewModel.applyFormat("insertImage", value: dataURL)
         }
     }
+
+    private func persistTypographySettings() {
+        fontManager.save()
+        NotificationCenter.default.post(name: .fontSettingsChanged, object: nil)
+    }
 }
 
 struct AppearanceToggle: View {
@@ -176,33 +194,14 @@ struct AppearanceToggle: View {
         switch mode {
         case "light":
             NSApp.appearance = NSAppearance(named: .aqua)
-            viewModel.setThemeCSS(lightCSS())
+            viewModel.setThemeCSS(FontManager.shared.themedCSS(for: mode))
         case "dark":
             NSApp.appearance = NSAppearance(named: .darkAqua)
-            viewModel.setThemeCSS(darkCSS())
+            viewModel.setThemeCSS(FontManager.shared.themedCSS(for: mode))
         default:
             NSApp.appearance = nil
-            viewModel.setThemeCSS(FontManager.shared.fullThemeCSS())
+            viewModel.setThemeCSS(FontManager.shared.themedCSS(for: mode))
         }
-    }
-
-    private func lightCSS() -> String {
-        FontManager.shared.fullThemeCSS() + """
-
-        html, body { background: #ffffff !important; color: #1a1a1a !important; }
-        .editor-content { color: #1a1a1a !important; }
-        """
-    }
-
-    private func darkCSS() -> String {
-        FontManager.shared.fullThemeCSS() + """
-
-        html, body { background: #1e1e1e !important; color: #e0e0e0 !important; }
-        .editor-content { color: #e0e0e0 !important; }
-        .editor-content blockquote { border-left-color: #555 !important; color: #aaa !important; }
-        .editor-content code, .editor-content pre { background: #2d2d2d !important; }
-        .editor-content hr { border-top-color: #444 !important; }
-        """
     }
 }
 
