@@ -1,0 +1,110 @@
+import SwiftUI
+
+struct ClaudeChatView: View {
+    @State private var chatViewModel = ClaudeChatViewModel()
+    @Environment(EditorViewModel.self) private var editorViewModel
+    @Environment(DocumentModel.self) private var document
+    @State private var inputText = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Messages list
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(chatViewModel.messages) { message in
+                            MessageBubble(message: message)
+                                .id(message.id)
+                        }
+
+                        // Invisible anchor at the bottom for auto-scrolling
+                        Color.clear
+                            .frame(height: 1)
+                            .id("bottom")
+                    }
+                    .padding()
+                }
+                .onChange(of: chatViewModel.messages.count) {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        proxy.scrollTo("bottom")
+                    }
+                }
+                .onChange(of: chatViewModel.streamingContentLength) {
+                    proxy.scrollTo("bottom")
+                }
+            }
+
+            Divider()
+
+            // Input area
+            HStack(spacing: 8) {
+                // Send selected text as context
+                Button {
+                    editorViewModel.getSelectedText { text in
+                        if !text.isEmpty {
+                            inputText += "\n\n---\nSelected text:\n\(text)"
+                        }
+                    }
+                } label: {
+                    Image(systemName: "text.quote")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Include selected text")
+
+                TextField("Ask Claude...", text: $inputText, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...5)
+                    .onSubmit {
+                        sendMessage()
+                    }
+
+                Button {
+                    sendMessage()
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(inputText.isEmpty ? .secondary : .accentColor)
+                }
+                .buttonStyle(.plain)
+                .disabled(inputText.isEmpty || chatViewModel.isStreaming)
+            }
+            .padding(10)
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private func sendMessage() {
+        let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        inputText = ""
+        let content = document.htmlContent
+        let editor = editorViewModel
+        Task {
+            await chatViewModel.sendMessage(text, documentContent: content, editorViewModel: editor)
+        }
+    }
+}
+
+struct MessageBubble: View {
+    let message: ChatMessage
+
+    var body: some View {
+        HStack {
+            if message.role == .user { Spacer(minLength: 40) }
+
+            Text(message.content)
+                .font(.body)
+                .padding(10)
+                .background(
+                    message.role == .user
+                        ? Color.accentColor.opacity(0.15)
+                        : Color(.controlBackgroundColor)
+                )
+                .cornerRadius(12)
+                .textSelection(.enabled)
+
+            if message.role == .assistant { Spacer(minLength: 40) }
+        }
+    }
+}

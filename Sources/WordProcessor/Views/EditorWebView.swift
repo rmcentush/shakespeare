@@ -1,0 +1,72 @@
+import SwiftUI
+import WebKit
+
+struct EditorWebView: NSViewRepresentable {
+    @Environment(EditorViewModel.self) private var viewModel
+
+    func makeNSView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        let contentController = WKUserContentController()
+
+        let bridge = EditorBridge()
+        bridge.viewModel = viewModel
+        context.coordinator.bridge = bridge
+
+        contentController.add(bridge, name: "editorBridge")
+        config.userContentController = contentController
+
+        // Allow file access for local resources
+        config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
+
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.setValue(false, forKey: "drawsBackground")
+        webView.navigationDelegate = context.coordinator
+
+        // Load the editor HTML
+        if let resourceURL = Bundle.module.url(forResource: "Resources", withExtension: nil),
+           let htmlURL = Bundle.module.url(forResource: "Resources/editor", withExtension: "html") {
+            webView.loadFileURL(htmlURL, allowingReadAccessTo: resourceURL)
+        }
+
+        // Prepare @font-face CSS (cached for later injection on editorReady)
+        let fontsURL = Bundle.module.url(forResource: "Resources", withExtension: nil)?
+            .appendingPathComponent("Fonts")
+        let _ = FontManager.shared.fontFaceCSS(fontsDirectoryURL: fontsURL)
+
+        viewModel.webView = webView
+        return webView
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {
+        // Inject theme CSS each time the editor signals ready (handles initial load + process restart)
+        if viewModel.isEditorReady && context.coordinator.lastThemeReadyCount != viewModel.editorReadyCount {
+            context.coordinator.lastThemeReadyCount = viewModel.editorReadyCount
+            let themeCSS = FontManager.shared.fullThemeCSS()
+            viewModel.setThemeCSS(themeCSS)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    class Coordinator: NSObject, WKNavigationDelegate {
+        var bridge: EditorBridge?
+        var lastThemeReadyCount = 0
+
+        /// Called when the WKWebView web content process crashes or is terminated by the OS
+        /// (e.g. due to memory pressure). Without this handler the editor goes permanently blank.
+        func webView(_ webView: WKWebView, webContentProcessDidTerminate: WKWebView) {
+            print("EditorWebView: web content process terminated — reloading editor")
+            // Mark editor as not ready so pending content buffering kicks in
+            Task { @MainActor in
+                bridge?.viewModel?.isEditorReady = false
+            }
+            // Reload the editor HTML to recover
+            if let resourceURL = Bundle.module.url(forResource: "Resources", withExtension: nil),
+               let htmlURL = Bundle.module.url(forResource: "Resources/editor", withExtension: "html") {
+                webView.loadFileURL(htmlURL, allowingReadAccessTo: resourceURL)
+            }
+        }
+    }
+}
