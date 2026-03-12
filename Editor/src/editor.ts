@@ -22,6 +22,12 @@ interface SearchMatch {
 let searchResults: SearchMatch[] = [];
 let currentMatchIdx = -1;
 let activeSearchQuery = '';
+const SEARCH_STOP = Symbol('search-stop');
+const MAX_SEARCH_RESULTS = 500;
+const MAX_PENDING_EDITS = 120;
+const MAX_PENDING_FIND_REPLACE_MATCHES = 60;
+const TOO_MANY_MATCHES = -1;
+const TOO_MANY_PENDING_EDITS = -2;
 
 const searchPluginKey = new PluginKey('searchHighlight');
 
@@ -120,6 +126,10 @@ function rejectAllPendingEdits(ed: Editor) {
   notifyPendingEditCount();
 }
 
+function canQueuePendingEdits(count: number): boolean {
+  return pendingEdits.length + count <= MAX_PENDING_EDITS;
+}
+
 const PendingEditHighlight = Extension.create({
   name: 'pendingEditHighlight',
 
@@ -197,19 +207,28 @@ const PendingEditHighlight = Extension.create({
   },
 });
 
-function findTextInDoc(doc: any, query: string): SearchMatch[] {
+function findTextInDoc(doc: any, query: string, maxMatches = Number.POSITIVE_INFINITY): SearchMatch[] {
   if (!query) return [];
   const matches: SearchMatch[] = [];
   const lowerQuery = query.toLowerCase();
-  doc.descendants((node: any, pos: number) => {
-    if (!node.isText) return;
-    const text = node.text!.toLowerCase();
-    let idx = text.indexOf(lowerQuery);
-    while (idx !== -1) {
-      matches.push({ from: pos + idx, to: pos + idx + query.length });
-      idx = text.indexOf(lowerQuery, idx + 1);
-    }
-  });
+
+  try {
+    doc.descendants((node: any, pos: number) => {
+      if (!node.isText) return;
+      const text = node.text!.toLowerCase();
+      let idx = text.indexOf(lowerQuery);
+      while (idx !== -1) {
+        matches.push({ from: pos + idx, to: pos + idx + query.length });
+        if (matches.length >= maxMatches) {
+          throw SEARCH_STOP;
+        }
+        idx = text.indexOf(lowerQuery, idx + 1);
+      }
+    });
+  } catch (error) {
+    if (error !== SEARCH_STOP) throw error;
+  }
+
   return matches;
 }
 
@@ -666,7 +685,7 @@ registerSwiftCallbacks({
   },
   findInDocument(query: string): number {
     activeSearchQuery = query;
-    searchResults = findTextInDoc(editor.state.doc, query);
+    searchResults = findTextInDoc(editor.state.doc, query, MAX_SEARCH_RESULTS);
     currentMatchIdx = searchResults.length > 0 ? 0 : -1;
     updateSearchDecorations(editor);
     if (currentMatchIdx >= 0) scrollToMatch(editor, searchResults[currentMatchIdx]);
@@ -732,8 +751,12 @@ registerSwiftCallbacks({
     editor.chain().focus().insertContent(html).run();
   },
   findAndReplaceText(find: string, replaceHtml: string, replaceAllOccurrences: boolean): number {
-    const matches = findTextInDoc(editor.state.doc, find);
+    const maxMatches = replaceAllOccurrences ? MAX_PENDING_FIND_REPLACE_MATCHES + 1 : 1;
+    const matches = findTextInDoc(editor.state.doc, find, maxMatches);
     if (matches.length === 0) return 0;
+    if (replaceAllOccurrences && matches.length > MAX_PENDING_FIND_REPLACE_MATCHES) {
+      return TOO_MANY_MATCHES;
+    }
     const toReplace = replaceAllOccurrences ? matches : [matches[0]];
     // Replace from end to start to preserve positions
     for (let i = toReplace.length - 1; i >= 0; i--) {
@@ -748,6 +771,7 @@ registerSwiftCallbacks({
   pendingReplaceSelection(id: string, newHtml: string): number {
     const { from, to } = editor.state.selection;
     if (from === to) return 0;
+    if (!canQueuePendingEdits(1)) return TOO_MANY_PENDING_EDITS;
     pendingEdits.push({ id, from, to, newHtml });
     if (currentEditIdx < 0) currentEditIdx = 0;
     updatePendingDecorations(editor);
@@ -757,6 +781,7 @@ registerSwiftCallbacks({
   },
   pendingInsertAtCursor(id: string, newHtml: string): number {
     const { from } = editor.state.selection;
+    if (!canQueuePendingEdits(1)) return TOO_MANY_PENDING_EDITS;
     pendingEdits.push({ id, from, to: from, newHtml });
     if (currentEditIdx < 0) currentEditIdx = 0;
     updatePendingDecorations(editor);
@@ -765,9 +790,14 @@ registerSwiftCallbacks({
     return 1;
   },
   pendingFindAndReplace(id: string, find: string, replaceHtml: string, replaceAll: boolean): number {
-    const matches = findTextInDoc(editor.state.doc, find);
+    const maxMatches = replaceAll ? MAX_PENDING_FIND_REPLACE_MATCHES + 1 : 1;
+    const matches = findTextInDoc(editor.state.doc, find, maxMatches);
     if (matches.length === 0) return 0;
+    if (replaceAll && matches.length > MAX_PENDING_FIND_REPLACE_MATCHES) {
+      return TOO_MANY_MATCHES;
+    }
     const toAdd = replaceAll ? matches : [matches[0]];
+    if (!canQueuePendingEdits(toAdd.length)) return TOO_MANY_PENDING_EDITS;
     toAdd.forEach((match, i) => {
       pendingEdits.push({ id: `${id}_${i}`, from: match.from, to: match.to, newHtml: replaceHtml });
     });

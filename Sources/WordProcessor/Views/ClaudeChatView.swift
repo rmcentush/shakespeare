@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ClaudeChatView: View {
@@ -60,18 +61,32 @@ struct ClaudeChatView: View {
                     }
 
                 Button {
-                    sendMessage()
+                    if chatViewModel.isStreaming {
+                        chatViewModel.cancelStreaming()
+                    } else {
+                        sendMessage()
+                    }
                 } label: {
-                    Image(systemName: "arrow.up.circle.fill")
+                    Image(systemName: chatViewModel.isStreaming ? "stop.circle.fill" : "arrow.up.circle.fill")
                         .font(.title2)
-                        .foregroundColor(inputText.isEmpty ? .secondary : .accentColor)
+                        .foregroundColor(buttonColor)
                 }
                 .buttonStyle(.plain)
-                .disabled(inputText.isEmpty || chatViewModel.isStreaming)
+                .disabled(!chatViewModel.isStreaming && inputText.isEmpty)
             }
             .padding(10)
         }
         .frame(maxHeight: .infinity)
+        .onDisappear {
+            chatViewModel.cancelStreaming()
+        }
+    }
+
+    private var buttonColor: Color {
+        if chatViewModel.isStreaming {
+            return .orange
+        }
+        return inputText.isEmpty ? .secondary : .accentColor
     }
 
     private func sendMessage() {
@@ -80,9 +95,7 @@ struct ClaudeChatView: View {
         inputText = ""
         let content = document.htmlContent
         let editor = editorViewModel
-        Task {
-            await chatViewModel.sendMessage(text, documentContent: content, editorViewModel: editor)
-        }
+        chatViewModel.sendMessage(text, documentContent: content, editorViewModel: editor)
     }
 }
 
@@ -93,7 +106,7 @@ struct MessageBubble: View {
         HStack {
             if message.role == .user { Spacer(minLength: 40) }
 
-            Text(message.content)
+            Text(verbatim: message.content)
                 .font(.body)
                 .padding(10)
                 .background(
@@ -102,9 +115,19 @@ struct MessageBubble: View {
                         : Color(.controlBackgroundColor)
                 )
                 .cornerRadius(12)
-                .textSelection(.enabled)
+                .contextMenu {
+                    Button("Copy") {
+                        copyMessageToPasteboard(message.content)
+                    }
+                }
 
             if message.role == .assistant { Spacer(minLength: 40) }
         }
+    }
+
+    private func copyMessageToPasteboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 }

@@ -3,6 +3,11 @@ import Foundation
 final class ClaudeAPIService: Sendable {
     private let baseURL = "https://api.anthropic.com/v1/messages"
     private let model = "claude-opus-4-6"
+    private let session: URLSession
+
+    init(session: URLSession = ClaudeAPIService.makeSession()) {
+        self.session = session
+    }
 
     // MARK: - Types
 
@@ -77,7 +82,7 @@ final class ClaudeAPIService: Sendable {
         tools: [[String: Any]]? = nil
     ) -> AsyncThrowingStream<StreamChunk, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task.detached(priority: .userInitiated) { [baseURL, model, session] in
                 do {
                     guard let apiKey = KeychainService.shared.getAPIKey(service: "anthropic") else {
                         continuation.finish(throwing: APIError.noAPIKey)
@@ -86,6 +91,7 @@ final class ClaudeAPIService: Sendable {
 
                     var request = URLRequest(url: URL(string: baseURL)!)
                     request.httpMethod = "POST"
+                    request.timeoutInterval = 60
                     request.setValue("application/json", forHTTPHeaderField: "content-type")
                     request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
                     request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
@@ -106,7 +112,7 @@ final class ClaudeAPIService: Sendable {
                     }
                     request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    let (bytes, response) = try await session.bytes(for: request)
 
                     guard let httpResponse = response as? HTTPURLResponse else {
                         continuation.finish(throwing: APIError.invalidResponse)
@@ -129,6 +135,7 @@ final class ClaudeAPIService: Sendable {
                     var inToolUse = false
 
                     for try await line in bytes.lines {
+                        try Task.checkCancellation()
                         guard line.hasPrefix("data: ") else { continue }
                         let jsonString = String(line.dropFirst(6))
 
@@ -177,11 +184,25 @@ final class ClaudeAPIService: Sendable {
                     }
 
                     continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish(throwing: CancellationError())
                 } catch {
                     continuation.finish(throwing: error)
                 }
             }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
         }
+    }
+
+    private static func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.default
+        configuration.waitsForConnectivity = false
+        configuration.timeoutIntervalForRequest = 60
+        configuration.timeoutIntervalForResource = 300
+        return URLSession(configuration: configuration)
     }
 
     // MARK: - Errors

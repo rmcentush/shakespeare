@@ -1,3 +1,4 @@
+import Observation
 import SwiftUI
 
 @Observable
@@ -6,11 +7,22 @@ final class ClaudeChatViewModel {
     var messages: [ChatMessage] = []
     var isStreaming = false
     var streamingContentLength = 0
-    private let apiService = ClaudeAPIService()
+
+    @ObservationIgnored private let apiService = ClaudeAPIService()
     /// Full API conversation history (supports content blocks for tool use).
     /// Trimmed to the most recent messages when it grows too large.
-    private var apiMessages: [[String: Any]] = []
+    @ObservationIgnored private var apiMessages: [[String: Any]] = []
+    @ObservationIgnored private var requestTask: Task<Void, Never>?
+    @ObservationIgnored private var toolCallCounter = 0
+
     private static let maxApiMessages = 40
+    private static let maxVisibleMessages = 60
+    private static let maxAPIHistoryCharacters = 120_000
+    private static let maxDocumentContextCharacters = 24_000
+    private static let maxToolHTMLCharacters = 20_000
+    private static let maxFindQueryCharacters = 500
+    private static let flushChunkThreshold = 12
+    private static let flushInterval: TimeInterval = 0.12
 
     /// AI writing tropes guidance loaded from bundled resource.
     private static let aiTropesGuidance: String = {
@@ -20,65 +32,73 @@ final class ClaudeChatViewModel {
         return content
     }()
 
-    func sendMessage(_ text: String, documentContent: String = "", editorViewModel: EditorViewModel? = nil) async {
+    deinit {
+        requestTask?.cancel()
+    }
+
+    func sendMessage(_ text: String, documentContent: String = "", editorViewModel: EditorViewModel? = nil) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        cancelStreaming(markCancelledMessage: false)
+
+        requestTask = Task { [weak self] in
+            await self?.runSendMessage(trimmed, documentContent: documentContent, editorViewModel: editorViewModel)
+        }
+    }
+
+    func cancelStreaming(markCancelledMessage: Bool = true) {
+        requestTask?.cancel()
+        requestTask = nil
+        isStreaming = false
+
+        guard markCancelledMessage,
+              let lastIndex = messages.indices.last,
+              messages[lastIndex].role == .assistant,
+              messages[lastIndex].content.isEmpty
+        else { return }
+
+        messages[lastIndex].content = "Request cancelled."
+        streamingContentLength = messages[lastIndex].content.count
+    }
+
+    private func runSendMessage(_ text: String, documentContent: String, editorViewModel: EditorViewModel?) async {
         let userMessage = ChatMessage(role: .user, content: text)
         messages.append(userMessage)
         apiMessages.append(["role": "user", "content": text])
+        trimAPIHistory()
 
         let assistantMessage = ChatMessage(role: .assistant, content: "")
         messages.append(assistantMessage)
-        let assistantIndex = messages.count - 1
+        let assistantMessageID = assistantMessage.id
 
         isStreaming = true
-        defer { isStreaming = false }
-
-        var systemPrompt: String? = nil
-        if !documentContent.isEmpty {
-            var prompt = """
-            You are a writing assistant embedded in a word processor. The user is currently working on the document below. \
-            Use it to understand their writing style, voice, topic, and context when responding. \
-            Keep responses concise and helpful.
-
-            You have tools to directly edit the document. When the user asks you to change, rewrite, fill in, or edit text, \
-            use the appropriate tool. If the user has text selected, use replace_selection. \
-            If you need to find and change specific text, use find_and_replace. \
-            To add new content, use insert_at_cursor.
-
-            When outputting HTML for the tools, you can use formatting tags like <b>, <i>, <u>, \
-            <span style="color: #e53e3e"> (red), <span style="color: green">, etc.
-
-            You also have web search available. Use it when the user asks about facts, references, or anything \
-            that benefits from current information.
-
-            <current_document>
-            \(documentContent)
-            </current_document>
-            """
-
-            if !Self.aiTropesGuidance.isEmpty {
-                prompt += """
-
-                <writing_style_guidance>
-                When writing or editing text for the user, follow this guidance carefully:
-
-                \(Self.aiTropesGuidance)
-                </writing_style_guidance>
-                """
-            }
-
-            systemPrompt = prompt
+        defer {
+            isStreaming = false
+            requestTask = nil
+            trimVisibleMessages()
         }
+
+        let systemPrompt = await buildSystemPrompt(documentContent: documentContent)
 
         // Tool use loop: keep calling API until Claude stops using tools
         var loopCount = 0
         let maxLoops = 10
+        var displayedContent = ""
 
         while loopCount < maxLoops {
+            if Task.isCancelled {
+                let content = displayedContent.isEmpty ? "Request cancelled." : displayedContent
+                updateAssistantMessage(id: assistantMessageID, content: content)
+                return
+            }
+
             loopCount += 1
 
             var fullText = ""
             var toolCalls: [(id: String, name: String, inputJSON: String)] = []
             var flushCount = 0
+            var lastFlushTime = Date.distantPast
 
             do {
                 var allTools: [[String: Any]] = [ClaudeAPIService.webSearchTool]
@@ -95,10 +115,16 @@ final class ClaudeChatViewModel {
                     case .text(let text):
                         fullText += text
                         flushCount += 1
-                        if flushCount >= 10 {
-                            messages[assistantIndex].content = fullText
-                            streamingContentLength = fullText.count
+
+                        let now = Date()
+                        if flushCount >= Self.flushChunkThreshold ||
+                            now.timeIntervalSince(lastFlushTime) >= Self.flushInterval {
+                            updateAssistantMessage(
+                                id: assistantMessageID,
+                                content: displayedContent + fullText
+                            )
                             flushCount = 0
+                            lastFlushTime = now
                         }
                     case .toolUse(let id, let name, let inputJSON):
                         toolCalls.append((id: id, name: name, inputJSON: inputJSON))
@@ -106,12 +132,23 @@ final class ClaudeChatViewModel {
                 }
 
                 // Final flush of text
-                messages[assistantIndex].content = fullText
-                streamingContentLength = fullText.count
-
+                displayedContent += fullText
+                updateAssistantMessage(id: assistantMessageID, content: displayedContent)
+            } catch is CancellationError {
+                if displayedContent.isEmpty && fullText.isEmpty {
+                    updateAssistantMessage(id: assistantMessageID, content: "Request cancelled.")
+                } else {
+                    updateAssistantMessage(id: assistantMessageID, content: displayedContent + fullText)
+                }
+                return
             } catch {
-                if messages[assistantIndex].content.isEmpty {
-                    messages[assistantIndex].content = "Error: \(error.localizedDescription)"
+                if displayedContent.isEmpty && fullText.isEmpty {
+                    updateAssistantMessage(id: assistantMessageID, content: "Error: \(error.localizedDescription)")
+                } else {
+                    updateAssistantMessage(
+                        id: assistantMessageID,
+                        content: displayedContent + fullText + "\n\nError: \(error.localizedDescription)"
+                    )
                 }
                 return
             }
@@ -120,6 +157,7 @@ final class ClaudeChatViewModel {
             if toolCalls.isEmpty {
                 // Add assistant text to API history
                 apiMessages.append(["role": "assistant", "content": fullText])
+                trimAPIHistory()
                 break
             }
 
@@ -138,10 +176,16 @@ final class ClaudeChatViewModel {
                 ] as [String: Any])
             }
             apiMessages.append(["role": "assistant", "content": assistantContentBlocks])
+            trimAPIHistory()
 
             // Execute tools and build results
             var toolResultBlocks: [[String: Any]] = []
             for tc in toolCalls {
+                if Task.isCancelled {
+                    updateAssistantMessage(id: assistantMessageID, content: displayedContent)
+                    return
+                }
+
                 let result = await executeTool(
                     name: tc.name,
                     inputJSON: tc.inputJSON,
@@ -155,32 +199,33 @@ final class ClaudeChatViewModel {
 
                 // Show tool action in the UI
                 let actionLabel = toolActionLabel(name: tc.name, inputJSON: tc.inputJSON)
-                fullText += (fullText.isEmpty ? "" : "\n\n") + actionLabel
-                messages[assistantIndex].content = fullText
-                streamingContentLength = fullText.count
+                displayedContent += (displayedContent.isEmpty ? "" : "\n\n") + actionLabel
+                updateAssistantMessage(id: assistantMessageID, content: displayedContent)
             }
             apiMessages.append(["role": "user", "content": toolResultBlocks])
+            trimAPIHistory()
 
             // Continue loop — Claude will respond to the tool results
         }
 
-        // Prevent unbounded growth: keep the most recent messages
-        if apiMessages.count > Self.maxApiMessages {
-            // Keep at least the last N messages; trim from the front.
-            // Ensure we don't split mid-turn (assistant+tool_result must stay paired).
-            let excess = apiMessages.count - Self.maxApiMessages
-            apiMessages.removeFirst(excess)
+        if loopCount >= maxLoops {
+            let note = displayedContent.isEmpty
+                ? "Stopped after too many tool rounds."
+                : displayedContent + "\n\nStopped after too many tool rounds."
+            updateAssistantMessage(id: assistantMessageID, content: note)
         }
     }
 
     // MARK: - Tool Execution
 
-    private var toolCallCounter = 0
-
     private func executeTool(name: String, inputJSON: String, editorViewModel: EditorViewModel?) async -> String {
         guard let editor = editorViewModel else {
             return "Error: editor not available"
         }
+        guard editor.isEditorReady else {
+            return "Editor is still loading. Ask again in a moment."
+        }
+
         let input = parseJSON(inputJSON)
         toolCallCounter += 1
         let editId = "edit_\(toolCallCounter)"
@@ -188,10 +233,18 @@ final class ClaudeChatViewModel {
         switch name {
         case "replace_selection":
             let html = input["html"] as? String ?? ""
+            guard !html.isEmpty else {
+                return "No replacement content was provided."
+            }
+            guard html.count <= Self.maxToolHTMLCharacters else {
+                return "Suggested replacement is too large to preview safely. Narrow the request."
+            }
             return await withCheckedContinuation { cont in
                 editor.pendingReplaceSelection(id: editId, html: html) { count in
                     if count > 0 {
                         cont.resume(returning: "Edit suggested for selected text. User will review before applying.")
+                    } else if count == ToolExecutionResult.tooManyPendingEdits.rawValue {
+                        cont.resume(returning: "Too many pending edits are already queued. Review or reject them before asking for more changes.")
                     } else {
                         cont.resume(returning: "No text is currently selected. Use find_and_replace to target specific text.")
                     }
@@ -200,9 +253,19 @@ final class ClaudeChatViewModel {
 
         case "insert_at_cursor":
             let html = input["html"] as? String ?? ""
+            guard !html.isEmpty else {
+                return "No insertion content was provided."
+            }
+            guard html.count <= Self.maxToolHTMLCharacters else {
+                return "Suggested insertion is too large to preview safely. Narrow the request."
+            }
             return await withCheckedContinuation { cont in
                 editor.pendingInsertAtCursor(id: editId, html: html) { count in
-                    cont.resume(returning: "Edit suggested at cursor position. User will review before applying.")
+                    if count > 0 {
+                        cont.resume(returning: "Edit suggested at cursor position. User will review before applying.")
+                    } else {
+                        cont.resume(returning: "Too many pending edits are already queued. Review or reject them before asking for more changes.")
+                    }
                 }
             }
 
@@ -210,10 +273,23 @@ final class ClaudeChatViewModel {
             let find = input["find"] as? String ?? ""
             let replace = input["replace"] as? String ?? ""
             let replaceAll = input["replace_all"] as? Bool ?? false
+            guard !find.isEmpty else {
+                return "No target text was provided for find_and_replace."
+            }
+            guard find.count <= Self.maxFindQueryCharacters else {
+                return "The target text is too long. Narrow the request to a smaller phrase."
+            }
+            guard replace.count <= Self.maxToolHTMLCharacters else {
+                return "Suggested replacement is too large to preview safely. Narrow the request."
+            }
             return await withCheckedContinuation { cont in
                 editor.pendingFindAndReplace(id: editId, find: find, replaceHTML: replace, replaceAll: replaceAll) { count in
                     if count > 0 {
                         cont.resume(returning: "Suggested \(count) edit\(count == 1 ? "" : "s"). User will review before applying.")
+                    } else if count == ToolExecutionResult.tooManyMatches.rawValue {
+                        cont.resume(returning: "That replacement matches too much of the document at once. Narrow the target text or select a smaller range.")
+                    } else if count == ToolExecutionResult.tooManyPendingEdits.rawValue {
+                        cont.resume(returning: "Too many pending edits are already queued. Review or reject them before asking for more changes.")
                     } else {
                         cont.resume(returning: "Text not found in document.")
                     }
@@ -223,6 +299,131 @@ final class ClaudeChatViewModel {
         default:
             return "Unknown tool: \(name)"
         }
+    }
+
+    private func updateAssistantMessage(id: UUID, content: String) {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
+        messages[index].content = content
+        streamingContentLength = content.count
+    }
+
+    private func buildSystemPrompt(documentContent: String) async -> String? {
+        guard !documentContent.isEmpty else { return nil }
+
+        let preparedDocument = await Task.detached(priority: .utility) {
+            Self.prepareDocumentContext(documentContent)
+        }.value
+
+        guard !preparedDocument.isEmpty else { return nil }
+
+        var prompt = """
+        You are a writing assistant embedded in a word processor. The user is currently working on the document below. \
+        Use it to understand their writing style, voice, topic, and context when responding. \
+        Keep responses concise and helpful.
+
+        You have tools to directly edit the document. When the user asks you to change, rewrite, fill in, or edit text, \
+        use the appropriate tool. If the user has text selected, use replace_selection. \
+        If you need to find and change specific text, use find_and_replace. \
+        To add new content, use insert_at_cursor.
+
+        When outputting HTML for the tools, you can use formatting tags like <b>, <i>, <u>, \
+        <span style="color: #e53e3e"> (red), <span style="color: green">, etc.
+
+        You also have web search available. Use it when the user asks about facts, references, or anything \
+        that benefits from current information.
+
+        The document may be trimmed for performance. Prefer the most recent user request if context is ambiguous.
+
+        <current_document>
+        \(preparedDocument)
+        </current_document>
+        """
+
+        if !Self.aiTropesGuidance.isEmpty {
+            prompt += """
+
+            <writing_style_guidance>
+            When writing or editing text for the user, follow this guidance carefully:
+
+            \(Self.aiTropesGuidance)
+            </writing_style_guidance>
+            """
+        }
+
+        return prompt
+    }
+
+    private func trimVisibleMessages() {
+        let excess = messages.count - Self.maxVisibleMessages
+        guard excess > 0 else { return }
+        messages.removeFirst(excess)
+    }
+
+    private func trimAPIHistory() {
+        while apiMessages.count > Self.maxApiMessages || apiHistoryCharacterCount() > Self.maxAPIHistoryCharacters {
+            apiMessages.removeFirst()
+        }
+    }
+
+    private func apiHistoryCharacterCount() -> Int {
+        apiMessages.reduce(into: 0) { total, message in
+            total += Self.approximateSize(of: message)
+        }
+    }
+
+    private static func approximateSize(of value: Any) -> Int {
+        switch value {
+        case let string as String:
+            return string.count
+        case let array as [Any]:
+            return array.reduce(into: 0) { total, item in
+                total += approximateSize(of: item)
+            }
+        case let dictionary as [String: Any]:
+            return dictionary.reduce(into: 0) { total, entry in
+                total += entry.key.count + approximateSize(of: entry.value)
+            }
+        default:
+            return 8
+        }
+    }
+
+    private static func prepareDocumentContext(_ html: String) -> String {
+        guard !html.isEmpty else { return "" }
+
+        var text = html.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+        let entities = [
+            "&nbsp;": " ",
+            "&amp;": "&",
+            "&lt;": "<",
+            "&gt;": ">",
+            "&quot;": "\"",
+            "&#39;": "'",
+        ]
+
+        for (entity, replacement) in entities {
+            text = text.replacingOccurrences(of: entity, with: replacement)
+        }
+
+        text = text
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !text.isEmpty else { return "" }
+        guard text.count > maxDocumentContextCharacters else { return text }
+
+        let headCount = maxDocumentContextCharacters / 2
+        let tailCount = maxDocumentContextCharacters - headCount
+        let head = String(text.prefix(headCount))
+        let tail = String(text.suffix(tailCount))
+
+        return """
+        \(head)
+
+        [Document truncated for performance. Middle content omitted.]
+
+        \(tail)
+        """
     }
 
     private func toolActionLabel(name: String, inputJSON: String) -> String {
@@ -247,4 +448,9 @@ final class ClaudeChatViewModel {
         else { return [:] }
         return dict
     }
+}
+
+private enum ToolExecutionResult: Int {
+    case tooManyMatches = -1
+    case tooManyPendingEdits = -2
 }
