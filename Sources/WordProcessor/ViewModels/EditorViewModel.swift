@@ -95,9 +95,9 @@ final class EditorViewModel {
         evaluateJS("window.editorAPI?.loadContent('\(escaped)')")
     }
 
-    func getContent(completion: @escaping (String) -> Void) {
+    func getContent(completion: @escaping (String?) -> Void) {
         evaluateJS("window.editorAPI?.getContent()") { result in
-            completion(result as? String ?? "")
+            completion(result as? String)
         }
     }
 
@@ -245,6 +245,13 @@ final class EditorViewModel {
         evaluateJS("window.editorAPI?.clearFind()")
     }
 
+    func latestSnapshot(for document: DocumentModel, preferEditorState: Bool = true) async -> DocumentFileStore.FileSnapshot {
+        if preferEditorState, let snapshot = await captureEditorSnapshot() {
+            document.syncFromEditor(snapshot: snapshot)
+        }
+        return document.currentSnapshot()
+    }
+
     // MARK: - Auto-Save
 
     /// Schedule auto-save 5s after the last edit. Only auto-saves if the document has a file URL.
@@ -253,53 +260,51 @@ final class EditorViewModel {
         guard document.fileURL != nil else { return }
         autoSaveTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
             Task { @MainActor in
-                self?.autoSave(document: document)
+                await self?.autoSave(document: document)
             }
         }
     }
 
-    /// Auto-save uses document.htmlContent (already synced via notifications) to avoid
-    /// async getContent races where the editor content changes between call and callback.
-    private func autoSave(document: DocumentModel) {
+    func flushPendingChanges(document: DocumentModel) {
+        Task { @MainActor in
+            await flushBeforeDocumentChange(document: document)
+        }
+    }
+
+    func createNewDocument(document: DocumentModel) {
+        Task { @MainActor in
+            await flushBeforeDocumentChange(document: document)
+            document.newDocument()
+            loadContent("")
+        }
+    }
+
+    /// Auto-save persists the in-memory model snapshot, which is already kept in sync
+    /// from editor notifications and guarded by document revision tracking.
+    private func autoSave(document: DocumentModel) async {
         guard let url = document.fileURL, document.isDirty else { return }
-        let html = document.htmlContent
-        guard Self.hasSubstantialContent(html) else {
-            print("Auto-save: refusing to write empty content to \(url.lastPathComponent)")
-            return
-        }
-        Task.detached {
-            do {
-                try html.write(to: url, atomically: true, encoding: .utf8)
-                await MainActor.run {
-                    // Only mark saved if the document still points to the same file
-                    if document.fileURL == url {
-                        document.isDirty = false
-                    }
-                }
-            } catch {
-                print("Auto-save failed for \(url.lastPathComponent): \(error)")
-            }
-        }
+        await persistDocument(
+            document: document,
+            to: url,
+            captureLatestEditorState: false,
+            createVersionSnapshot: false,
+            actionName: "Auto-save"
+        )
     }
 
     /// Cancel auto-save timer and flush any unsaved changes before switching documents.
     /// Call this before openFile() or newDocument().
-    func flushBeforeDocumentChange(document: DocumentModel) {
+    private func flushBeforeDocumentChange(document: DocumentModel) async {
         autoSaveTimer?.invalidate()
         autoSaveTimer = nil
         guard let url = document.fileURL, document.isDirty else { return }
-        let html = document.htmlContent
-        guard Self.hasSubstantialContent(html) else {
-            print("Flush: refusing to write empty content to \(url.lastPathComponent)")
-            return
-        }
-        Task.detached {
-            do {
-                try html.write(to: url, atomically: true, encoding: .utf8)
-            } catch {
-                print("Flush write failed for \(url.lastPathComponent): \(error)")
-            }
-        }
+        await persistDocument(
+            document: document,
+            to: url,
+            captureLatestEditorState: true,
+            createVersionSnapshot: false,
+            actionName: "Flush"
+        )
     }
 
     // MARK: - File Operations
@@ -311,35 +316,22 @@ final class EditorViewModel {
 
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
-            Task { @MainActor in
-                self?.openFile(url: url, document: document)
-            }
+            self?.openFile(url: url, document: document)
         }
     }
 
     func openFile(url: URL, document: DocumentModel) {
-        // Flush unsaved changes to the current file before switching
-        flushBeforeDocumentChange(document: document)
-
-        Task {
+        Task { @MainActor in
+            await flushBeforeDocumentChange(document: document)
             do {
-                let html = try await Task.detached {
-                    try String(contentsOf: url, encoding: .utf8)
-                }.value
-                document.htmlContent = html
-                document.fileURL = url
-                document.isDirty = false
-                DocumentModel.addToRecentFiles(url)
-                loadContent(html)
-
-                // Snapshot when opening so the file-on-disk state is captured
-                if EditorViewModel.hasSubstantialContent(html) {
-                    VersionStore.shared.saveVersion(
-                        filePath: url.path,
-                        htmlContent: html,
-                        wordCount: document.wordCount
-                    )
-                }
+                let snapshot = try await DocumentFileStore.shared.load(from: url)
+                document.load(snapshot: snapshot, from: url)
+                loadContent(snapshot.htmlContent)
+                VersionStore.shared.saveVersion(
+                    filePath: url.path,
+                    htmlContent: snapshot.htmlContent,
+                    wordCount: snapshot.wordCount
+                )
             } catch {
                 print("Failed to open file: \(error)")
             }
@@ -347,53 +339,78 @@ final class EditorViewModel {
     }
 
     func saveDocument(document: DocumentModel) {
+        autoSaveTimer?.invalidate()
+        autoSaveTimer = nil
         if let url = document.fileURL {
-            writeToFile(document: document, url: url)
+            Task { @MainActor in
+                await persistDocument(
+                    document: document,
+                    to: url,
+                    captureLatestEditorState: true,
+                    createVersionSnapshot: true,
+                    actionName: "Save"
+                )
+            }
         } else {
             saveDocumentAs(document: document)
         }
     }
 
     func saveDocumentAs(document: DocumentModel) {
+        autoSaveTimer?.invalidate()
+        autoSaveTimer = nil
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.html]
         panel.nameFieldStringValue = document.displayName + ".html"
 
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
-            self?.writeToFile(document: document, url: url)
+            Task { @MainActor in
+                await self?.persistDocument(
+                    document: document,
+                    to: url,
+                    captureLatestEditorState: true,
+                    createVersionSnapshot: true,
+                    actionName: "Save"
+                )
+            }
         }
     }
 
-    /// Manual save (Cmd+S) — uses getContent for the freshest editor state.
-    /// Falls back to document.htmlContent if JS returns empty, and refuses to
-    /// overwrite a file with content that has no actual text or images.
-    /// Also creates a version snapshot on each manual save.
-    private func writeToFile(document: DocumentModel, url: URL) {
-        getContent { html in
-            // Prefer fresh editor content; fall back to in-memory model
-            let content = html.isEmpty ? document.htmlContent : html
-            guard EditorViewModel.hasSubstantialContent(content) else {
-                print("Refusing to save empty content to \(url.lastPathComponent)")
-                return
+    private func persistDocument(
+        document: DocumentModel,
+        to url: URL,
+        captureLatestEditorState: Bool,
+        createVersionSnapshot: Bool,
+        actionName: String
+    ) async {
+        _ = await latestSnapshot(for: document, preferEditorState: captureLatestEditorState)
+        let request = document.makePersistenceRequest()
+
+        do {
+            try await DocumentFileStore.shared.save(request.snapshot, to: url)
+            document.markSaved(url: url, request: request)
+
+            if createVersionSnapshot {
+                VersionStore.shared.saveVersion(
+                    filePath: url.path,
+                    htmlContent: request.snapshot.htmlContent,
+                    wordCount: request.snapshot.wordCount
+                )
             }
-            Task.detached {
-                do {
-                    try content.write(to: url, atomically: true, encoding: .utf8)
-                    await MainActor.run {
-                        if document.fileURL == url {
-                            document.markSaved(url: url)
-                        }
-                        // Snapshot version on every manual save
-                        VersionStore.shared.saveVersion(
-                            filePath: url.path,
-                            htmlContent: content,
-                            wordCount: document.wordCount
-                        )
-                    }
-                } catch {
-                    print("Save failed for \(url.lastPathComponent): \(error)")
+        } catch {
+            print("\(actionName) failed for \(url.lastPathComponent): \(error)")
+        }
+    }
+
+    private func captureEditorSnapshot() async -> DocumentFileStore.FileSnapshot? {
+        await withCheckedContinuation { continuation in
+            getContent { html in
+                guard let html else {
+                    continuation.resume(returning: nil)
+                    return
                 }
+                continuation.resume(returning: DocumentFileStore.FileSnapshot(htmlContent: html))
             }
         }
     }
@@ -436,18 +453,6 @@ final class EditorViewModel {
         }
     }
 
-    // MARK: - Content Validation
-
-    /// Returns true if the HTML has actual text or meaningful elements (images).
-    /// Used to prevent saving empty/near-empty content over real files.
-    static func hasSubstantialContent(_ html: String) -> Bool {
-        if html.isEmpty { return false }
-        // Images count as substantial content even without text
-        if html.contains("<img") { return true }
-        // Strip all HTML tags and check for non-whitespace text
-        let stripped = html.replacingOccurrences(of: "<[^>]*>", with: "", options: .regularExpression)
-        return !stripped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
 }
 
 // MARK: - Notifications

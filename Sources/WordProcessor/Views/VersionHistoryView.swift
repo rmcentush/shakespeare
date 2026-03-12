@@ -200,19 +200,22 @@ struct VersionHistoryView: View {
     private func restoreVersion(_ version: VersionStore.Version) {
         // Save current state as a version first (so nothing is lost)
         if let url = document.fileURL {
-            let html = document.htmlContent
-            if EditorViewModel.hasSubstantialContent(html) {
+            let snapshot = document.currentSnapshot()
+            if snapshot.htmlContent != version.htmlContent {
                 VersionStore.shared.saveVersion(
                     filePath: url.path,
-                    htmlContent: html,
-                    wordCount: document.wordCount
+                    htmlContent: snapshot.htmlContent,
+                    wordCount: snapshot.wordCount
                 )
             }
         }
 
         // Load the old version's content into the editor
-        document.htmlContent = version.htmlContent
-        document.isDirty = true
+        let snapshot = DocumentFileStore.FileSnapshot(
+            htmlContent: version.htmlContent,
+            wordCount: version.wordCount
+        )
+        document.restoreVersion(snapshot: snapshot)
         editorViewModel.loadContent(version.htmlContent)
         refreshVersions()
     }
@@ -222,12 +225,12 @@ struct VersionHistoryView: View {
         let name = namedVersionName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
 
-        editorViewModel.getContent { html in
-            let content = html.isEmpty ? document.htmlContent : html
+        Task {
+            let snapshot = await editorViewModel.latestSnapshot(for: document)
             VersionStore.shared.saveVersion(
                 filePath: url.path,
-                htmlContent: content,
-                wordCount: document.wordCount,
+                htmlContent: snapshot.htmlContent,
+                wordCount: snapshot.wordCount,
                 name: name
             )
             refreshVersions()

@@ -2,6 +2,13 @@ import SwiftUI
 
 @Observable
 final class DocumentModel {
+    struct PersistenceRequest: Sendable {
+        let requestID: UInt64
+        let generation: UInt64
+        let revision: UInt64
+        let snapshot: DocumentFileStore.FileSnapshot
+    }
+
     var htmlContent: String = ""
     var fileURL: URL?
     var isDirty: Bool = false
@@ -10,6 +17,10 @@ final class DocumentModel {
 
     private static let recentFilesKey = "recentFileBookmarks"
     private static let maxRecentFiles = 10
+    private var documentGeneration: UInt64 = 0
+    private var contentRevision: UInt64 = 0
+    private var nextPersistenceRequestID: UInt64 = 0
+    private var lastCommittedPersistenceRequestID: UInt64 = 0
 
     var displayName: String {
         if let url = fileURL {
@@ -24,6 +35,8 @@ final class DocumentModel {
     }
 
     func newDocument() {
+        documentGeneration &+= 1
+        contentRevision = 0
         htmlContent = ""
         fileURL = nil
         isDirty = false
@@ -32,8 +45,12 @@ final class DocumentModel {
     }
 
     func updateContent(_ html: String) {
+        let changed = html != htmlContent
         htmlContent = html
-        isDirty = true
+        if changed {
+            contentRevision &+= 1
+            isDirty = true
+        }
     }
 
     func updateWordCount(words: Int, characters: Int) {
@@ -41,18 +58,78 @@ final class DocumentModel {
         characterCount = characters
     }
 
-    func markSaved(url: URL) {
+    func syncFromEditor(snapshot: DocumentFileStore.FileSnapshot) {
+        let changed = snapshot.htmlContent != htmlContent
+        htmlContent = snapshot.htmlContent
+        wordCount = snapshot.wordCount
+        characterCount = snapshot.characterCount
+        if changed {
+            contentRevision &+= 1
+            isDirty = true
+        }
+    }
+
+    func syncFromEditor(html: String, words: Int, characters: Int) {
+        let changed = html != htmlContent
+        htmlContent = html
+        wordCount = words
+        characterCount = characters
+        if changed {
+            contentRevision &+= 1
+            isDirty = true
+        }
+    }
+
+    func markSaved(url: URL, request: PersistenceRequest) {
+        guard request.generation == documentGeneration else { return }
+        guard request.requestID >= lastCommittedPersistenceRequestID else { return }
+
+        lastCommittedPersistenceRequestID = request.requestID
         fileURL = url
-        isDirty = false
+        wordCount = request.snapshot.wordCount
+        characterCount = request.snapshot.characterCount
+        isDirty = request.revision != contentRevision
         Self.addToRecentFiles(url)
     }
 
-    func loadFromURL(_ url: URL) throws {
-        let html = try String(contentsOf: url, encoding: .utf8)
-        htmlContent = html
+    func load(snapshot: DocumentFileStore.FileSnapshot, from url: URL) {
+        documentGeneration &+= 1
+        contentRevision = 0
+        htmlContent = snapshot.htmlContent
         fileURL = url
         isDirty = false
+        wordCount = snapshot.wordCount
+        characterCount = snapshot.characterCount
         Self.addToRecentFiles(url)
+    }
+
+    func restoreVersion(snapshot: DocumentFileStore.FileSnapshot) {
+        let changed = snapshot.htmlContent != htmlContent
+        htmlContent = snapshot.htmlContent
+        wordCount = snapshot.wordCount
+        characterCount = snapshot.characterCount
+        if changed {
+            contentRevision &+= 1
+        }
+        isDirty = true
+    }
+
+    func makePersistenceRequest() -> PersistenceRequest {
+        nextPersistenceRequestID &+= 1
+        return PersistenceRequest(
+            requestID: nextPersistenceRequestID,
+            generation: documentGeneration,
+            revision: contentRevision,
+            snapshot: currentSnapshot()
+        )
+    }
+
+    func currentSnapshot() -> DocumentFileStore.FileSnapshot {
+        DocumentFileStore.FileSnapshot(
+            htmlContent: htmlContent,
+            wordCount: wordCount,
+            characterCount: characterCount
+        )
     }
 
     // MARK: - Recent Files

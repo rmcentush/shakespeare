@@ -41,11 +41,14 @@ struct ContentView: View {
             }
             .background { keyboardShortcuts }
             .onReceive(NotificationCenter.default.publisher(for: .editorContentUpdated)) { notification in
-                if let html = notification.userInfo?["html"] as? String {
-                    document.updateContent(html)
-                }
-                if let words = notification.userInfo?["words"] as? Int,
+                if let html = notification.userInfo?["html"] as? String,
+                   let words = notification.userInfo?["words"] as? Int,
                    let characters = notification.userInfo?["characters"] as? Int {
+                    document.syncFromEditor(html: html, words: words, characters: characters)
+                } else if let html = notification.userInfo?["html"] as? String {
+                    document.updateContent(html)
+                } else if let words = notification.userInfo?["words"] as? Int,
+                          let characters = notification.userInfo?["characters"] as? Int {
                     document.updateWordCount(words: words, characters: characters)
                 }
                 editorViewModel.scheduleAutoSave(document: document)
@@ -54,17 +57,14 @@ struct ContentView: View {
                 // Reload document content when the editor (re)initializes.
                 // This handles: web process restart, and any other editor reload scenario
                 // where the JS context was reset but document.htmlContent still has content.
-                let html = document.htmlContent
-                if EditorViewModel.hasSubstantialContent(html) {
-                    editorViewModel.loadContent(html)
-                }
+                editorViewModel.loadContent(document.htmlContent)
             }
             .onReceive(NotificationCenter.default.publisher(for: .fontSettingsChanged)) { _ in
                 let css = FontManager.shared.fullThemeCSS()
                 editorViewModel.setThemeCSS(css)
             }
             .onDisappear {
-                editorViewModel.flushBeforeDocumentChange(document: document)
+                editorViewModel.flushPendingChanges(document: document)
             }
             .alert("Save Named Version", isPresented: $showNamedVersionAlert) {
                 TextField("Version name", text: $namedVersionName)
@@ -217,12 +217,12 @@ extension ContentView {
         guard let url = document.fileURL else { return }
         let name = namedVersionName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
-        editorViewModel.getContent { html in
-            let content = html.isEmpty ? document.htmlContent : html
+        Task {
+            let snapshot = await editorViewModel.latestSnapshot(for: document)
             VersionStore.shared.saveVersion(
                 filePath: url.path,
-                htmlContent: content,
-                wordCount: document.wordCount,
+                htmlContent: snapshot.htmlContent,
+                wordCount: snapshot.wordCount,
                 name: name
             )
         }

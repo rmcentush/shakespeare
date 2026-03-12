@@ -368,6 +368,36 @@ function countWords(text: string): number {
   return trimmed.split(/\s+/).length;
 }
 
+const PASTE_STYLE_PROPERTIES = [
+  'font-family',
+  'color',
+  'background',
+  'background-color',
+  '-webkit-text-fill-color',
+];
+
+function sanitizePastedHTML(html: string): string {
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+
+  parsed.querySelectorAll('style, meta, link').forEach((element) => element.remove());
+
+  parsed.body.querySelectorAll('*').forEach((element) => {
+    PASTE_STYLE_PROPERTIES.forEach((property) => {
+      element.style.removeProperty(property);
+    });
+
+    ['color', 'bgcolor', 'face'].forEach((attribute) => {
+      element.removeAttribute(attribute);
+    });
+
+    if (!element.getAttribute('style')?.trim()) {
+      element.removeAttribute('style');
+    }
+  });
+
+  return parsed.body.innerHTML;
+}
+
 const editor = new Editor({
   element: document.getElementById('editor')!,
   extensions: [
@@ -467,7 +497,7 @@ const editor = new Editor({
       spellcheck: 'true',
     },
     transformPastedHTML(html) {
-      return html.replace(/font-family\s*:[^;]*;?/gi, '');
+      return sanitizePastedHTML(html);
     },
   },
   onUpdate({ editor }) {

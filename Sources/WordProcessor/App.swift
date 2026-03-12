@@ -25,9 +25,7 @@ struct WordProcessorApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New") {
-                    editorViewModel.flushBeforeDocumentChange(document: document)
-                    document.newDocument()
-                    editorViewModel.loadContent("")
+                    editorViewModel.createNewDocument(document: document)
                 }
                 .keyboardShortcut("n")
 
