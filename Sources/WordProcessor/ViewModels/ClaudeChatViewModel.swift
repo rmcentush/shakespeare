@@ -18,7 +18,7 @@ final class ClaudeChatViewModel {
     private static let maxApiMessages = 40
     private static let maxVisibleMessages = 60
     private static let maxAPIHistoryCharacters = 120_000
-    private static let maxDocumentContextCharacters = 24_000
+    private nonisolated static let maxDocumentContextCharacters = 24_000
     private static let maxToolHTMLCharacters = 20_000
     private static let maxFindQueryCharacters = 500
     private static let flushChunkThreshold = 12
@@ -68,10 +68,6 @@ final class ClaudeChatViewModel {
         apiMessages.append(["role": "user", "content": text])
         trimAPIHistory()
 
-        let assistantMessage = ChatMessage(role: .assistant, content: "")
-        messages.append(assistantMessage)
-        let assistantMessageID = assistantMessage.id
-
         isStreaming = true
         defer {
             isStreaming = false
@@ -84,16 +80,15 @@ final class ClaudeChatViewModel {
         // Tool use loop: keep calling API until Claude stops using tools
         var loopCount = 0
         let maxLoops = 10
-        var displayedContent = ""
 
         while loopCount < maxLoops {
             if Task.isCancelled {
-                let content = displayedContent.isEmpty ? "Request cancelled." : displayedContent
-                updateAssistantMessage(id: assistantMessageID, content: content)
+                appendSystemMessage(content: "Request cancelled.")
                 return
             }
 
             loopCount += 1
+            let assistantMessageID = appendVisibleMessage(role: .assistant, content: "")
 
             var fullText = ""
             var toolCalls: [(id: String, name: String, inputJSON: String)] = []
@@ -119,10 +114,7 @@ final class ClaudeChatViewModel {
                         let now = Date()
                         if flushCount >= Self.flushChunkThreshold ||
                             now.timeIntervalSince(lastFlushTime) >= Self.flushInterval {
-                            updateAssistantMessage(
-                                id: assistantMessageID,
-                                content: displayedContent + fullText
-                            )
+                            updateAssistantMessage(id: assistantMessageID, content: fullText)
                             flushCount = 0
                             lastFlushTime = now
                         }
@@ -132,33 +124,41 @@ final class ClaudeChatViewModel {
                 }
 
                 // Final flush of text
-                displayedContent += fullText
-                updateAssistantMessage(id: assistantMessageID, content: displayedContent)
+                updateAssistantMessage(id: assistantMessageID, content: fullText)
             } catch is CancellationError {
-                if displayedContent.isEmpty && fullText.isEmpty {
+                if fullText.isEmpty {
                     updateAssistantMessage(id: assistantMessageID, content: "Request cancelled.")
                 } else {
-                    updateAssistantMessage(id: assistantMessageID, content: displayedContent + fullText)
+                    updateAssistantMessage(id: assistantMessageID, content: fullText)
                 }
                 return
             } catch {
-                if displayedContent.isEmpty && fullText.isEmpty {
+                if fullText.isEmpty {
                     updateAssistantMessage(id: assistantMessageID, content: "Error: \(error.localizedDescription)")
                 } else {
                     updateAssistantMessage(
                         id: assistantMessageID,
-                        content: displayedContent + fullText + "\n\nError: \(error.localizedDescription)"
+                        content: fullText + "\n\nError: \(error.localizedDescription)"
                     )
                 }
                 return
             }
 
+            let hasVisibleAssistantText = !fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
             // If no tool calls, we're done
             if toolCalls.isEmpty {
-                // Add assistant text to API history
-                apiMessages.append(["role": "assistant", "content": fullText])
-                trimAPIHistory()
+                if hasVisibleAssistantText {
+                    apiMessages.append(["role": "assistant", "content": fullText])
+                    trimAPIHistory()
+                } else {
+                    removeVisibleMessage(id: assistantMessageID)
+                }
                 break
+            }
+
+            if !hasVisibleAssistantText {
+                removeVisibleMessage(id: assistantMessageID)
             }
 
             // Build assistant content blocks for API history
@@ -182,7 +182,7 @@ final class ClaudeChatViewModel {
             var toolResultBlocks: [[String: Any]] = []
             for tc in toolCalls {
                 if Task.isCancelled {
-                    updateAssistantMessage(id: assistantMessageID, content: displayedContent)
+                    appendSystemMessage(content: "Request cancelled.")
                     return
                 }
 
@@ -197,10 +197,8 @@ final class ClaudeChatViewModel {
                     "content": result
                 ] as [String: Any])
 
-                // Show tool action in the UI
                 let actionLabel = toolActionLabel(name: tc.name, inputJSON: tc.inputJSON)
-                displayedContent += (displayedContent.isEmpty ? "" : "\n\n") + actionLabel
-                updateAssistantMessage(id: assistantMessageID, content: displayedContent)
+                appendSystemMessage(content: actionLabel, detail: result)
             }
             apiMessages.append(["role": "user", "content": toolResultBlocks])
             trimAPIHistory()
@@ -209,10 +207,7 @@ final class ClaudeChatViewModel {
         }
 
         if loopCount >= maxLoops {
-            let note = displayedContent.isEmpty
-                ? "Stopped after too many tool rounds."
-                : displayedContent + "\n\nStopped after too many tool rounds."
-            updateAssistantMessage(id: assistantMessageID, content: note)
+            appendSystemMessage(content: "Stopped after too many tool rounds.")
         }
     }
 
@@ -307,6 +302,22 @@ final class ClaudeChatViewModel {
         streamingContentLength = content.count
     }
 
+    @discardableResult
+    private func appendVisibleMessage(role: ChatMessage.Role, content: String, detail: String? = nil) -> UUID {
+        let message = ChatMessage(role: role, content: content, detail: detail)
+        messages.append(message)
+        return message.id
+    }
+
+    private func appendSystemMessage(content: String, detail: String? = nil) {
+        appendVisibleMessage(role: .system, content: content, detail: detail)
+    }
+
+    private func removeVisibleMessage(id: UUID) {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
+        messages.remove(at: index)
+    }
+
     private func buildSystemPrompt(documentContent: String) async -> String? {
         guard !documentContent.isEmpty else { return nil }
 
@@ -388,7 +399,7 @@ final class ClaudeChatViewModel {
         }
     }
 
-    private static func prepareDocumentContext(_ html: String) -> String {
+    private nonisolated static func prepareDocumentContext(_ html: String) -> String {
         guard !html.isEmpty else { return "" }
 
         var text = html.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
@@ -429,16 +440,16 @@ final class ClaudeChatViewModel {
     private func toolActionLabel(name: String, inputJSON: String) -> String {
         switch name {
         case "replace_selection":
-            return "✎ Suggested edit for selection"
+            return "Suggested edit for selection"
         case "insert_at_cursor":
-            return "✎ Suggested insertion at cursor"
+            return "Suggested insertion at cursor"
         case "find_and_replace":
             let input = parseJSON(inputJSON)
             let find = input["find"] as? String ?? ""
             let truncated = find.count > 30 ? String(find.prefix(30)) + "…" : find
-            return "✎ Suggested edit for \"\(truncated)\""
+            return "Suggested edit for \"\(truncated)\""
         default:
-            return "✎ \(name)"
+            return name
         }
     }
 
