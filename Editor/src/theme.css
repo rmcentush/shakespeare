@@ -10,7 +10,7 @@ html, body {
   height: 100%;
   background: #ffffff;
   color: #1a1a1a;
-  -webkit-font-smoothing: antialiased;
+  -webkit-font-smoothing: auto;
 }
 
 body {
