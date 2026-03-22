@@ -19,6 +19,8 @@ struct ToolbarView: View {
                 Text("Source Serif 4").tag("Source Serif 4")
                 Text("Scala").tag("Scala")
                 Text("Charter").tag("Charter")
+                Text("Garamond").tag("Garamond")
+                Text("Times New Roman").tag("Times New Roman")
                 Text("Georgia").tag("Georgia")
                 Text("Palatino").tag("Palatino")
                 Text("Baskerville").tag("Baskerville")
