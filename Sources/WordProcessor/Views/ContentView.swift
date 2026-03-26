@@ -1,9 +1,14 @@
 import SwiftUI
 
 struct ContentView: View {
+    private enum SidebarPanel {
+        case chat
+        case orality
+    }
+
     @Environment(DocumentModel.self) private var document
     @Environment(EditorViewModel.self) private var editorViewModel
-    @State private var showSidebar = false
+    @State private var activeSidebar: SidebarPanel?
     @State private var isDistractionFree = false
     @State private var showFindBar = false
     @State private var showReplace = false
@@ -11,6 +16,7 @@ struct ContentView: View {
     @State private var showVersionHistory = false
     @State private var showNamedVersionAlert = false
     @State private var namedVersionName = ""
+    @State private var oralityRequestID = 0
 
     var body: some View {
         mainLayout
@@ -30,13 +36,20 @@ struct ContentView: View {
                     }
                     ToolbarItem(placement: .automatic) {
                         Button {
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                showSidebar.toggle()
-                            }
+                            toggleSidebar(.chat)
                         } label: {
                             Image(systemName: "bubble.right")
                         }
                         .help("Toggle Claude (Cmd+\\)")
+                    }
+                    ToolbarItem(placement: .automatic) {
+                        Button {
+                            showOralityPanel()
+                        } label: {
+                            Text("A")
+                                .font(.system(size: 13, weight: .bold, design: .serif))
+                        }
+                        .help("Analyze Orality")
                     }
                 }
             }
@@ -149,11 +162,18 @@ struct ContentView: View {
                 }
             }
 
-            if showSidebar && !isDistractionFree {
+            if let activeSidebar, !isDistractionFree {
                 Divider()
-                ClaudeChatView()
-                    .frame(width: 340)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                Group {
+                    switch activeSidebar {
+                    case .chat:
+                        ClaudeChatView()
+                    case .orality:
+                        OralityView(requestID: oralityRequestID)
+                    }
+                }
+                .frame(width: 340)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
     }
@@ -162,7 +182,7 @@ struct ContentView: View {
     private var keyboardShortcuts: some View {
         // Cmd+\ to toggle sidebar
         Button("") {
-            withAnimation(.easeInOut(duration: 0.15)) { showSidebar.toggle() }
+            toggleSidebar(.chat)
         }
         .keyboardShortcut("\\", modifiers: .command)
         .hidden()
@@ -220,6 +240,19 @@ struct ContentView: View {
 }
 
 extension ContentView {
+    func toggleSidebar(_ panel: SidebarPanel) {
+        withAnimation(.easeInOut(duration: 0.15)) {
+            activeSidebar = activeSidebar == panel ? nil : panel
+        }
+    }
+
+    func showOralityPanel() {
+        withAnimation(.easeInOut(duration: 0.15)) {
+            activeSidebar = .orality
+        }
+        oralityRequestID += 1
+    }
+
     func saveNamedVersionFromMenu() {
         guard let url = document.fileURL else { return }
         let name = namedVersionName.trimmingCharacters(in: .whitespacesAndNewlines)

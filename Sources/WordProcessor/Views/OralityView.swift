@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct OralityView: View {
+    let requestID: Int
     @State private var oralityViewModel = OralityViewModel()
     @State private var rewriteViewModel = OralityRewriteViewModel()
     @Environment(EditorViewModel.self) private var editorViewModel
@@ -179,7 +180,7 @@ struct OralityView: View {
                     Image(systemName: "waveform.path")
                         .font(.largeTitle)
                         .foregroundStyle(.secondary)
-                    Text("Select text in the editor and click Check to analyze orality.")
+                    Text("Use the toolbar A button or Check below to analyze the selected text or full document.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -207,6 +208,10 @@ struct OralityView: View {
             .padding()
         }
         .frame(maxHeight: .infinity)
+        .task(id: requestID) {
+            guard requestID > 0 else { return }
+            checkOrality()
+        }
     }
 
     private func checkOrality() {
