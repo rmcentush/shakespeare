@@ -1,13 +1,20 @@
 import SwiftUI
 
 struct FindBarView: View {
+    private enum Field {
+        case search
+        case replace
+    }
+
     @Environment(EditorViewModel.self) private var editorViewModel
     @Binding var isVisible: Bool
     @Binding var showReplace: Bool
+    let focusRequest: Int
     @State private var searchText = ""
     @State private var replaceText = ""
     @State private var matchCount = 0
     @State private var currentMatch = -1
+    @FocusState private var focusedField: Field?
 
     var body: some View {
         VStack(spacing: 6) {
@@ -20,6 +27,7 @@ struct FindBarView: View {
                 TextField("Find", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
+                    .focused($focusedField, equals: .search)
                     .onSubmit { findNext() }
                     .onChange(of: searchText) {
                         performSearch()
@@ -82,6 +90,7 @@ struct FindBarView: View {
                     TextField("Replace", text: $replaceText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
+                        .focused($focusedField, equals: .replace)
                         .onSubmit { replaceOne() }
 
                     Button("Replace") { replaceOne() }
@@ -99,6 +108,12 @@ struct FindBarView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
+        .onAppear {
+            focusSearchField()
+        }
+        .onChange(of: focusRequest) {
+            focusSearchField()
+        }
     }
 
     private func performSearch() {
@@ -151,6 +166,13 @@ struct FindBarView: View {
         withAnimation(.easeInOut(duration: 0.15)) {
             isVisible = false
             showReplace = false
+        }
+        editorViewModel.focusEditor()
+    }
+
+    private func focusSearchField() {
+        DispatchQueue.main.async {
+            focusedField = .search
         }
     }
 }

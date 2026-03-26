@@ -534,6 +534,7 @@ const editor = new Editor({
       const text = editor.getText();
       sendToSwift('contentUpdate', {
         html,
+        text,
         words: countWords(text),
         characters: text.length,
       });
@@ -577,8 +578,26 @@ registerSwiftCallbacks({
   loadContent(html: string) {
     editor.commands.setContent(html, false);
   },
+  loadJSONContent(json: string) {
+    try {
+      const parsed = JSON.parse(json);
+      editor.commands.setContent(parsed, false);
+    } catch (error) {
+      console.error('Failed to load JSON content into editor', error);
+    }
+  },
   getContent(): string {
     return editor.getHTML();
+  },
+  getDocumentSnapshot(): string {
+    const text = editor.getText();
+    return JSON.stringify({
+      html: editor.getHTML(),
+      json: editor.getJSON(),
+      text,
+      words: countWords(text),
+      characters: text.length,
+    });
   },
   getPlainText(): string {
     return editor.getText();

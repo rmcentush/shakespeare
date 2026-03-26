@@ -13,7 +13,7 @@ final class FontManager {
     private init() {
         let defaults = UserDefaults.standard
         if let font = defaults.string(forKey: "editorFont") {
-            currentFont = font
+            currentFont = normalizeFontName(font)
         }
         if defaults.double(forKey: "editorFontSize") > 0 {
             currentSize = defaults.double(forKey: "editorFontSize")
@@ -21,19 +21,24 @@ final class FontManager {
         if defaults.double(forKey: "editorLineHeight") > 0 {
             currentLineHeight = defaults.double(forKey: "editorLineHeight")
         }
+        if currentFont == "EBGaramond" {
+            defaults.set(currentFont, forKey: "editorFont")
+        }
     }
 
     func save() {
         let defaults = UserDefaults.standard
+        currentFont = normalizeFontName(currentFont)
         defaults.set(currentFont, forKey: "editorFont")
         defaults.set(currentSize, forKey: "editorFontSize")
         defaults.set(currentLineHeight, forKey: "editorLineHeight")
     }
 
     func generateCSS() -> String {
+        let fontName = normalizeFontName(currentFont)
         """
         .editor-content {
-            font-family: '\(currentFont)', Georgia, serif;
+            font-family: '\(fontName)', Georgia, serif;
             font-size: \(Int(currentSize))px;
             line-height: \(currentLineHeight);
         }
@@ -86,6 +91,8 @@ final class FontManager {
             let family: String
             if nameLower.contains("lyontext") || nameLower.contains("lyon text") {
                 family = "Lyon Text"
+            } else if nameLower.contains("ebgaramond") {
+                family = "EBGaramond"
             } else if nameLower.contains("sourceserif") {
                 family = "Source Serif 4"
             } else if nameLower.contains("scala") {
@@ -120,5 +127,12 @@ final class FontManager {
         }
         cachedFontFaceCSS = css
         return css
+    }
+
+    private func normalizeFontName(_ fontName: String) -> String {
+        if fontName == "Garamond" {
+            return "EBGaramond"
+        }
+        return fontName
     }
 }

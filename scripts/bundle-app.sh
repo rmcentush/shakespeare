@@ -56,8 +56,40 @@ cat > "$CONTENTS/Info.plist" << 'PLIST'
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.shakespeare.document</string>
+            <key>UTTypeDescription</key>
+            <string>Shakespeare Document</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>com.apple.package</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>shkdoc</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
     <key>CFBundleDocumentTypes</key>
     <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Shakespeare Document</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.shakespeare.document</string>
+            </array>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSTypeIsPackage</key>
+            <true/>
+        </dict>
         <dict>
             <key>CFBundleTypeName</key>
             <string>HTML Document</string>

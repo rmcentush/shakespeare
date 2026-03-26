@@ -201,22 +201,26 @@ struct VersionHistoryView: View {
         // Save current state as a version first (so nothing is lost)
         if let url = document.fileURL {
             let snapshot = document.currentSnapshot()
-            if snapshot.htmlContent != version.htmlContent {
-                VersionStore.shared.saveVersion(
-                    filePath: url.path,
-                    htmlContent: snapshot.htmlContent,
-                    wordCount: snapshot.wordCount
-                )
+            let sameJSON = snapshot.canonicalJSON == version.canonicalJSON
+            let sameHTML = snapshot.htmlContent == version.htmlContent
+            if !sameJSON || !sameHTML {
+                VersionStore.shared.saveVersion(filePath: url.path, snapshot: snapshot)
             }
         }
 
-        // Load the old version's content into the editor
         let snapshot = DocumentFileStore.FileSnapshot(
+            canonicalJSON: version.canonicalJSON,
             htmlContent: version.htmlContent,
-            wordCount: version.wordCount
+            plainText: version.plainText,
+            wordCount: version.wordCount,
+            characterCount: version.characterCount,
+            documentID: version.documentID ?? document.documentID,
+            schemaVersion: document.schemaVersion,
+            createdAt: document.createdAt,
+            modifiedAt: version.createdAt
         )
         document.restoreVersion(snapshot: snapshot)
-        editorViewModel.loadContent(version.htmlContent)
+        editorViewModel.loadSnapshot(snapshot)
         refreshVersions()
     }
 
@@ -227,12 +231,7 @@ struct VersionHistoryView: View {
 
         Task {
             let snapshot = await editorViewModel.latestSnapshot(for: document)
-            VersionStore.shared.saveVersion(
-                filePath: url.path,
-                htmlContent: snapshot.htmlContent,
-                wordCount: snapshot.wordCount,
-                name: name
-            )
+            VersionStore.shared.saveVersion(filePath: url.path, snapshot: snapshot, name: name)
             refreshVersions()
         }
         namedVersionName = ""

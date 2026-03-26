@@ -7,6 +7,9 @@ struct EditorWebView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         let contentController = WKUserContentController()
+        let assetSchemeHandler = DocumentAssetSchemeHandler()
+        assetSchemeHandler.viewModel = viewModel
+        context.coordinator.assetSchemeHandler = assetSchemeHandler
 
         let bridge = EditorBridge()
         bridge.viewModel = viewModel
@@ -14,6 +17,7 @@ struct EditorWebView: NSViewRepresentable {
 
         contentController.add(bridge, name: "editorBridge")
         config.userContentController = contentController
+        config.setURLSchemeHandler(assetSchemeHandler, forURLScheme: DocumentAssetReference.scheme)
 
         // Allow file access for local resources
         config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
@@ -53,6 +57,7 @@ struct EditorWebView: NSViewRepresentable {
 
     class Coordinator: NSObject, WKNavigationDelegate {
         var bridge: EditorBridge?
+        var assetSchemeHandler: DocumentAssetSchemeHandler?
         var lastThemeReadyCount = 0
 
         /// Called when the WKWebView web content process crashes or is terminated by the OS

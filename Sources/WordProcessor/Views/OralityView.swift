@@ -217,10 +217,7 @@ struct OralityView: View {
                     await oralityViewModel.checkOrality(text: text)
                 }
             } else {
-                // Get all content if no selection
-                editorViewModel.getContent { html in
-                    let plainText = (html ?? "")
-                        .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                editorViewModel.getPlainText { plainText in
                     guard !plainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
                     Task {
                         await oralityViewModel.checkOrality(text: plainText)

@@ -4,8 +4,7 @@ import SQLite3
 /// Stores document version snapshots in a SQLite database.
 /// Location: ~/Library/Application Support/Shakespeare/versions.sqlite
 /// All SQLite access is serialized through a private dispatch queue to avoid
-/// blocking the main thread (previously @MainActor, which caused UI hangs
-/// during pruneOldVersions and saveVersion).
+/// blocking the main thread.
 final class VersionStore: @unchecked Sendable {
     static let shared = VersionStore()
 
@@ -15,9 +14,13 @@ final class VersionStore: @unchecked Sendable {
     struct Version: Identifiable {
         let id: Int64
         let filePath: String
+        let documentID: String?
         let versionName: String?
+        let canonicalJSON: String?
         let htmlContent: String
+        let plainText: String
         let wordCount: Int
+        let characterCount: Int
         let createdAt: Date
         let isNamed: Bool
     }
@@ -27,21 +30,19 @@ final class VersionStore: @unchecked Sendable {
             openDatabase()
             createTable()
         }
-        // Prune old unnamed versions asynchronously — don't block launch
         queue.async { [self] in
             pruneOldVersions()
         }
     }
 
     deinit {
-        if let db = db {
+        if let db {
             sqlite3_close(db)
         }
     }
 
     // MARK: - Database Setup
 
-    /// Must be called on `queue`.
     private func openDatabase() {
         let fileManager = FileManager.default
         guard let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
@@ -63,9 +64,13 @@ final class VersionStore: @unchecked Sendable {
         CREATE TABLE IF NOT EXISTS versions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             file_path TEXT NOT NULL,
+            document_id TEXT,
             version_name TEXT,
-            html_content TEXT NOT NULL,
+            json_content TEXT,
+            html_content TEXT NOT NULL DEFAULT '',
+            plain_text TEXT NOT NULL DEFAULT '',
             word_count INTEGER DEFAULT 0,
+            character_count INTEGER DEFAULT 0,
             created_at REAL NOT NULL,
             is_named INTEGER DEFAULT 0
         );
@@ -73,50 +78,120 @@ final class VersionStore: @unchecked Sendable {
         CREATE INDEX IF NOT EXISTS idx_versions_created_at ON versions(created_at);
         """
         sqlite3_exec(db, sql, nil, nil, nil)
+
+        addColumnIfNeeded(name: "document_id", definition: "TEXT")
+        addColumnIfNeeded(name: "json_content", definition: "TEXT")
+        addColumnIfNeeded(name: "plain_text", definition: "TEXT NOT NULL DEFAULT ''")
+        addColumnIfNeeded(name: "character_count", definition: "INTEGER DEFAULT 0")
+    }
+
+    private func addColumnIfNeeded(name: String, definition: String) {
+        guard !columnExists(name: name) else { return }
+        let sql = "ALTER TABLE versions ADD COLUMN \(name) \(definition)"
+        sqlite3_exec(db, sql, nil, nil, nil)
+    }
+
+    private func columnExists(name: String) -> Bool {
+        guard let db else { return false }
+
+        let sql = "PRAGMA table_info(versions)"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let columnName = sqlite3_column_text(stmt, 1),
+               String(cString: columnName) == name {
+                return true
+            }
+        }
+        return false
     }
 
     // MARK: - Save Version
 
-    /// Save a snapshot of the document. Called automatically on manual save.
-    /// Runs on a background queue to avoid blocking the UI.
-    func saveVersion(filePath: String, htmlContent: String, wordCount: Int, name: String? = nil) {
+    func saveVersion(filePath: String, snapshot: DocumentFileStore.FileSnapshot, name: String? = nil) {
         queue.async { [self] in
-            guard let db = db else { return }
+            guard let db else { return }
 
-            // Skip if content is identical to the most recent version for this file
             if let latest = _latestVersion(forFile: filePath),
-               latest.htmlContent == htmlContent {
+               isDuplicate(latest: latest, snapshot: snapshot) {
                 return
             }
 
-            let sql = "INSERT INTO versions (file_path, version_name, html_content, word_count, created_at, is_named) VALUES (?, ?, ?, ?, ?, ?)"
+            let sql = """
+            INSERT INTO versions (
+                file_path,
+                document_id,
+                version_name,
+                json_content,
+                html_content,
+                plain_text,
+                word_count,
+                character_count,
+                created_at,
+                is_named
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
             defer { sqlite3_finalize(stmt) }
 
             sqlite3_bind_text(stmt, 1, (filePath as NSString).utf8String, -1, nil)
-            if let name = name {
-                sqlite3_bind_text(stmt, 2, (name as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 2, (snapshot.documentID as NSString).utf8String, -1, nil)
+            if let name {
+                sqlite3_bind_text(stmt, 3, (name as NSString).utf8String, -1, nil)
             } else {
-                sqlite3_bind_null(stmt, 2)
+                sqlite3_bind_null(stmt, 3)
             }
-            sqlite3_bind_text(stmt, 3, (htmlContent as NSString).utf8String, -1, nil)
-            sqlite3_bind_int(stmt, 4, Int32(wordCount))
-            sqlite3_bind_double(stmt, 5, Date().timeIntervalSince1970)
-            sqlite3_bind_int(stmt, 6, name != nil ? 1 : 0)
+            if let canonicalJSON = snapshot.canonicalJSON {
+                sqlite3_bind_text(stmt, 4, (canonicalJSON as NSString).utf8String, -1, nil)
+            } else {
+                sqlite3_bind_null(stmt, 4)
+            }
+            sqlite3_bind_text(stmt, 5, (snapshot.htmlContent as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 6, (snapshot.plainText as NSString).utf8String, -1, nil)
+            sqlite3_bind_int(stmt, 7, Int32(snapshot.wordCount))
+            sqlite3_bind_int(stmt, 8, Int32(snapshot.characterCount))
+            sqlite3_bind_double(stmt, 9, Date().timeIntervalSince1970)
+            sqlite3_bind_int(stmt, 10, name != nil ? 1 : 0)
 
             sqlite3_step(stmt)
         }
     }
 
+    private func isDuplicate(latest: Version, snapshot: DocumentFileStore.FileSnapshot) -> Bool {
+        if let latestJSON = latest.canonicalJSON,
+           let snapshotJSON = snapshot.canonicalJSON {
+            return latestJSON == snapshotJSON
+        }
+        return latest.htmlContent == snapshot.htmlContent
+    }
+
     // MARK: - Query Versions
 
-    /// Get all versions for a file, newest first.
     func versions(forFile filePath: String) -> [Version] {
         queue.sync { [self] in
-            guard let db = db else { return [] }
+            guard let db else { return [] }
 
-            let sql = "SELECT id, file_path, version_name, html_content, word_count, created_at, is_named FROM versions WHERE file_path = ? ORDER BY created_at DESC"
+            let sql = """
+            SELECT
+                id,
+                file_path,
+                document_id,
+                version_name,
+                json_content,
+                html_content,
+                plain_text,
+                word_count,
+                character_count,
+                created_at,
+                is_named
+            FROM versions
+            WHERE file_path = ?
+            ORDER BY created_at DESC
+            """
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
             defer { sqlite3_finalize(stmt) }
@@ -131,16 +206,31 @@ final class VersionStore: @unchecked Sendable {
         }
     }
 
-    /// Get the most recent version for a file.
     func latestVersion(forFile filePath: String) -> Version? {
         queue.sync { [self] in _latestVersion(forFile: filePath) }
     }
 
-    /// Internal version — must be called on `queue`.
     private func _latestVersion(forFile filePath: String) -> Version? {
-        guard let db = db else { return nil }
+        guard let db else { return nil }
 
-        let sql = "SELECT id, file_path, version_name, html_content, word_count, created_at, is_named FROM versions WHERE file_path = ? ORDER BY created_at DESC LIMIT 1"
+        let sql = """
+        SELECT
+            id,
+            file_path,
+            document_id,
+            version_name,
+            json_content,
+            html_content,
+            plain_text,
+            word_count,
+            character_count,
+            created_at,
+            is_named
+        FROM versions
+        WHERE file_path = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+        """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(stmt) }
@@ -153,12 +243,26 @@ final class VersionStore: @unchecked Sendable {
         return nil
     }
 
-    /// Get a single version by ID.
     func version(id: Int64) -> Version? {
         queue.sync { [self] in
-            guard let db = db else { return nil }
+            guard let db else { return nil }
 
-            let sql = "SELECT id, file_path, version_name, html_content, word_count, created_at, is_named FROM versions WHERE id = ?"
+            let sql = """
+            SELECT
+                id,
+                file_path,
+                document_id,
+                version_name,
+                json_content,
+                html_content,
+                plain_text,
+                word_count,
+                character_count,
+                created_at,
+                is_named
+            FROM versions
+            WHERE id = ?
+            """
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
             defer { sqlite3_finalize(stmt) }
@@ -174,17 +278,16 @@ final class VersionStore: @unchecked Sendable {
 
     // MARK: - Name / Rename
 
-    /// Name (or rename) a version. Setting name to nil removes the name.
     func nameVersion(id: Int64, name: String?) {
         queue.async { [self] in
-            guard let db = db else { return }
+            guard let db else { return }
 
             let sql = "UPDATE versions SET version_name = ?, is_named = ? WHERE id = ?"
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
             defer { sqlite3_finalize(stmt) }
 
-            if let name = name {
+            if let name {
                 sqlite3_bind_text(stmt, 1, (name as NSString).utf8String, -1, nil)
                 sqlite3_bind_int(stmt, 2, 1)
             } else {
@@ -201,7 +304,7 @@ final class VersionStore: @unchecked Sendable {
 
     func deleteVersion(id: Int64) {
         queue.async { [self] in
-            guard let db = db else { return }
+            guard let db else { return }
 
             let sql = "DELETE FROM versions WHERE id = ?"
             var stmt: OpaquePointer?
@@ -215,19 +318,13 @@ final class VersionStore: @unchecked Sendable {
 
     // MARK: - Pruning
 
-    /// Keep all named versions forever. For unnamed versions:
-    /// - Keep all from the last 24 hours
-    /// - Keep one per day for the last 30 days
-    /// - Keep one per week beyond 30 days
-    /// Must be called on `queue`.
     private func pruneOldVersions() {
-        guard let db = db else { return }
+        guard let db else { return }
 
         let now = Date().timeIntervalSince1970
         let oneDayAgo = now - 86400
         let thirtyDaysAgo = now - 86400 * 30
 
-        // Get all unnamed versions older than 24 hours, grouped by file
         let sql = """
         SELECT id, file_path, created_at FROM versions
         WHERE is_named = 0 AND created_at < ?
@@ -239,7 +336,6 @@ final class VersionStore: @unchecked Sendable {
 
         sqlite3_bind_double(stmt, 1, oneDayAgo)
 
-        // Group by file path and date bucket
         var toDelete: [Int64] = []
         var currentFile = ""
         var keptDays: Set<String> = []
@@ -253,7 +349,7 @@ final class VersionStore: @unchecked Sendable {
 
         while sqlite3_step(stmt) == SQLITE_ROW {
             let id = sqlite3_column_int64(stmt, 0)
-            let filePath = String(cString: sqlite3_column_text(stmt, 1))
+            let filePath = stringValue(stmt, column: 1) ?? ""
             let createdAt = sqlite3_column_double(stmt, 2)
             let date = Date(timeIntervalSince1970: createdAt)
 
@@ -264,7 +360,6 @@ final class VersionStore: @unchecked Sendable {
             }
 
             if createdAt > thirtyDaysAgo {
-                // Last 30 days: keep one per day
                 let dayKey = dayFormatter.string(from: date)
                 if keptDays.contains(dayKey) {
                     toDelete.append(id)
@@ -272,7 +367,6 @@ final class VersionStore: @unchecked Sendable {
                     keptDays.insert(dayKey)
                 }
             } else {
-                // Older than 30 days: keep one per week
                 let weekKey = weekFormatter.string(from: date)
                 if keptWeeks.contains(weekKey) {
                     toDelete.append(id)
@@ -282,11 +376,10 @@ final class VersionStore: @unchecked Sendable {
             }
         }
 
-        // Batch delete
         if !toDelete.isEmpty {
             let ids = toDelete.map(String.init).joined(separator: ",")
-            let deleteSql = "DELETE FROM versions WHERE id IN (\(ids))"
-            sqlite3_exec(db, deleteSql, nil, nil, nil)
+            let deleteSQL = "DELETE FROM versions WHERE id IN (\(ids))"
+            sqlite3_exec(db, deleteSQL, nil, nil, nil)
         }
     }
 
@@ -294,22 +387,38 @@ final class VersionStore: @unchecked Sendable {
 
     private func versionFromStatement(_ stmt: OpaquePointer?) -> Version {
         let id = sqlite3_column_int64(stmt, 0)
-        let filePath = String(cString: sqlite3_column_text(stmt, 1))
-        let versionName: String? = sqlite3_column_type(stmt, 2) != SQLITE_NULL
-            ? String(cString: sqlite3_column_text(stmt, 2)) : nil
-        let htmlContent = String(cString: sqlite3_column_text(stmt, 3))
-        let wordCount = Int(sqlite3_column_int(stmt, 4))
-        let createdAt = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 5))
-        let isNamed = sqlite3_column_int(stmt, 6) != 0
+        let filePath = stringValue(stmt, column: 1) ?? ""
+        let documentID = stringValue(stmt, column: 2)
+        let versionName = stringValue(stmt, column: 3)
+        let canonicalJSON = stringValue(stmt, column: 4)
+        let htmlContent = stringValue(stmt, column: 5) ?? ""
+        let plainText = stringValue(stmt, column: 6) ?? ""
+        let wordCount = Int(sqlite3_column_int(stmt, 7))
+        let characterCount = Int(sqlite3_column_int(stmt, 8))
+        let createdAt = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 9))
+        let isNamed = sqlite3_column_int(stmt, 10) != 0
 
         return Version(
             id: id,
             filePath: filePath,
+            documentID: documentID,
             versionName: versionName,
+            canonicalJSON: canonicalJSON,
             htmlContent: htmlContent,
+            plainText: plainText,
             wordCount: wordCount,
+            characterCount: characterCount,
             createdAt: createdAt,
             isNamed: isNamed
         )
+    }
+
+    private func stringValue(_ stmt: OpaquePointer?, column: Int32) -> String? {
+        guard sqlite3_column_type(stmt, column) != SQLITE_NULL,
+              let cString = sqlite3_column_text(stmt, column)
+        else {
+            return nil
+        }
+        return String(cString: cString)
     }
 }

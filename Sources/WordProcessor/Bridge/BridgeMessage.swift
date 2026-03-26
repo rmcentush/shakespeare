@@ -8,7 +8,7 @@ struct BridgeMessage: Codable {
 enum BridgePayload: Codable {
     case editorReady
     case contentChanged(html: String)
-    case contentUpdate(html: String, words: Int, characters: Int)
+    case contentUpdate(html: String, text: String, words: Int, characters: Int)
     case selectionChanged(SelectionState)
     case wordCount(words: Int, characters: Int)
     case pendingEditUpdate(count: Int, currentIndex: Int)
@@ -55,9 +55,10 @@ enum BridgePayload: Codable {
             return .contentChanged(html: html)
         case "contentUpdate":
             let html = payload["html"] as? String ?? ""
+            let text = payload["text"] as? String ?? ""
             let words = payload["words"] as? Int ?? 0
             let characters = payload["characters"] as? Int ?? 0
-            return .contentUpdate(html: html, words: words, characters: characters)
+            return .contentUpdate(html: html, text: text, words: words, characters: characters)
         case "selectionChanged":
             let state = SelectionState(
                 from: payload["from"] as? Int ?? 0,

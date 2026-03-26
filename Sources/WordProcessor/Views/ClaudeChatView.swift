@@ -98,7 +98,7 @@ struct ClaudeChatView: View {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         inputText = ""
-        let content = document.htmlContent
+        let content = document.plainTextContent
         let editor = editorViewModel
         chatViewModel.sendMessage(text, documentContent: content, editorViewModel: editor)
     }

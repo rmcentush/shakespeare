@@ -19,6 +19,9 @@ struct WordProcessorApp: App {
             ContentView()
                 .environment(document)
                 .environment(editorViewModel)
+                .onOpenURL { url in
+                    editorViewModel.openFile(url: url, document: document)
+                }
         }
         .windowStyle(.titleBar)
         .defaultSize(width: 900, height: 700)
@@ -63,6 +66,13 @@ struct WordProcessorApp: App {
                     editorViewModel.saveDocumentAs(document: document)
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Export HTML...") {
+                    editorViewModel.exportHTML(document: document)
+                }
+                .keyboardShortcut("e", modifiers: [.command, .option, .shift])
 
                 Divider()
 

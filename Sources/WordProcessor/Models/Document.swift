@@ -9,11 +9,17 @@ final class DocumentModel {
         let snapshot: DocumentFileStore.FileSnapshot
     }
 
+    var canonicalJSONContent: String?
     var htmlContent: String = ""
+    var plainTextContent: String = ""
     var fileURL: URL?
     var isDirty: Bool = false
     var wordCount: Int = 0
     var characterCount: Int = 0
+    var documentID: String = UUID().uuidString
+    var schemaVersion: Int = DocumentFileStore.currentSchemaVersion
+    var createdAt: Date = Date()
+    var modifiedAt: Date = Date()
 
     private static let recentFilesKey = "recentFileBookmarks"
     private static let maxRecentFiles = 10
@@ -21,6 +27,10 @@ final class DocumentModel {
     private var contentRevision: UInt64 = 0
     private var nextPersistenceRequestID: UInt64 = 0
     private var lastCommittedPersistenceRequestID: UInt64 = 0
+
+    init() {
+        applySnapshot(.empty(), fileURL: nil, markDirty: false, resetRevision: true)
+    }
 
     var displayName: String {
         if let url = fileURL {
@@ -36,17 +46,16 @@ final class DocumentModel {
 
     func newDocument() {
         documentGeneration &+= 1
-        contentRevision = 0
-        htmlContent = ""
-        fileURL = nil
-        isDirty = false
-        wordCount = 0
-        characterCount = 0
+        applySnapshot(.empty(), fileURL: nil, markDirty: false, resetRevision: true)
     }
 
-    func updateContent(_ html: String) {
-        let changed = html != htmlContent
+    func updateContent(_ html: String, plainText: String? = nil) {
+        let resolvedPlainText = plainText ?? plainTextContent
+        let changed = html != htmlContent || resolvedPlainText != plainTextContent
+
         htmlContent = html
+        plainTextContent = resolvedPlainText
+
         if changed {
             contentRevision &+= 1
             isDirty = true
@@ -59,21 +68,27 @@ final class DocumentModel {
     }
 
     func syncFromEditor(snapshot: DocumentFileStore.FileSnapshot) {
-        let changed = snapshot.htmlContent != htmlContent
-        htmlContent = snapshot.htmlContent
-        wordCount = snapshot.wordCount
-        characterCount = snapshot.characterCount
+        let changed =
+            snapshot.htmlContent != htmlContent ||
+            snapshot.plainText != plainTextContent ||
+            snapshot.canonicalJSON != canonicalJSONContent
+
+        applySnapshot(snapshot, fileURL: fileURL, markDirty: changed, resetRevision: false)
+
         if changed {
             contentRevision &+= 1
             isDirty = true
         }
     }
 
-    func syncFromEditor(html: String, words: Int, characters: Int) {
-        let changed = html != htmlContent
+    func syncFromEditor(html: String, plainText: String, words: Int, characters: Int) {
+        let changed = html != htmlContent || plainText != plainTextContent
         htmlContent = html
+        plainTextContent = plainText
         wordCount = words
         characterCount = characters
+        modifiedAt = Date()
+
         if changed {
             contentRevision &+= 1
             isDirty = true
@@ -85,51 +100,76 @@ final class DocumentModel {
         guard request.requestID >= lastCommittedPersistenceRequestID else { return }
 
         lastCommittedPersistenceRequestID = request.requestID
-        fileURL = url
-        wordCount = request.snapshot.wordCount
-        characterCount = request.snapshot.characterCount
+        applySnapshot(request.snapshot, fileURL: url, markDirty: false, resetRevision: false)
         isDirty = request.revision != contentRevision
         Self.addToRecentFiles(url)
     }
 
     func load(snapshot: DocumentFileStore.FileSnapshot, from url: URL) {
         documentGeneration &+= 1
-        contentRevision = 0
-        htmlContent = snapshot.htmlContent
-        fileURL = url
-        isDirty = false
-        wordCount = snapshot.wordCount
-        characterCount = snapshot.characterCount
+        applySnapshot(snapshot, fileURL: url, markDirty: false, resetRevision: true)
         Self.addToRecentFiles(url)
     }
 
     func restoreVersion(snapshot: DocumentFileStore.FileSnapshot) {
-        let changed = snapshot.htmlContent != htmlContent
-        htmlContent = snapshot.htmlContent
-        wordCount = snapshot.wordCount
-        characterCount = snapshot.characterCount
+        let changed =
+            snapshot.htmlContent != htmlContent ||
+            snapshot.plainText != plainTextContent ||
+            snapshot.canonicalJSON != canonicalJSONContent
+
+        applySnapshot(snapshot, fileURL: fileURL, markDirty: true, resetRevision: false)
+
         if changed {
             contentRevision &+= 1
         }
         isDirty = true
     }
 
-    func makePersistenceRequest() -> PersistenceRequest {
+    func makePersistenceRequest(snapshot: DocumentFileStore.FileSnapshot? = nil) -> PersistenceRequest {
         nextPersistenceRequestID &+= 1
         return PersistenceRequest(
             requestID: nextPersistenceRequestID,
             generation: documentGeneration,
             revision: contentRevision,
-            snapshot: currentSnapshot()
+            snapshot: snapshot ?? currentSnapshot()
         )
     }
 
     func currentSnapshot() -> DocumentFileStore.FileSnapshot {
         DocumentFileStore.FileSnapshot(
+            canonicalJSON: canonicalJSONContent,
             htmlContent: htmlContent,
+            plainText: plainTextContent,
             wordCount: wordCount,
-            characterCount: characterCount
+            characterCount: characterCount,
+            documentID: documentID,
+            schemaVersion: schemaVersion,
+            createdAt: createdAt,
+            modifiedAt: modifiedAt
         )
+    }
+
+    private func applySnapshot(
+        _ snapshot: DocumentFileStore.FileSnapshot,
+        fileURL: URL?,
+        markDirty: Bool,
+        resetRevision: Bool
+    ) {
+        canonicalJSONContent = snapshot.canonicalJSON
+        htmlContent = snapshot.htmlContent
+        plainTextContent = snapshot.plainText
+        self.fileURL = fileURL
+        wordCount = snapshot.wordCount
+        characterCount = snapshot.characterCount
+        documentID = snapshot.documentID
+        schemaVersion = snapshot.schemaVersion
+        createdAt = snapshot.createdAt
+        modifiedAt = snapshot.modifiedAt
+        isDirty = markDirty
+
+        if resetRevision {
+            contentRevision = 0
+        }
     }
 
     // MARK: - Recent Files
@@ -137,20 +177,22 @@ final class DocumentModel {
     static func addToRecentFiles(_ url: URL) {
         var bookmarks = UserDefaults.standard.array(forKey: recentFilesKey) as? [Data] ?? []
 
-        // Create a security-scoped bookmark
         if let bookmark = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) {
-            // Remove existing bookmark for the same file
             let resolvedURLs = bookmarks.compactMap { data -> (Data, URL)? in
                 var stale = false
-                guard let resolved = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &stale) else { return nil }
+                guard let resolved = try? URL(
+                    resolvingBookmarkData: data,
+                    options: .withSecurityScope,
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &stale
+                ) else {
+                    return nil
+                }
                 return (data, resolved)
             }
             bookmarks = resolvedURLs.filter { $0.1 != url }.map { $0.0 }
-
-            // Add to front
             bookmarks.insert(bookmark, at: 0)
 
-            // Trim to max
             if bookmarks.count > maxRecentFiles {
                 bookmarks = Array(bookmarks.prefix(maxRecentFiles))
             }
@@ -163,7 +205,14 @@ final class DocumentModel {
         let bookmarks = UserDefaults.standard.array(forKey: recentFilesKey) as? [Data] ?? []
         return bookmarks.compactMap { data in
             var stale = false
-            guard let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &stale) else { return nil }
+            guard let url = try? URL(
+                resolvingBookmarkData: data,
+                options: .withSecurityScope,
+                relativeTo: nil,
+                bookmarkDataIsStale: &stale
+            ) else {
+                return nil
+            }
             let name = url.deletingPathExtension().lastPathComponent
             return (url: url, name: name)
         }

@@ -399,34 +399,24 @@ final class ClaudeChatViewModel {
         }
     }
 
-    private nonisolated static func prepareDocumentContext(_ html: String) -> String {
-        guard !html.isEmpty else { return "" }
+    private nonisolated static func prepareDocumentContext(_ text: String) -> String {
+        guard !text.isEmpty else { return "" }
 
-        var text = html.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
-        let entities = [
-            "&nbsp;": " ",
-            "&amp;": "&",
-            "&lt;": "<",
-            "&gt;": ">",
-            "&quot;": "\"",
-            "&#39;": "'",
-        ]
-
-        for (entity, replacement) in entities {
-            text = text.replacingOccurrences(of: entity, with: replacement)
-        }
-
-        text = text
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .replacingOccurrences(of: "\u{00a0}", with: " ")
+            .replacingOccurrences(of: "[ \t]+", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard !text.isEmpty else { return "" }
-        guard text.count > maxDocumentContextCharacters else { return text }
+        guard !normalized.isEmpty else { return "" }
+        guard normalized.count > maxDocumentContextCharacters else { return normalized }
 
         let headCount = maxDocumentContextCharacters / 2
         let tailCount = maxDocumentContextCharacters - headCount
-        let head = String(text.prefix(headCount))
-        let tail = String(text.suffix(tailCount))
+        let head = String(normalized.prefix(headCount))
+        let tail = String(normalized.suffix(tailCount))
 
         return """
         \(head)

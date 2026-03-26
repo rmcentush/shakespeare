@@ -34,7 +34,9 @@ export function sendToSwift(type: BridgeMessageType, payload: unknown = {}): voi
 // Swift calls these functions on the JS side
 export function registerSwiftCallbacks(callbacks: {
   loadContent: (html: string) => void;
+  loadJSONContent: (json: string) => void;
   getContent: () => string;
+  getDocumentSnapshot: () => string;
   getPlainText: () => string;
   applyFormat: (command: string, value?: string) => void;
   focus: () => void;

@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var isDistractionFree = false
     @State private var showFindBar = false
     @State private var showReplace = false
+    @State private var findBarFocusRequest = 0
     @State private var showVersionHistory = false
     @State private var showNamedVersionAlert = false
     @State private var namedVersionName = ""
@@ -42,9 +43,10 @@ struct ContentView: View {
             .background { keyboardShortcuts }
             .onReceive(NotificationCenter.default.publisher(for: .editorContentUpdated)) { notification in
                 if let html = notification.userInfo?["html"] as? String,
+                   let text = notification.userInfo?["text"] as? String,
                    let words = notification.userInfo?["words"] as? Int,
                    let characters = notification.userInfo?["characters"] as? Int {
-                    document.syncFromEditor(html: html, words: words, characters: characters)
+                    document.syncFromEditor(html: html, plainText: text, words: words, characters: characters)
                 } else if let html = notification.userInfo?["html"] as? String {
                     document.updateContent(html)
                 } else if let words = notification.userInfo?["words"] as? Int,
@@ -54,10 +56,7 @@ struct ContentView: View {
                 editorViewModel.scheduleAutoSave(document: document)
             }
             .onReceive(NotificationCenter.default.publisher(for: .editorBecameReady)) { _ in
-                // Reload document content when the editor (re)initializes.
-                // This handles: web process restart, and any other editor reload scenario
-                // where the JS context was reset but document.htmlContent still has content.
-                editorViewModel.loadContent(document.htmlContent)
+                editorViewModel.loadSnapshot(document.currentSnapshot())
             }
             .onReceive(NotificationCenter.default.publisher(for: .fontSettingsChanged)) { _ in
                 let appearance = UserDefaults.standard.string(forKey: "editorAppearance") ?? "system"
@@ -100,7 +99,11 @@ struct ContentView: View {
                     ToolbarView()
                 }
                 if showFindBar {
-                    FindBarView(isVisible: $showFindBar, showReplace: $showReplace)
+                    FindBarView(
+                        isVisible: $showFindBar,
+                        showReplace: $showReplace,
+                        focusRequest: findBarFocusRequest
+                    )
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
                 ZStack {
@@ -177,6 +180,7 @@ struct ContentView: View {
                     showFindBar = false
                     showReplace = false
                 }
+                editorViewModel.focusEditor()
             } else if isDistractionFree {
                 toggleFocusMode()
             }
@@ -196,6 +200,7 @@ struct ContentView: View {
             withAnimation(.easeInOut(duration: 0.15)) {
                 showFindBar = true
                 showReplace = false
+                findBarFocusRequest += 1
             }
         }
         .keyboardShortcut("f", modifiers: .command)
@@ -206,6 +211,7 @@ struct ContentView: View {
             withAnimation(.easeInOut(duration: 0.15)) {
                 showFindBar = true
                 showReplace = true
+                findBarFocusRequest += 1
             }
         }
         .keyboardShortcut("f", modifiers: [.command, .option])
@@ -220,12 +226,7 @@ extension ContentView {
         guard !name.isEmpty else { return }
         Task {
             let snapshot = await editorViewModel.latestSnapshot(for: document)
-            VersionStore.shared.saveVersion(
-                filePath: url.path,
-                htmlContent: snapshot.htmlContent,
-                wordCount: snapshot.wordCount,
-                name: name
-            )
+            VersionStore.shared.saveVersion(filePath: url.path, snapshot: snapshot, name: name)
         }
         namedVersionName = ""
     }

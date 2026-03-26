@@ -6,12 +6,12 @@ import WebKit
 final class EditorViewModel {
     var webView: WKWebView?
     var isEditorReady = false
+    var assetBaseURL: URL?
     var selectionState = SelectionState()
     var pendingEditCount = 0
     var pendingEditCurrentIndex = -1
     private var autoSaveTimer: Timer?
-    /// Content buffered for loading when the editor becomes ready.
-    private var pendingContent: String?
+    private var pendingSnapshot: DocumentFileStore.FileSnapshot?
     /// Incremented each time the editor signals ready (supports detecting web process restarts).
     var editorReadyCount = 0
 
@@ -33,13 +33,10 @@ final class EditorViewModel {
         case .editorReady:
             isEditorReady = true
             editorReadyCount += 1
-            // Flush any content that was buffered before the editor was ready
-            if let content = pendingContent {
-                pendingContent = nil
-                let escaped = escapeForJS(content)
-                evaluateJS("window.editorAPI?.loadContent('\(escaped)')")
+            if let snapshot = pendingSnapshot {
+                pendingSnapshot = nil
+                applySnapshotToEditor(snapshot)
             }
-            // Notify so ContentView can reload content (handles web process restart too)
             NotificationCenter.default.post(name: .editorBecameReady, object: nil)
 
         case .contentChanged(let html):
@@ -49,11 +46,16 @@ final class EditorViewModel {
                 userInfo: ["html": html]
             )
 
-        case .contentUpdate(let html, let words, let characters):
+        case .contentUpdate(let html, let text, let words, let characters):
             NotificationCenter.default.post(
                 name: .editorContentUpdated,
                 object: nil,
-                userInfo: ["html": html, "words": words, "characters": characters]
+                userInfo: [
+                    "html": html,
+                    "text": text,
+                    "words": words,
+                    "characters": characters,
+                ]
             )
 
         case .selectionChanged(let state):
@@ -83,21 +85,60 @@ final class EditorViewModel {
         }
     }
 
-    // Call JS functions from Swift
-    func loadContent(_ html: String) {
+    // MARK: - Content Loading
+
+    func loadSnapshot(_ snapshot: DocumentFileStore.FileSnapshot) {
         guard isEditorReady else {
-            // Editor JS not loaded yet — buffer for when editorReady fires
-            pendingContent = html
+            pendingSnapshot = snapshot
             return
         }
-        pendingContent = nil
+
+        pendingSnapshot = nil
+        applySnapshotToEditor(snapshot)
+    }
+
+    func loadContent(_ html: String) {
+        let snapshot = DocumentFileStore.FileSnapshot(
+            canonicalJSON: nil,
+            htmlContent: html,
+            plainText: nil
+        )
+        loadSnapshot(snapshot)
+    }
+
+    private func applySnapshotToEditor(_ snapshot: DocumentFileStore.FileSnapshot) {
+        if let canonicalJSON = snapshot.canonicalJSON, !canonicalJSON.isEmpty {
+            loadJSONContent(canonicalJSON)
+        } else {
+            loadHTMLContent(snapshot.htmlContent)
+        }
+    }
+
+    private func loadHTMLContent(_ html: String) {
         let escaped = escapeForJS(html)
         evaluateJS("window.editorAPI?.loadContent('\(escaped)')")
     }
 
+    private func loadJSONContent(_ json: String) {
+        let escaped = escapeForJS(json)
+        evaluateJS("window.editorAPI?.loadJSONContent('\(escaped)')")
+    }
+
+    // MARK: - Snapshot Capture
+
     func getContent(completion: @escaping (String?) -> Void) {
         evaluateJS("window.editorAPI?.getContent()") { result in
             completion(result as? String)
+        }
+    }
+
+    func getDocumentSnapshot(completion: @escaping (DocumentFileStore.FileSnapshot?) -> Void) {
+        evaluateJS("window.editorAPI?.getDocumentSnapshot()") { [weak self] result in
+            guard let jsonString = result as? String else {
+                completion(nil)
+                return
+            }
+            completion(self?.parseEditorSnapshot(from: jsonString))
         }
     }
 
@@ -246,7 +287,7 @@ final class EditorViewModel {
     }
 
     func latestSnapshot(for document: DocumentModel, preferEditorState: Bool = true) async -> DocumentFileStore.FileSnapshot {
-        if preferEditorState, let snapshot = await captureEditorSnapshot() {
+        if preferEditorState, let snapshot = await captureEditorSnapshot(document: document) {
             document.syncFromEditor(snapshot: snapshot)
         }
         return document.currentSnapshot()
@@ -254,7 +295,6 @@ final class EditorViewModel {
 
     // MARK: - Auto-Save
 
-    /// Schedule auto-save 5s after the last edit. Only auto-saves if the document has a file URL.
     func scheduleAutoSave(document: DocumentModel) {
         autoSaveTimer?.invalidate()
         guard document.fileURL != nil else { return }
@@ -275,12 +315,11 @@ final class EditorViewModel {
         Task { @MainActor in
             await flushBeforeDocumentChange(document: document)
             document.newDocument()
-            loadContent("")
+            assetBaseURL = nil
+            loadSnapshot(document.currentSnapshot())
         }
     }
 
-    /// Auto-save persists the in-memory model snapshot, which is already kept in sync
-    /// from editor notifications and guarded by document revision tracking.
     private func autoSave(document: DocumentModel) async {
         guard let url = document.fileURL, document.isDirty else { return }
         await persistDocument(
@@ -292,8 +331,6 @@ final class EditorViewModel {
         )
     }
 
-    /// Cancel auto-save timer and flush any unsaved changes before switching documents.
-    /// Call this before openFile() or newDocument().
     private func flushBeforeDocumentChange(document: DocumentModel) async {
         autoSaveTimer?.invalidate()
         autoSaveTimer = nil
@@ -311,7 +348,7 @@ final class EditorViewModel {
 
     func openDocument(document: DocumentModel) {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.html]
+        panel.allowedContentTypes = [.shakespeareDocument, .html]
         panel.allowsMultipleSelection = false
 
         panel.begin { [weak self] response in
@@ -326,12 +363,9 @@ final class EditorViewModel {
             do {
                 let snapshot = try await DocumentFileStore.shared.load(from: url)
                 document.load(snapshot: snapshot, from: url)
-                loadContent(snapshot.htmlContent)
-                VersionStore.shared.saveVersion(
-                    filePath: url.path,
-                    htmlContent: snapshot.htmlContent,
-                    wordCount: snapshot.wordCount
-                )
+                assetBaseURL = DocumentFileStore.isNativeDocumentURL(url) ? url : nil
+                loadSnapshot(snapshot)
+                VersionStore.shared.saveVersion(filePath: url.path, snapshot: snapshot)
             } catch {
                 print("Failed to open file: \(error)")
             }
@@ -341,6 +375,7 @@ final class EditorViewModel {
     func saveDocument(document: DocumentModel) {
         autoSaveTimer?.invalidate()
         autoSaveTimer = nil
+
         if let url = document.fileURL {
             Task { @MainActor in
                 await persistDocument(
@@ -359,9 +394,10 @@ final class EditorViewModel {
     func saveDocumentAs(document: DocumentModel) {
         autoSaveTimer?.invalidate()
         autoSaveTimer = nil
+
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.html]
-        panel.nameFieldStringValue = document.displayName + ".html"
+        panel.allowedContentTypes = [.shakespeareDocument]
+        panel.nameFieldStringValue = document.displayName + ".\(DocumentFileStore.documentPackageExtension)"
 
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
@@ -377,6 +413,25 @@ final class EditorViewModel {
         }
     }
 
+    func exportHTML(document: DocumentModel) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.html]
+        panel.nameFieldStringValue = document.displayName + ".html"
+
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                guard let self else { return }
+                let snapshot = await self.latestSnapshot(for: document)
+                do {
+                    _ = try await DocumentFileStore.shared.save(snapshot, to: url, sourceDocumentURL: document.fileURL)
+                } catch {
+                    print("HTML export failed for \(url.lastPathComponent): \(error)")
+                }
+            }
+        }
+    }
+
     private func persistDocument(
         document: DocumentModel,
         to url: URL,
@@ -384,50 +439,105 @@ final class EditorViewModel {
         createVersionSnapshot: Bool,
         actionName: String
     ) async {
-        _ = await latestSnapshot(for: document, preferEditorState: captureLatestEditorState)
-        let request = document.makePersistenceRequest()
+        let latestSnapshot = await latestSnapshot(for: document, preferEditorState: captureLatestEditorState)
+        let request = document.makePersistenceRequest(snapshot: latestSnapshot)
+        let sourceDocumentURL = document.fileURL
 
         do {
-            try await DocumentFileStore.shared.save(request.snapshot, to: url)
-            document.markSaved(url: url, request: request)
+            let persistedSnapshot = try await DocumentFileStore.shared.save(
+                request.snapshot,
+                to: url,
+                sourceDocumentURL: sourceDocumentURL
+            )
+            let persistedRequest = DocumentModel.PersistenceRequest(
+                requestID: request.requestID,
+                generation: request.generation,
+                revision: request.revision,
+                snapshot: persistedSnapshot
+            )
+            document.markSaved(url: url, request: persistedRequest)
+            assetBaseURL = DocumentFileStore.isNativeDocumentURL(url) ? url : nil
 
             if createVersionSnapshot {
-                VersionStore.shared.saveVersion(
-                    filePath: url.path,
-                    htmlContent: request.snapshot.htmlContent,
-                    wordCount: request.snapshot.wordCount
-                )
+                VersionStore.shared.saveVersion(filePath: url.path, snapshot: persistedSnapshot)
             }
         } catch {
             print("\(actionName) failed for \(url.lastPathComponent): \(error)")
         }
     }
 
-    private func captureEditorSnapshot() async -> DocumentFileStore.FileSnapshot? {
+    private func captureEditorSnapshot(document: DocumentModel) async -> DocumentFileStore.FileSnapshot? {
         await withCheckedContinuation { continuation in
-            getContent { html in
-                guard let html else {
+            getDocumentSnapshot { [currentSnapshot = document.currentSnapshot()] snapshot in
+                guard let snapshot else {
                     continuation.resume(returning: nil)
                     return
                 }
-                continuation.resume(returning: DocumentFileStore.FileSnapshot(htmlContent: html))
+
+                continuation.resume(
+                    returning: DocumentFileStore.FileSnapshot(
+                        canonicalJSON: snapshot.canonicalJSON,
+                        htmlContent: snapshot.htmlContent,
+                        plainText: snapshot.plainText,
+                        wordCount: snapshot.wordCount,
+                        characterCount: snapshot.characterCount,
+                        documentID: currentSnapshot.documentID,
+                        schemaVersion: currentSnapshot.schemaVersion,
+                        createdAt: currentSnapshot.createdAt,
+                        modifiedAt: Date()
+                    )
+                )
             }
         }
     }
 
+    private func parseEditorSnapshot(from jsonString: String) -> DocumentFileStore.FileSnapshot? {
+        guard let data = jsonString.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+
+        let html = dict["html"] as? String ?? ""
+        let plainText = dict["text"] as? String ?? ""
+        let words = dict["words"] as? Int
+        let characters = dict["characters"] as? Int
+
+        let canonicalJSON: String?
+        if let jsonObject = dict["json"],
+           JSONSerialization.isValidJSONObject(jsonObject),
+           let jsonData = try? JSONSerialization.data(withJSONObject: jsonObject, options: [.prettyPrinted, .sortedKeys]) {
+            canonicalJSON = String(decoding: jsonData, as: UTF8.self)
+        } else {
+            canonicalJSON = nil
+        }
+
+        return DocumentFileStore.FileSnapshot(
+            canonicalJSON: canonicalJSON,
+            htmlContent: html,
+            plainText: plainText,
+            wordCount: words,
+            characterCount: characters
+        )
+    }
+
     // MARK: - JS Evaluation
 
-    /// Single-pass string escaping for JS string literals.
     private func escapeForJS(_ s: String) -> String {
         var result = ""
         result.reserveCapacity(s.count)
         for char in s {
             switch char {
-            case "\\": result += "\\\\"
-            case "'":  result += "\\'"
-            case "\n": result += "\\n"
-            case "\r": result += "\\r"
-            default:   result.append(char)
+            case "\\":
+                result += "\\\\"
+            case "'":
+                result += "\\'"
+            case "\n":
+                result += "\\n"
+            case "\r":
+                result += "\\r"
+            default:
+                result.append(char)
             }
         }
         return result
@@ -438,11 +548,10 @@ final class EditorViewModel {
             completion?(nil)
             return
         }
+
         webView.evaluateJavaScript(js) { result, error in
             if let error = error {
                 let desc = error.localizedDescription
-                // WKErrorWebContentProcessTerminated (code 11) means the process crashed;
-                // other errors may indicate a hung or disconnected webview.
                 if desc.contains("process terminated") || desc.contains("not found") {
                     print("JS evaluation failed (possible web process crash): \(desc)")
                 } else {
@@ -452,7 +561,6 @@ final class EditorViewModel {
             completion?(result)
         }
     }
-
 }
 
 // MARK: - Notifications
