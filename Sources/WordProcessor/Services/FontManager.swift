@@ -36,8 +36,8 @@ final class FontManager {
 
     func generateCSS() -> String {
         let fontName = normalizeFontName(currentFont)
-        """
-        .editor-content {
+        return """
+        .editor-content, .editor-footnotes {
             font-family: '\(fontName)', Georgia, serif;
             font-size: \(Int(currentSize))px;
             line-height: \(currentLineHeight);
