@@ -939,6 +939,7 @@ const editor = new Editor({
     attributes: {
       class: 'editor-content',
       spellcheck: 'true',
+      autocorrect: 'on',
     },
     transformPastedHTML(html) {
       return sanitizePastedHTML(html);
@@ -1002,6 +1003,16 @@ const editor = new Editor({
     }, 80);
   },
 });
+
+function setEditorSpellcheckEnabled(enabled: boolean) {
+  const dom = editor.view.dom as HTMLElement;
+  dom.setAttribute('spellcheck', enabled ? 'true' : 'false');
+}
+
+function setEditorAutocorrectEnabled(enabled: boolean) {
+  const dom = editor.view.dom as HTMLElement;
+  dom.setAttribute('autocorrect', enabled ? 'on' : 'off');
+}
 
 // Register callbacks for Swift to call into JS
 registerSwiftCallbacks({
@@ -1125,6 +1136,12 @@ registerSwiftCallbacks({
   },
   focus() {
     editor.commands.focus();
+  },
+  setSpellcheckEnabled(enabled: boolean) {
+    setEditorSpellcheckEnabled(enabled);
+  },
+  setAutocorrectEnabled(enabled: boolean) {
+    setEditorAutocorrectEnabled(enabled);
   },
   setEditable(editable: boolean) {
     editor.setEditable(editable);

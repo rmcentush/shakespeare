@@ -7,6 +7,7 @@ struct SettingsView: View {
 
     // Font settings
     @State private var fontManager = FontManager.shared
+    @State private var textCheckingSettings = TextCheckingSettings.shared
 
     var body: some View {
         TabView {
@@ -89,8 +90,41 @@ struct SettingsView: View {
                 }
             }
             .tabItem { Label("Typography", systemImage: "textformat") }
+
+            Form {
+                Section("Spelling and Grammar") {
+                    Toggle("Check spelling while typing", isOn: Binding(
+                        get: { textCheckingSettings.continuousSpellCheckingEnabled },
+                        set: { textCheckingSettings.continuousSpellCheckingEnabled = $0 }
+                    ))
+
+                    Toggle("Check grammar with spelling", isOn: Binding(
+                        get: { textCheckingSettings.grammarCheckingEnabled },
+                        set: { textCheckingSettings.grammarCheckingEnabled = $0 }
+                    ))
+
+                    Toggle("Correct spelling automatically", isOn: Binding(
+                        get: { textCheckingSettings.automaticSpellingCorrectionEnabled },
+                        set: { textCheckingSettings.automaticSpellingCorrectionEnabled = $0 }
+                    ))
+                }
+
+                Section("Substitutions") {
+                    Toggle("Use text replacements", isOn: Binding(
+                        get: { textCheckingSettings.automaticTextReplacementEnabled },
+                        set: { textCheckingSettings.automaticTextReplacementEnabled = $0 }
+                    ))
+                }
+
+                Section {
+                    Text("These settings use macOS and WebKit text checking for the editor.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .tabItem { Label("Editing", systemImage: "checkmark.circle") }
         }
-        .frame(width: 450, height: 300)
+        .frame(width: 450, height: 360)
         .onAppear {
             if let key = KeychainService.shared.getAPIKey(service: "anthropic") {
                 anthropicKey = key

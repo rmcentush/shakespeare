@@ -25,6 +25,7 @@ struct EditorWebView: NSViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.setValue(false, forKey: "drawsBackground")
         webView.navigationDelegate = context.coordinator
+        TextCheckingSettings.shared.bind(webView: webView)
 
         // Load the editor HTML
         if let resourceURL = Bundle.module.url(forResource: "Resources", withExtension: nil),
@@ -48,6 +49,7 @@ struct EditorWebView: NSViewRepresentable {
             let appearance = UserDefaults.standard.string(forKey: "editorAppearance") ?? "system"
             let themeCSS = FontManager.shared.themedCSS(for: appearance)
             viewModel.setThemeCSS(themeCSS)
+            TextCheckingSettings.shared.editorDidBecomeReady()
         }
     }
 

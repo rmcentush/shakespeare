@@ -41,6 +41,8 @@ export function registerSwiftCallbacks(callbacks: {
   applyFormat: (command: string, value?: string) => void;
   focus: () => void;
   setEditable: (editable: boolean) => void;
+  setSpellcheckEnabled: (enabled: boolean) => void;
+  setAutocorrectEnabled: (enabled: boolean) => void;
   getSelectedText: () => string;
   setThemeCSS: (css: string) => void;
   findInDocument: (query: string) => number;

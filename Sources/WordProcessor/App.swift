@@ -5,6 +5,7 @@ import AppKit
 struct WordProcessorApp: App {
     @State private var document = DocumentModel()
     @State private var editorViewModel = EditorViewModel()
+    @State private var textCheckingSettings = TextCheckingSettings.shared
 
     init() {
         // Bring the app to the foreground when launched from terminal
@@ -84,6 +85,40 @@ struct WordProcessorApp: App {
             }
 
             CommandGroup(after: .textEditing) {
+                Menu("Spelling and Grammar") {
+                    Button("Check Spelling Now") {
+                        textCheckingSettings.checkSpellingNow()
+                    }
+
+                    Button("Show Guess Panel") {
+                        textCheckingSettings.showGuessPanel()
+                    }
+
+                    Divider()
+
+                    Toggle("Check Spelling While Typing", isOn: Binding(
+                        get: { textCheckingSettings.continuousSpellCheckingEnabled },
+                        set: { textCheckingSettings.continuousSpellCheckingEnabled = $0 }
+                    ))
+
+                    Toggle("Check Grammar With Spelling", isOn: Binding(
+                        get: { textCheckingSettings.grammarCheckingEnabled },
+                        set: { textCheckingSettings.grammarCheckingEnabled = $0 }
+                    ))
+                }
+
+                Menu("Substitutions") {
+                    Toggle("Correct Spelling Automatically", isOn: Binding(
+                        get: { textCheckingSettings.automaticSpellingCorrectionEnabled },
+                        set: { textCheckingSettings.automaticSpellingCorrectionEnabled = $0 }
+                    ))
+
+                    Toggle("Use Text Replacements", isOn: Binding(
+                        get: { textCheckingSettings.automaticTextReplacementEnabled },
+                        set: { textCheckingSettings.automaticTextReplacementEnabled = $0 }
+                    ))
+                }
+
                 Divider()
                 Button("Bold") {
                     editorViewModel.applyFormat("bold")
