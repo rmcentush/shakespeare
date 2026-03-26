@@ -25,6 +25,8 @@ final class EditorViewModel {
         var isLink = false
         var linkHref = ""
         var textColor = ""
+        var isFootnote = false
+        var footnoteText = ""
     }
 
     // Called by bridge when JS sends a message
@@ -68,6 +70,8 @@ final class EditorViewModel {
             selectionState.isLink = state.isLink
             selectionState.linkHref = state.linkHref
             selectionState.textColor = state.textColor
+            selectionState.isFootnote = state.isFootnote
+            selectionState.footnoteText = state.footnoteText
 
         case .wordCount(let words, let characters):
             NotificationCenter.default.post(

@@ -4,6 +4,9 @@ import UniformTypeIdentifiers
 struct ToolbarView: View {
     @Environment(EditorViewModel.self) private var viewModel
     @State private var fontManager = FontManager.shared
+    private let lineHeightOptions: [Double] = Array(stride(from: 1.2, through: 2.4, by: 0.1)).map {
+        Double(round($0 * 10) / 10)
+    }
 
     var body: some View {
         HStack(spacing: 2) {
@@ -42,6 +45,20 @@ struct ToolbarView: View {
             .frame(width: 78)
             .help("Font Size")
 
+            Picker("", selection: Binding(
+                get: { fontManager.currentLineHeight },
+                set: { newHeight in
+                    fontManager.currentLineHeight = newHeight
+                    persistTypographySettings()
+                }
+            )) {
+                ForEach(lineHeightOptions, id: \.self) { lineHeight in
+                    Text(String(format: "%.1fx", lineHeight)).tag(lineHeight)
+                }
+            }
+            .frame(width: 74)
+            .help("Line Spacing")
+
             Divider()
                 .frame(height: 20)
                 .padding(.horizontal, 4)
@@ -61,6 +78,7 @@ struct ToolbarView: View {
                     viewModel.applyFormat("strike")
                 }
                 LinkButton()
+                FootnoteButton()
                 RedTextButton()
             }
 
@@ -384,6 +402,82 @@ struct LinkButton: View {
             url = "https://" + url
         }
         viewModel.applyFormat("setLink", value: url)
+        showPopover = false
+    }
+}
+
+struct FootnoteButton: View {
+    @Environment(EditorViewModel.self) private var viewModel
+    @State private var showPopover = false
+    @State private var noteText = ""
+    @State private var isHovered = false
+
+    private var trimmedNoteText: String {
+        noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        Button {
+            noteText = viewModel.selectionState.isFootnote ? viewModel.selectionState.footnoteText : ""
+            showPopover = true
+        } label: {
+            Image(systemName: "textformat.superscript")
+                .frame(width: 28, height: 28)
+                .background(
+                    viewModel.selectionState.isFootnote ? Color.accentColor.opacity(0.2) :
+                    isHovered ? Color.primary.opacity(0.08) : Color.clear
+                )
+                .cornerRadius(4)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .help(viewModel.selectionState.isFootnote ? "Edit Footnote" : "Insert Footnote")
+        .popover(isPresented: $showPopover, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(viewModel.selectionState.isFootnote ? "Edit Footnote" : "Insert Footnote")
+                    .font(.headline)
+
+                TextEditor(text: $noteText)
+                    .font(.body)
+                    .frame(width: 280, height: 120)
+                    .padding(6)
+                    .background(Color.primary.opacity(0.04))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                HStack {
+                    if viewModel.selectionState.isFootnote {
+                        Button("Remove", role: .destructive) {
+                            viewModel.applyFormat("removeFootnote")
+                            showPopover = false
+                        }
+                    }
+
+                    Spacer()
+
+                    Button("Cancel") {
+                        showPopover = false
+                    }
+
+                    Button("Apply") {
+                        applyFootnote()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(trimmedNoteText.isEmpty)
+                }
+            }
+            .padding()
+        }
+    }
+
+    private func applyFootnote() {
+        guard !trimmedNoteText.isEmpty else { return }
+        viewModel.applyFormat("setFootnote", value: trimmedNoteText)
         showPopover = false
     }
 }

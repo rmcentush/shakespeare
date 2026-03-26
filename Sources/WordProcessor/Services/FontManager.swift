@@ -56,6 +56,13 @@ final class FontManager {
 
             html, body { background: #ffffff !important; color: #1a1a1a !important; }
             .editor-content { color: #1a1a1a !important; }
+            .editor-footnotes { border-top-color: #e0e0e0 !important; }
+            .editor-footnotes-title { color: #6a6a6a !important; }
+            .editor-footnotes-list li { color: #3f3f3f !important; }
+            .footnote-reference {
+                color: #007aff !important;
+                background: rgba(0, 122, 255, 0.08) !important;
+            }
             """
         case "dark":
             return fullThemeCSS() + """
@@ -65,6 +72,13 @@ final class FontManager {
             .editor-content blockquote { border-left-color: #555 !important; color: #aaa !important; }
             .editor-content code, .editor-content pre { background: #2d2d2d !important; }
             .editor-content hr { border-top-color: #444 !important; }
+            .editor-footnotes { border-top-color: #444 !important; }
+            .editor-footnotes-title { color: #9d9d9d !important; }
+            .editor-footnotes-list li { color: #d0d0d0 !important; }
+            .footnote-reference {
+                color: #5ac8fa !important;
+                background: rgba(90, 200, 250, 0.16) !important;
+            }
             """
         default:
             return fullThemeCSS()

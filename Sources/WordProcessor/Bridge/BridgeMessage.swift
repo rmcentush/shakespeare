@@ -26,6 +26,8 @@ enum BridgePayload: Codable {
         let isLink: Bool
         let linkHref: String
         let textColor: String
+        let isFootnote: Bool
+        let footnoteText: String
     }
 
     struct WordCountData: Codable {
@@ -71,7 +73,9 @@ enum BridgePayload: Codable {
                 textAlign: payload["textAlign"] as? String ?? "left",
                 isLink: payload["isLink"] as? Bool ?? false,
                 linkHref: payload["linkHref"] as? String ?? "",
-                textColor: payload["textColor"] as? String ?? ""
+                textColor: payload["textColor"] as? String ?? "",
+                isFootnote: payload["isFootnote"] as? Bool ?? false,
+                footnoteText: payload["footnoteText"] as? String ?? ""
             )
             return .selectionChanged(state)
         case "wordCount":

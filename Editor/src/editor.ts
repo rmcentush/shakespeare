@@ -1,4 +1,4 @@
-import { Editor, Extension } from '@tiptap/core';
+import { Editor, Extension, Node as TiptapNode, mergeAttributes } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -9,7 +9,7 @@ import TextStyle from '@tiptap/extension-text-style';
 import Image from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
 import Color from '@tiptap/extension-color';
-import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { Plugin, PluginKey, NodeSelection } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { sendToSwift, registerSwiftCallbacks } from './bridge';
 
@@ -17,6 +17,13 @@ import { sendToSwift, registerSwiftCallbacks } from './bridge';
 interface SearchMatch {
   from: number;
   to: number;
+}
+
+interface FootnoteDetails {
+  id: string;
+  index: number;
+  note: string;
+  pos: number;
 }
 
 let searchResults: SearchMatch[] = [];
@@ -28,6 +35,8 @@ const MAX_PENDING_EDITS = 120;
 const MAX_PENDING_FIND_REPLACE_MATCHES = 60;
 const TOO_MANY_MATCHES = -1;
 const TOO_MANY_PENDING_EDITS = -2;
+const FOOTNOTE_NODE_NAME = 'footnote';
+const GENERATED_FOOTNOTES_SELECTOR = 'section[data-generated-footnotes="true"]';
 
 const searchPluginKey = new PluginKey('searchHighlight');
 
@@ -285,6 +294,420 @@ const SearchHighlight = Extension.create({
   },
 });
 
+const HoverableLink = Link.extend({
+  renderHTML({ HTMLAttributes }) {
+    const href = typeof HTMLAttributes.href === 'string' ? HTMLAttributes.href : '';
+    return [
+      'a',
+      mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, href ? { title: href } : {}),
+      0,
+    ];
+  },
+});
+
+function normalizeFootnoteNote(note: string): string {
+  return note.replace(/\r\n?/g, '\n').trim();
+}
+
+function createFootnoteID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `footnote-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function collectFootnotes(doc: any): FootnoteDetails[] {
+  const footnotes: FootnoteDetails[] = [];
+  let index = 1;
+
+  doc.descendants((node: any, pos: number) => {
+    if (node.type.name !== FOOTNOTE_NODE_NAME) return;
+    footnotes.push({
+      id: (node.attrs.id as string) || `footnote-${index}`,
+      index,
+      note: normalizeFootnoteNote((node.attrs.note as string) || ''),
+      pos,
+    });
+    index += 1;
+  });
+
+  return footnotes;
+}
+
+function appendMultilineText(container: HTMLElement, text: string) {
+  const lines = text.split('\n');
+  lines.forEach((line, index) => {
+    if (index > 0) {
+      container.appendChild(document.createElement('br'));
+    }
+    container.appendChild(document.createTextNode(line));
+  });
+}
+
+function buildGeneratedFootnotesSection(doc: any): HTMLElement | null {
+  const footnotes = collectFootnotes(doc);
+  if (footnotes.length === 0) return null;
+
+  const section = document.createElement('section');
+  section.className = 'generated-footnotes';
+  section.setAttribute('data-generated-footnotes', 'true');
+
+  const divider = document.createElement('hr');
+  section.appendChild(divider);
+
+  const list = document.createElement('ol');
+  footnotes.forEach((footnote) => {
+    const item = document.createElement('li');
+    item.id = `footnote-${footnote.id}`;
+    appendMultilineText(item, footnote.note);
+    list.appendChild(item);
+  });
+
+  section.appendChild(list);
+  return section;
+}
+
+function renderFootnotesPanel(editor: Editor) {
+  const container = document.getElementById('footnotes');
+  if (!container) return;
+
+  const footnotes = collectFootnotes(editor.state.doc);
+  container.replaceChildren();
+
+  if (footnotes.length === 0) {
+    container.setAttribute('hidden', 'true');
+    return;
+  }
+
+  container.removeAttribute('hidden');
+
+  const title = document.createElement('div');
+  title.className = 'editor-footnotes-title';
+  title.textContent = 'Footnotes';
+  container.appendChild(title);
+
+  const list = document.createElement('ol');
+  list.className = 'editor-footnotes-list';
+
+  footnotes.forEach((footnote) => {
+    const item = document.createElement('li');
+    item.id = `editor-footnote-${footnote.id}`;
+
+    const note = document.createElement('span');
+    note.className = 'editor-footnote-note';
+    appendMultilineText(note, footnote.note);
+    item.appendChild(note);
+
+    list.appendChild(item);
+  });
+
+  container.appendChild(list);
+}
+
+function serializeDocumentHTML(editor: Editor): string {
+  const content = editor.getHTML();
+  const footnotesSection = buildGeneratedFootnotesSection(editor.state.doc);
+  return footnotesSection ? `${content}${footnotesSection.outerHTML}` : content;
+}
+
+function serializeDocumentPlainText(editor: Editor): string {
+  const text = editor.getText();
+  const footnotes = collectFootnotes(editor.state.doc);
+
+  if (footnotes.length === 0) {
+    return text;
+  }
+
+  const footnotesText = footnotes
+    .map((footnote) => `[${footnote.index}] ${footnote.note}`)
+    .join('\n');
+
+  return text.trim().length > 0
+    ? `${text}\n\nFootnotes\n${footnotesText}`
+    : `Footnotes\n${footnotesText}`;
+}
+
+function stripGeneratedFootnotesSection(html: string): string {
+  if (!html.includes('data-generated-footnotes')) {
+    return html;
+  }
+
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  parsed.querySelectorAll(GENERATED_FOOTNOTES_SELECTOR).forEach((element) => element.remove());
+  return parsed.body.innerHTML;
+}
+
+function getSelectedFootnote(editor: Editor): { node: any; pos: number } | null {
+  const { selection } = editor.state;
+  if (selection instanceof NodeSelection && selection.node.type.name === FOOTNOTE_NODE_NAME) {
+    return { node: selection.node, pos: selection.from };
+  }
+  return null;
+}
+
+function upsertFootnote(editor: Editor, note: string) {
+  const normalizedNote = normalizeFootnoteNote(note);
+  if (!normalizedNote) return;
+
+  const selectedFootnote = getSelectedFootnote(editor);
+  if (selectedFootnote) {
+    editor.view.dispatch(
+      editor.state.tr.setNodeMarkup(selectedFootnote.pos, undefined, {
+        ...selectedFootnote.node.attrs,
+        note: normalizedNote,
+      })
+    );
+    return;
+  }
+
+  editor.chain().focus().insertContent({
+    type: FOOTNOTE_NODE_NAME,
+    attrs: {
+      id: createFootnoteID(),
+      note: normalizedNote,
+      index: 0,
+    },
+  }).run();
+}
+
+function removeSelectedFootnote(editor: Editor) {
+  const selectedFootnote = getSelectedFootnote(editor);
+  if (!selectedFootnote) return;
+
+  editor.commands.focus();
+  editor.view.dispatch(
+    editor.state.tr.delete(
+      selectedFootnote.pos,
+      selectedFootnote.pos + selectedFootnote.node.nodeSize
+    )
+  );
+}
+
+const Footnote = TiptapNode.create({
+  name: FOOTNOTE_NODE_NAME,
+  inline: true,
+  group: 'inline',
+  atom: true,
+  selectable: true,
+
+  addAttributes() {
+    return {
+      id: {
+        default: null,
+        parseHTML: (element: HTMLElement) => element.getAttribute('data-footnote-id') || createFootnoteID(),
+        renderHTML: (attributes: Record<string, unknown>) => (
+          attributes.id ? { 'data-footnote-id': attributes.id } : {}
+        ),
+      },
+      note: {
+        default: '',
+        parseHTML: (element: HTMLElement) => normalizeFootnoteNote(
+          element.getAttribute('data-footnote-note') || ''
+        ),
+        renderHTML: (attributes: Record<string, unknown>) => (
+          attributes.note ? { 'data-footnote-note': attributes.note } : {}
+        ),
+      },
+      index: {
+        default: 0,
+        parseHTML: (element: HTMLElement) => parseInt(
+          element.getAttribute('data-footnote-index') || '0',
+          10
+        ) || 0,
+        renderHTML: (attributes: Record<string, unknown>) => ({
+          'data-footnote-index': String(attributes.index || 0),
+        }),
+      },
+    };
+  },
+
+  parseHTML() {
+    return [
+      { tag: 'sup[data-footnote-id]' },
+      { tag: 'sup[data-footnote-note]' },
+    ];
+  },
+
+  renderHTML({ node, HTMLAttributes }) {
+    const id = (node.attrs.id as string) || createFootnoteID();
+    const index = String(node.attrs.index || '?');
+
+    return [
+      'sup',
+      mergeAttributes(HTMLAttributes, {
+        class: 'footnote-reference',
+        contenteditable: 'false',
+        title: (node.attrs.note as string) || '',
+      }),
+      ['a', { href: `#footnote-${id}` }, index],
+    ];
+  },
+
+  addNodeView() {
+    return ({ node, getPos, editor }) => {
+      const element = document.createElement('sup');
+      element.className = 'footnote-reference';
+      element.contentEditable = 'false';
+
+      const updateElement = (currentNode: any) => {
+        element.textContent = String(currentNode.attrs.index || '?');
+        element.title = (currentNode.attrs.note as string) || '';
+        element.dataset.footnoteId = (currentNode.attrs.id as string) || '';
+        element.dataset.footnoteIndex = String(currentNode.attrs.index || 0);
+        element.dataset.footnoteNote = (currentNode.attrs.note as string) || '';
+      };
+
+      const handleMouseDown = (event: MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (typeof getPos !== 'function') return;
+        const pos = getPos();
+        if (typeof pos === 'number') {
+          editor.commands.focus();
+          editor.view.dispatch(
+            editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, pos))
+          );
+        }
+      };
+
+      updateElement(node);
+      element.addEventListener('mousedown', handleMouseDown);
+
+      return {
+        dom: element,
+        update(updatedNode) {
+          if (updatedNode.type.name !== FOOTNOTE_NODE_NAME) return false;
+          updateElement(updatedNode);
+          return true;
+        },
+        selectNode() {
+          element.classList.add('is-selected');
+        },
+        deselectNode() {
+          element.classList.remove('is-selected');
+        },
+        destroy() {
+          element.removeEventListener('mousedown', handleMouseDown);
+        },
+      };
+    };
+  },
+
+  addProseMirrorPlugins() {
+    const type = this.type;
+
+    return [
+      new Plugin({
+        key: new PluginKey('footnoteSync'),
+        appendTransaction(transactions, _oldState, newState) {
+          if (!transactions.some((transaction) => transaction.docChanged)) {
+            return null;
+          }
+
+          let transaction = newState.tr;
+          let changed = false;
+          let index = 1;
+
+          newState.doc.descendants((node, pos) => {
+            if (node.type !== type) return;
+
+            const id = typeof node.attrs.id === 'string' && node.attrs.id.trim()
+              ? node.attrs.id
+              : createFootnoteID();
+            const note = normalizeFootnoteNote(typeof node.attrs.note === 'string' ? node.attrs.note : '');
+
+            if (node.attrs.id !== id || node.attrs.note !== note || node.attrs.index !== index) {
+              transaction = transaction.setNodeMarkup(pos, type, {
+                ...node.attrs,
+                id,
+                note,
+                index,
+              });
+              changed = true;
+            }
+
+            index += 1;
+          });
+
+          return changed ? transaction : null;
+        },
+      }),
+    ];
+  },
+});
+
+const linkPreviewElement = document.getElementById('link-preview');
+
+function hideLinkPreview() {
+  if (!linkPreviewElement) return;
+  linkPreviewElement.classList.remove('is-visible');
+  linkPreviewElement.setAttribute('aria-hidden', 'true');
+}
+
+function positionLinkPreview(event: MouseEvent) {
+  if (!linkPreviewElement) return;
+
+  const offset = 14;
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const previewRect = linkPreviewElement.getBoundingClientRect();
+
+  let left = event.clientX + offset;
+  let top = event.clientY + offset;
+
+  if (left + previewRect.width > viewportWidth - 12) {
+    left = Math.max(12, viewportWidth - previewRect.width - 12);
+  }
+
+  if (top + previewRect.height > viewportHeight - 12) {
+    top = Math.max(12, event.clientY - previewRect.height - offset);
+  }
+
+  linkPreviewElement.style.left = `${left}px`;
+  linkPreviewElement.style.top = `${top}px`;
+}
+
+function showLinkPreview(anchor: HTMLAnchorElement, event: MouseEvent) {
+  if (!linkPreviewElement) return;
+
+  const href = anchor.getAttribute('href')?.trim();
+  if (!href) {
+    hideLinkPreview();
+    return;
+  }
+
+  linkPreviewElement.textContent = href;
+  linkPreviewElement.classList.add('is-visible');
+  linkPreviewElement.setAttribute('aria-hidden', 'false');
+  positionLinkPreview(event);
+}
+
+function attachLinkHoverPreview(editor: Editor) {
+  const root = editor.view.dom as HTMLElement;
+
+  root.addEventListener('mousemove', (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      hideLinkPreview();
+      return;
+    }
+
+    const anchor = target.closest('a[href]');
+    if (anchor instanceof HTMLAnchorElement && root.contains(anchor)) {
+      showLinkPreview(anchor, event);
+      return;
+    }
+
+    hideLinkPreview();
+  });
+
+  root.addEventListener('mouseleave', hideLinkPreview);
+  root.addEventListener('mousedown', hideLinkPreview);
+  root.addEventListener('dragstart', hideLinkPreview);
+  document.addEventListener('scroll', hideLinkPreview, true);
+}
+
 const ResizableImage = Image.extend({
   addAttributes() {
     return {
@@ -396,8 +819,9 @@ const PASTE_STYLE_PROPERTIES = [
 ];
 
 function sanitizePastedHTML(html: string): string {
-  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  const parsed = new DOMParser().parseFromString(stripGeneratedFootnotesSection(html), 'text/html');
 
+  parsed.querySelectorAll(GENERATED_FOOTNOTES_SELECTOR).forEach((element) => element.remove());
   parsed.querySelectorAll('style, meta, link').forEach((element) => element.remove());
 
   parsed.body.querySelectorAll('*').forEach((element) => {
@@ -433,7 +857,7 @@ const editor = new Editor({
     Typography,
     FontFamily,
     TextStyle,
-    Link.configure({
+    HoverableLink.configure({
       openOnClick: false,
       HTMLAttributes: {
         rel: 'noopener noreferrer',
@@ -441,6 +865,7 @@ const editor = new Editor({
       },
     }),
     Color,
+    Footnote,
     ResizableImage.configure({
       inline: true,
       allowBase64: true,
@@ -527,11 +952,12 @@ const editor = new Editor({
       updatePendingDecorations(editor);
       notifyPendingEditCount();
     }
+    renderFootnotesPanel(editor);
     // Debounce content changes to avoid flooding Swift
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      const html = editor.getHTML();
-      const text = editor.getText();
+      const html = serializeDocumentHTML(editor);
+      const text = serializeDocumentPlainText(editor);
       sendToSwift('contentUpdate', {
         html,
         text,
@@ -544,6 +970,8 @@ const editor = new Editor({
     if (selectionDebounceTimer) clearTimeout(selectionDebounceTimer);
     selectionDebounceTimer = setTimeout(() => {
       const { from, to } = editor.state.selection;
+      const selectedFootnote = getSelectedFootnote(editor);
+      renderFootnotesPanel(editor);
       sendToSwift('selectionChanged', {
         from,
         to,
@@ -568,6 +996,8 @@ const editor = new Editor({
         isLink: editor.isActive('link'),
         linkHref: editor.getAttributes('link').href || '',
         textColor: editor.getAttributes('textStyle').color || '',
+        isFootnote: selectedFootnote !== null,
+        footnoteText: (selectedFootnote?.node.attrs.note as string) || '',
       });
     }, 80);
   },
@@ -576,23 +1006,25 @@ const editor = new Editor({
 // Register callbacks for Swift to call into JS
 registerSwiftCallbacks({
   loadContent(html: string) {
-    editor.commands.setContent(html, false);
+    editor.commands.setContent(stripGeneratedFootnotesSection(html), false);
+    renderFootnotesPanel(editor);
   },
   loadJSONContent(json: string) {
     try {
       const parsed = JSON.parse(json);
       editor.commands.setContent(parsed, false);
+      renderFootnotesPanel(editor);
     } catch (error) {
       console.error('Failed to load JSON content into editor', error);
     }
   },
   getContent(): string {
-    return editor.getHTML();
+    return serializeDocumentHTML(editor);
   },
   getDocumentSnapshot(): string {
-    const text = editor.getText();
+    const text = serializeDocumentPlainText(editor);
     return JSON.stringify({
-      html: editor.getHTML(),
+      html: serializeDocumentHTML(editor),
       json: editor.getJSON(),
       text,
       words: countWords(text),
@@ -600,7 +1032,7 @@ registerSwiftCallbacks({
     });
   },
   getPlainText(): string {
-    return editor.getText();
+    return serializeDocumentPlainText(editor);
   },
   applyFormat(command: string, value?: string) {
     switch (command) {
@@ -665,6 +1097,14 @@ registerSwiftCallbacks({
         break;
       case 'unlink':
         editor.chain().focus().unsetLink().run();
+        break;
+      case 'setFootnote':
+        if (value) {
+          upsertFootnote(editor, value);
+        }
+        break;
+      case 'removeFootnote':
+        removeSelectedFootnote(editor);
         break;
       case 'setColor':
         if (value) editor.chain().focus().setColor(value).run();
@@ -830,6 +1270,9 @@ registerSwiftCallbacks({
   rejectAllPendingEdits() { rejectAllPendingEdits(editor); },
   getPendingEditCount(): number { return pendingEdits.length; },
 });
+
+attachLinkHoverPreview(editor);
+renderFootnotesPanel(editor);
 
 // Notify Swift that editor is ready
 sendToSwift('editorReady', {});
