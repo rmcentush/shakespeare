@@ -28,14 +28,13 @@ struct EditorWebView: NSViewRepresentable {
         TextCheckingSettings.shared.bind(webView: webView)
 
         // Load the editor HTML
-        if let resourceURL = Bundle.module.url(forResource: "Resources", withExtension: nil),
-           let htmlURL = Bundle.module.url(forResource: "Resources/editor", withExtension: "html") {
+        if let resourceURL = Bundle.module.resourceURL,
+           let htmlURL = Bundle.module.url(forResource: "editor", withExtension: "html") {
             webView.loadFileURL(htmlURL, allowingReadAccessTo: resourceURL)
         }
 
         // Prepare @font-face CSS (cached for later injection on editorReady)
-        let fontsURL = Bundle.module.url(forResource: "Resources", withExtension: nil)?
-            .appendingPathComponent("Fonts")
+        let fontsURL = Bundle.module.resourceURL?.appendingPathComponent("Fonts")
         let _ = FontManager.shared.fontFaceCSS(fontsDirectoryURL: fontsURL)
 
         viewModel.webView = webView
@@ -71,8 +70,8 @@ struct EditorWebView: NSViewRepresentable {
                 bridge?.viewModel?.isEditorReady = false
             }
             // Reload the editor HTML to recover
-            if let resourceURL = Bundle.module.url(forResource: "Resources", withExtension: nil),
-               let htmlURL = Bundle.module.url(forResource: "Resources/editor", withExtension: "html") {
+            if let resourceURL = Bundle.module.resourceURL,
+               let htmlURL = Bundle.module.url(forResource: "editor", withExtension: "html") {
                 webView.loadFileURL(htmlURL, allowingReadAccessTo: resourceURL)
             }
         }

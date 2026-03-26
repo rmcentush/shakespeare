@@ -60,7 +60,7 @@ Views communicate via NotificationCenter, not direct bindings: `editorContentCha
 
 - **String escaping for JS evaluation:** When passing strings to `evaluateJavaScript()`, backslashes, quotes, and newlines must be escaped properly.
 - **`.accentColor` vs `.foregroundColor`:** Can't use `.accentColor` with `.foregroundStyle` ternary expressions; use `.foregroundColor` instead.
-- **Bundle resource paths:** Access bundled files via `Bundle.module.url(forResource: "Resources/editor", withExtension: "html")`.
+- **Bundle resource paths:** Access bundled files via `Bundle.module.url(forResource: "editor", withExtension: "html")` or `Bundle.module.resourceURL`.
 - **Font injection timing:** EditorWebView injects @font-face CSS after a 500ms delay to ensure the webview is ready.
 - **BridgePayload parsing:** Uses manual JSON parsing (`[String: Any]`), not Codable.
 - **Anthropic API key:** Stored in macOS Keychain with service `"com.wordprocessor.anthropic"`, not in config files.

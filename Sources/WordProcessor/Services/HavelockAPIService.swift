@@ -1,21 +1,30 @@
 import Foundation
 
 final class HavelockAPIService: Sendable {
-    // Havelock.AI Gradio API (v0.2.1) — two-step SSE protocol
-    private let baseURL = "https://thestalwart-havelock-demo.hf.space/gradio_api"
+    // Havelock.AI Gradio API, exposed through a two-step SSE flow.
+    // The public docs currently show an object payload while the live endpoint still
+    // returns a single-element array. The parser accepts both response shapes.
+    private let baseURL = URL(string: "https://thestalwart-havelock-demo.hf.space/gradio_api")!
+    private let session: URLSession
+
+    init(session: URLSession = .shared) {
+        self.session = session
+    }
 
     func analyzeOrality(text: String) async throws -> OralityResult {
-        // Step 1: POST to /call/analyze to get an event_id
-        let submitURL = URL(string: "\(baseURL)/call/analyze")!
+        // Step 1: POST to /call/analyze to get an event_id.
+        let submitURL = baseURL.appending(path: "call/analyze")
         var request = URLRequest(url: submitURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.timeoutInterval = 120 // Space may need to wake up
+        request.timeoutInterval = 120 // The Space may need to wake up.
 
-        let body: [String: Any] = ["data": [text]]
+        // `include_sentences` is required for the current UI because it renders
+        // sentence-level markers and uses them to prompt Claude rewrites.
+        let body: [String: Any] = ["data": [text, true]]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
@@ -27,25 +36,25 @@ final class HavelockAPIService: Sendable {
             throw OralityError.invalidResponse
         }
 
-        // Step 2: GET /call/analyze/{event_id} for SSE results
-        let resultURL = URL(string: "\(baseURL)/call/analyze/\(eventId)")!
+        // Step 2: GET /call/analyze/{event_id} for SSE results.
+        let resultURL = submitURL.appending(path: eventId)
         var resultRequest = URLRequest(url: resultURL)
         resultRequest.timeoutInterval = 120
 
-        let (resultData, resultResponse) = try await URLSession.shared.data(for: resultRequest)
+        let (resultData, resultResponse) = try await session.data(for: resultRequest)
 
         guard let resultHttp = resultResponse as? HTTPURLResponse,
               resultHttp.statusCode == 200 else {
             throw OralityError.submitFailed
         }
 
-        // Parse SSE response — find the "data: " line after "event: complete"
+        // Parse SSE response by finding the data line after the complete event.
         let responseText = String(data: resultData, encoding: .utf8) ?? ""
         return try parseSSEResponse(responseText)
     }
 
     private func parseSSEResponse(_ text: String) throws -> OralityResult {
-        // SSE format: lines like "event: complete\ndata: [...]"
+        // SSE format: lines like "event: complete" followed by "data: ...".
         let lines = text.components(separatedBy: "\n")
         var foundComplete = false
 
@@ -57,12 +66,20 @@ final class HavelockAPIService: Sendable {
             if foundComplete, line.starts(with: "data: ") {
                 let jsonString = String(line.dropFirst(6))
                 guard let jsonData = jsonString.data(using: .utf8),
-                      let array = try? JSONSerialization.jsonObject(with: jsonData) as? [Any],
-                      let analysis = array.first as? [String: Any]
-                else {
+                      let payload = try? JSONSerialization.jsonObject(with: jsonData) else {
                     throw OralityError.invalidResponse
                 }
-                return parseAnalysis(analysis)
+
+                if let analysis = payload as? [String: Any] {
+                    return parseAnalysis(analysis)
+                }
+
+                if let array = payload as? [Any],
+                   let analysis = array.first as? [String: Any] {
+                    return parseAnalysis(analysis)
+                }
+
+                throw OralityError.invalidResponse
             }
         }
 
@@ -81,12 +98,12 @@ final class HavelockAPIService: Sendable {
                 let text = s["text"] as? String ?? ""
                 let category = s["category"] as? String ?? "unknown"
                 let categoryConfidence = s["category_confidence"] as? Double ?? 0
-                let primaryMarker = s["marker"] as? String ?? ""
+                let primaryMarker = (s["marker"] as? String) ?? (s["primary_marker"] as? String) ?? ""
 
                 var markers: [OralityResult.Marker] = []
                 if let markerArray = s["markers"] as? [[String: Any]] {
                     for m in markerArray {
-                        let name = m["marker"] as? String ?? ""
+                        let name = (m["marker"] as? String) ?? (m["name"] as? String) ?? ""
                         let confidence = m["confidence"] as? Double ?? 0
                         markers.append(OralityResult.Marker(name: name, confidence: confidence))
                     }
@@ -118,7 +135,7 @@ final class HavelockAPIService: Sendable {
 
         var errorDescription: String? {
             switch self {
-            case .submitFailed: return "Failed to connect to Havelock API. The service may be waking up — try again in 30 seconds."
+            case .submitFailed: return "Failed to connect to Havelock API. The service may be waking up; try again in 30 seconds."
             case .invalidResponse: return "Invalid response from Havelock API"
             case .timeout: return "Analysis timed out"
             }

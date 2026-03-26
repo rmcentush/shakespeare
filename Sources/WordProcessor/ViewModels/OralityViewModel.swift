@@ -7,8 +7,7 @@ final class OralityViewModel {
     var isLoading = false
     var error: String?
 
-    private var service: HavelockService?
-    private var serviceLoaded = false
+    private let apiService = HavelockAPIService()
 
     func checkOrality(text: String) async {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -17,33 +16,15 @@ final class OralityViewModel {
         }
 
         isLoading = true
+        result = nil
         error = nil
         defer { isLoading = false }
 
-        // Lazy-load models on first use, off the main thread
-        if !serviceLoaded {
-            service = await Task.detached {
-                HavelockService()
-            }.value
-            serviceLoaded = true
-            if service == nil {
-                print("Warning: HavelockService failed to initialize — orality analysis unavailable")
-            }
-        }
-
-        guard let service else {
-            error = "Orality model not available"
-            return
-        }
-
         do {
-            let analysisResult = try await Task.detached {
-                try service.analyzeOrality(text: text)
-            }.value
-            result = analysisResult
+            result = try await apiService.analyzeOrality(text: text)
         } catch {
             self.error = error.localizedDescription
-            print("Orality check failed: \(error)")
+            print("Havelock API check failed: \(error)")
         }
     }
 }

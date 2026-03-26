@@ -26,8 +26,8 @@ final class ClaudeChatViewModel {
 
     /// AI writing tropes guidance loaded from bundled resource.
     private static let aiTropesGuidance: String = {
-        guard let resourceDir = Bundle.module.url(forResource: "Resources", withExtension: nil),
-              let content = try? String(contentsOf: resourceDir.appendingPathComponent("ai_tropes.md"), encoding: .utf8)
+        guard let resourceURL = Bundle.module.url(forResource: "ai_tropes", withExtension: "md"),
+              let content = try? String(contentsOf: resourceURL, encoding: .utf8)
         else { return "" }
         return content
     }()

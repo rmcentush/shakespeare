@@ -9,11 +9,6 @@ Shakespeare pairs a rich text editor (TipTap) with a Claude-powered sidebar for 
 - **macOS 14** (Sonoma) or later
 - **Xcode 15+** (for the Swift 5.9 toolchain) — install from the App Store or [developer.apple.com](https://developer.apple.com/xcode/)
 - **Node.js 18+** and npm — `brew install node`
-- **Git LFS** — required to clone the ML model weights (~1.2 GB):
-  ```bash
-  brew install git-lfs
-  git lfs install
-  ```
 
 ## Setup
 
@@ -57,6 +52,6 @@ Your key is stored locally in `~/Library/Application Support/Shakespeare/` with 
 Two layers communicating through a JS↔Swift bridge:
 
 - **TypeScript** (`Editor/src/`) — TipTap rich text editor, built as a single IIFE bundle targeting Safari 17
-- **Swift** (`Sources/WordProcessor/`) — SwiftUI app shell, file I/O, Claude API integration, orality analysis (CoreML)
+- **Swift** (`Sources/WordProcessor/`) — SwiftUI app shell, file I/O, Claude API integration, hosted Havelock orality analysis
 
 All JS↔Swift communication goes through a single `WKScriptMessageHandler`. The editor runs inside a `WKWebView`.

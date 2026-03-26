@@ -9,7 +9,11 @@ let package = Package(
             name: "WordProcessor",
             path: "Sources/WordProcessor",
             resources: [
-                .copy("Resources")
+                .copy("Resources/Fonts"),
+                .copy("Resources/ai_tropes.md"),
+                .copy("Resources/editor.css"),
+                .copy("Resources/editor.html"),
+                .copy("Resources/editor.js")
             ]
         )
     ]
