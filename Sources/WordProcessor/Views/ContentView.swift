@@ -240,7 +240,7 @@ struct ContentView: View {
 }
 
 extension ContentView {
-    func toggleSidebar(_ panel: SidebarPanel) {
+    private func toggleSidebar(_ panel: SidebarPanel) {
         withAnimation(.easeInOut(duration: 0.15)) {
             activeSidebar = activeSidebar == panel ? nil : panel
         }
