@@ -812,7 +812,6 @@ function countWords(text: string): number {
 
 const PASTE_STYLE_PROPERTIES = [
   'font-family',
-  'color',
   'background',
   'background-color',
   '-webkit-text-fill-color',

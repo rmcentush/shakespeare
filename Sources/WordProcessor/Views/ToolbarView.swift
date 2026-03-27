@@ -79,7 +79,7 @@ struct ToolbarView: View {
                 }
                 LinkButton()
                 FootnoteButton()
-                RedTextButton()
+                TextColorButton()
             }
 
             Divider()
@@ -304,42 +304,112 @@ struct AlignButton: View {
     }
 }
 
-struct RedTextButton: View {
+struct TextColorButton: View {
     @Environment(EditorViewModel.self) private var viewModel
+    @State private var showPopover = false
     @State private var isHovered = false
 
-    private var isActive: Bool {
+    private static let palette: [(name: String, hex: String, color: Color)] = [
+        ("Black", "#000000", Color.black),
+        ("Dark Gray", "#6b7280", Color(red: 0.42, green: 0.45, blue: 0.50)),
+        ("Red", "#e53e3e", Color(red: 0.90, green: 0.24, blue: 0.24)),
+        ("Orange", "#dd6b20", Color(red: 0.87, green: 0.42, blue: 0.13)),
+        ("Yellow", "#d69e2e", Color(red: 0.84, green: 0.62, blue: 0.18)),
+        ("Green", "#38a169", Color(red: 0.22, green: 0.63, blue: 0.41)),
+        ("Teal", "#319795", Color(red: 0.19, green: 0.59, blue: 0.58)),
+        ("Blue", "#3182ce", Color(red: 0.19, green: 0.51, blue: 0.81)),
+        ("Purple", "#805ad5", Color(red: 0.50, green: 0.35, blue: 0.84)),
+        ("Pink", "#d53f8c", Color(red: 0.84, green: 0.25, blue: 0.55)),
+    ]
+
+    private var activeColor: Color? {
         let c = viewModel.selectionState.textColor.lowercased()
-        return !c.isEmpty && (
-            c.contains("red") ||
-            c == "#ff0000" ||
-            c == "#e53e3e" ||
-            c.contains("229, 62, 62") ||
-            c.contains("255, 0, 0")
-        )
+        guard !c.isEmpty else { return nil }
+        return Self.palette.first(where: { c == $0.hex })?.color
     }
 
     var body: some View {
         Button {
-            viewModel.applyFormat("toggleColor", value: "#e53e3e")
+            showPopover.toggle()
         } label: {
-            ZStack {
+            VStack(spacing: 1) {
                 Text("A")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(Color(red: 0.9, green: 0.24, blue: 0.24))
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(activeColor ?? .primary)
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(activeColor ?? Color.primary)
+                    .frame(width: 14, height: 3)
             }
             .frame(width: 28, height: 28)
             .background(
-                isActive ? Color.red.opacity(0.15) :
+                showPopover ? Color.accentColor.opacity(0.2) :
                 isHovered ? Color.primary.opacity(0.08) : Color.clear
             )
             .cornerRadius(4)
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
-            isHovered = hovering
+        .onHover { hovering in isHovered = hovering }
+        .help("Text Color")
+        .popover(isPresented: $showPopover, arrowEdge: .bottom) {
+            VStack(spacing: 8) {
+                let columns = Array(repeating: GridItem(.fixed(26), spacing: 4), count: 5)
+                LazyVGrid(columns: columns, spacing: 4) {
+                    ForEach(Self.palette, id: \.hex) { item in
+                        ColorSwatch(
+                            color: item.color,
+                            hex: item.hex,
+                            name: item.name,
+                            isSelected: viewModel.selectionState.textColor.lowercased() == item.hex
+                        ) {
+                            viewModel.applyFormat("toggleColor", value: item.hex)
+                            showPopover = false
+                        }
+                    }
+                }
+
+                Divider()
+
+                Button {
+                    viewModel.applyFormat("unsetColor")
+                    showPopover = false
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "xmark.circle")
+                            .font(.system(size: 11))
+                        Text("Remove Color")
+                            .font(.system(size: 11))
+                    }
+                    .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.selectionState.textColor.isEmpty)
+            }
+            .padding(10)
         }
-        .help("Red Text — mark for later")
+    }
+}
+
+struct ColorSwatch: View {
+    let color: Color
+    let hex: String
+    let name: String
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(color)
+                .frame(width: 24, height: 24)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(isSelected ? Color.accentColor : (isHovered ? Color.primary.opacity(0.3) : Color.clear), lineWidth: 2)
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in isHovered = hovering }
+        .help(name)
     }
 }
 
