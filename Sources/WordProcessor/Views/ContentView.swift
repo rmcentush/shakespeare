@@ -44,12 +44,12 @@ struct ContentView: View {
                     }
                     ToolbarItem(placement: .automatic) {
                         Button {
-                            showOralityPanel()
+                            toggleOralityPanel()
                         } label: {
                             Text("A")
                                 .font(.system(size: 13, weight: .bold, design: .serif))
                         }
-                        .help("Analyze Orality")
+                        .help("Toggle Orality Sidebar")
                     }
                 }
             }
@@ -246,11 +246,15 @@ extension ContentView {
         }
     }
 
-    func showOralityPanel() {
+    func toggleOralityPanel() {
         withAnimation(.easeInOut(duration: 0.15)) {
-            activeSidebar = .orality
+            if activeSidebar == .orality {
+                activeSidebar = nil
+            } else {
+                activeSidebar = .orality
+                oralityRequestID += 1
+            }
         }
-        oralityRequestID += 1
     }
 
     func saveNamedVersionFromMenu() {

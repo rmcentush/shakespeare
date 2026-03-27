@@ -1,9 +1,11 @@
 import Foundation
 
 final class HavelockAPIService: Sendable {
-    // Havelock.AI Gradio API, exposed through a two-step SSE flow.
-    // The public docs currently show an object payload while the live endpoint still
-    // returns a single-element array. The parser accepts both response shapes.
+    // Havelock.AI exposes its public API through a queued Gradio SSE flow.
+    // The live `analyze` endpoint currently takes a single text input and returns
+    // document metrics plus sentence-level diagnostics. There is no paragraph-level
+    // payload, so paragraph grouping is derived locally in the app.
+    // The completion payload may arrive as either an object or a single-element array.
     private let baseURL = URL(string: "https://thestalwart-havelock-demo.hf.space/gradio_api")!
     private let session: URLSession
 
@@ -19,9 +21,7 @@ final class HavelockAPIService: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.timeoutInterval = 120 // The Space may need to wake up.
 
-        // `include_sentences` is required for the current UI because it renders
-        // sentence-level markers and uses them to prompt Claude rewrites.
-        let body: [String: Any] = ["data": [text, true]]
+        let body: [String: Any] = ["data": [text]]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await session.data(for: request)
