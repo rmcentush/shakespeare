@@ -113,6 +113,8 @@ final class FontManager {
                 family = "Scala"
             } else if nameLower.contains("charter") {
                 family = "Charter"
+            } else if nameLower.contains("signifier") {
+                family = "Signifier"
             } else {
                 // Fallback: use filename as family name
                 family = filename
