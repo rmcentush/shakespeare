@@ -24,7 +24,7 @@ final class ClaudeAPIService: Sendable {
     static let documentTools: [[String: Any]] = [
         [
             "name": "replace_selection",
-            "description": "Replace the currently selected text in the document with new HTML content. Use when the user asks to modify, rewrite, edit, or change specific selected text.",
+            "description": "Replace the currently selected text in the document with new HTML content. Use when the user asks to modify, rewrite, edit, or change specific selected text. Keep the replacement scoped to only the selected text.",
             "input_schema": [
                 "type": "object",
                 "properties": [
@@ -52,13 +52,13 @@ final class ClaudeAPIService: Sendable {
         ] as [String: Any],
         [
             "name": "find_and_replace",
-            "description": "Find specific text in the document and replace it with new HTML content. Useful for targeted edits without needing the user to select text first.",
+            "description": "Find specific text in the document and replace it with new HTML content. Useful for targeted edits without needing the user to select text first. Target the smallest exact span that changes, preferably a single sentence or bracketed section. Do not replace an entire paragraph unless the whole paragraph is being rewritten.",
             "input_schema": [
                 "type": "object",
                 "properties": [
                     "find": [
                         "type": "string",
-                        "description": "The exact text to find in the document (case-insensitive)."
+                        "description": "The exact text to find in the document (case-insensitive). Keep this as narrow as possible."
                     ],
                     "replace": [
                         "type": "string",

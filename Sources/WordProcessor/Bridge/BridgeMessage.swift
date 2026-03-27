@@ -11,7 +11,7 @@ enum BridgePayload: Codable {
     case contentUpdate(html: String, text: String, words: Int, characters: Int)
     case selectionChanged(SelectionState)
     case wordCount(words: Int, characters: Int)
-    case pendingEditUpdate(count: Int, currentIndex: Int)
+    case pendingEditUpdate(PendingEditUpdateData)
     case unknown
 
     struct SelectionState: Codable {
@@ -37,6 +37,33 @@ enum BridgePayload: Codable {
 
     struct ContentChangedData: Codable {
         let html: String
+    }
+
+    struct PendingEditUpdateData: Codable {
+        let count: Int
+        let currentIndex: Int
+        let activeEditID: String?
+        let edits: [PendingEditData]
+    }
+
+    struct PendingEditData: Codable, Identifiable {
+        let id: String
+        let groupID: String
+        let kind: String
+        let source: String
+        let label: String
+        let from: Int
+        let to: Int
+        let originalText: String
+        let replacementText: String
+        let createdAt: Double
+        let status: String
+        let conflictReason: String?
+        let index: Int
+        let isActive: Bool
+        let canAccept: Bool
+        let canReject: Bool
+        let canFocus: Bool
     }
 
     init(from decoder: Decoder) throws {
@@ -85,7 +112,36 @@ enum BridgePayload: Codable {
         case "pendingEditUpdate":
             let count = payload["count"] as? Int ?? 0
             let currentIndex = payload["currentIndex"] as? Int ?? -1
-            return .pendingEditUpdate(count: count, currentIndex: currentIndex)
+            let activeEditID = payload["activeEditId"] as? String
+            let edits = (payload["edits"] as? [[String: Any]] ?? []).map { item in
+                PendingEditData(
+                    id: item["id"] as? String ?? UUID().uuidString,
+                    groupID: item["groupId"] as? String ?? "",
+                    kind: item["kind"] as? String ?? "",
+                    source: item["source"] as? String ?? "",
+                    label: item["label"] as? String ?? "",
+                    from: item["from"] as? Int ?? 0,
+                    to: item["to"] as? Int ?? 0,
+                    originalText: item["originalText"] as? String ?? "",
+                    replacementText: item["replacementText"] as? String ?? "",
+                    createdAt: item["createdAt"] as? Double ?? 0,
+                    status: item["status"] as? String ?? "pending",
+                    conflictReason: item["conflictReason"] as? String,
+                    index: item["index"] as? Int ?? 0,
+                    isActive: item["isActive"] as? Bool ?? false,
+                    canAccept: item["canAccept"] as? Bool ?? false,
+                    canReject: item["canReject"] as? Bool ?? false,
+                    canFocus: item["canFocus"] as? Bool ?? false
+                )
+            }
+            return .pendingEditUpdate(
+                PendingEditUpdateData(
+                    count: count,
+                    currentIndex: currentIndex,
+                    activeEditID: activeEditID,
+                    edits: edits
+                )
+            )
         default:
             return .unknown
         }

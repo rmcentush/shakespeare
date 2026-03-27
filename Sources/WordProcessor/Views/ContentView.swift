@@ -4,6 +4,7 @@ struct ContentView: View {
     private enum SidebarPanel {
         case chat
         case orality
+        case suggestions
     }
 
     @Environment(DocumentModel.self) private var document
@@ -51,6 +52,16 @@ struct ContentView: View {
                         }
                         .help("Toggle Orality Sidebar")
                     }
+                    if editorViewModel.pendingEditCount > 0 {
+                        ToolbarItem(placement: .automatic) {
+                            Button {
+                                toggleSidebar(.suggestions)
+                            } label: {
+                                Image(systemName: activeSidebar == .suggestions ? "list.bullet.rectangle.portrait.fill" : "list.bullet.rectangle.portrait")
+                            }
+                            .help("Review Suggestions")
+                        }
+                    }
                 }
             }
             .background { keyboardShortcuts }
@@ -90,6 +101,13 @@ struct ContentView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode)) { _ in
                 toggleFocusMode()
+            }
+            .onChange(of: editorViewModel.pendingEditCount) {
+                if editorViewModel.pendingEditCount == 0, activeSidebar == .suggestions {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        activeSidebar = nil
+                    }
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .showSaveNamedVersion)) { _ in
                 // Open version history panel and trigger the naming alert
@@ -148,6 +166,12 @@ struct ContentView: View {
                             PendingEditsBar(
                                 count: editorViewModel.pendingEditCount,
                                 currentIndex: editorViewModel.pendingEditCurrentIndex,
+                                canAcceptCurrent: editorViewModel.activePendingEdit?.canAccept ?? false,
+                                onFocusPrevious: { editorViewModel.focusPreviousPendingEdit() },
+                                onFocusNext: { editorViewModel.focusNextPendingEdit() },
+                                onAcceptCurrent: { editorViewModel.acceptActivePendingEdit() },
+                                onRejectCurrent: { editorViewModel.rejectActivePendingEdit() },
+                                onReview: { toggleSidebar(.suggestions) },
                                 onAcceptAll: { editorViewModel.acceptAllPendingEdits() },
                                 onRejectAll: { editorViewModel.rejectAllPendingEdits() }
                             )
@@ -170,6 +194,8 @@ struct ContentView: View {
                         ClaudeChatView()
                     case .orality:
                         OralityView(requestID: oralityRequestID)
+                    case .suggestions:
+                        PendingEditsSidebarView()
                     }
                 }
                 .frame(width: 340)
@@ -289,6 +315,12 @@ extension Notification.Name {
 struct PendingEditsBar: View {
     let count: Int
     let currentIndex: Int
+    let canAcceptCurrent: Bool
+    let onFocusPrevious: () -> Void
+    let onFocusNext: () -> Void
+    let onAcceptCurrent: () -> Void
+    let onRejectCurrent: () -> Void
+    let onReview: () -> Void
     let onAcceptAll: () -> Void
     let onRejectAll: () -> Void
 
@@ -311,8 +343,55 @@ struct PendingEditsBar: View {
                 .frame(height: 14)
 
             HStack(spacing: 4) {
+                Button(action: onFocusPrevious) {
+                    Text("Prev")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button(action: onFocusNext) {
+                    Text("Next")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button(action: onReview) {
+                    Text("Review")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            Divider()
+                .frame(height: 14)
+
+            HStack(spacing: 4) {
+                Button(action: onAcceptCurrent) {
+                    Text("Accept")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+                .controlSize(.small)
+                .disabled(!canAcceptCurrent)
+
+                Button(action: onRejectCurrent) {
+                    Text("Reject")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            Divider()
+                .frame(height: 14)
+
+            HStack(spacing: 4) {
                 KeyHint("Tab")
-                Text("accept")
+                Text("accept current")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
@@ -332,19 +411,19 @@ struct PendingEditsBar: View {
             Divider()
                 .frame(height: 14)
 
+            Button(action: onRejectAll) {
+                Text("Reject All")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
             Button(action: onAcceptAll) {
                 Text("Accept All")
                     .font(.system(size: 12, weight: .medium))
             }
             .buttonStyle(.borderedProminent)
             .tint(.green)
-            .controlSize(.small)
-
-            Button(action: onRejectAll) {
-                Text("Reject All")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .buttonStyle(.bordered)
             .controlSize(.small)
         }
         .padding(.horizontal, 16)

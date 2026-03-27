@@ -8,6 +8,7 @@ final class EditorViewModel {
     var isEditorReady = false
     var assetBaseURL: URL?
     var selectionState = SelectionState()
+    var pendingEdits: [PendingEdit] = []
     var pendingEditCount = 0
     var pendingEditCurrentIndex = -1
     private var autoSaveTimer: Timer?
@@ -27,6 +28,51 @@ final class EditorViewModel {
         var textColor = ""
         var isFootnote = false
         var footnoteText = ""
+    }
+
+    struct PendingEdit: Identifiable, Equatable {
+        enum Status: String {
+            case pending
+            case conflicted
+        }
+
+        let id: String
+        let groupID: String
+        let kind: String
+        let source: String
+        let label: String
+        let from: Int
+        let to: Int
+        let originalText: String
+        let replacementText: String
+        let createdAt: Date
+        let status: Status
+        let conflictReason: String?
+        let index: Int
+        let isActive: Bool
+        let canAccept: Bool
+        let canReject: Bool
+        let canFocus: Bool
+
+        init(_ data: BridgePayload.PendingEditData) {
+            id = data.id
+            groupID = data.groupID
+            kind = data.kind
+            source = data.source
+            label = data.label
+            from = data.from
+            to = data.to
+            originalText = data.originalText
+            replacementText = data.replacementText
+            createdAt = Date(timeIntervalSince1970: data.createdAt / 1000.0)
+            status = Status(rawValue: data.status) ?? .pending
+            conflictReason = data.conflictReason
+            index = data.index
+            isActive = data.isActive
+            canAccept = data.canAccept
+            canReject = data.canReject
+            canFocus = data.canFocus
+        }
     }
 
     // Called by bridge when JS sends a message
@@ -80,9 +126,10 @@ final class EditorViewModel {
                 userInfo: ["words": words, "characters": characters]
             )
 
-        case .pendingEditUpdate(let count, let currentIndex):
-            pendingEditCount = count
-            pendingEditCurrentIndex = currentIndex
+        case .pendingEditUpdate(let update):
+            pendingEditCount = update.count
+            pendingEditCurrentIndex = update.currentIndex
+            pendingEdits = update.edits.map(PendingEdit.init)
 
         case .unknown:
             break
@@ -225,6 +272,49 @@ final class EditorViewModel {
 
     func rejectAllPendingEdits() {
         evaluateJS("window.editorAPI?.rejectAllPendingEdits()")
+    }
+
+    func focusPendingEdit(_ id: String) {
+        let escaped = escapeForJS(id)
+        evaluateJS("window.editorAPI?.focusPendingEdit('\(escaped)')")
+    }
+
+    func acceptPendingEdit(_ id: String) {
+        let escaped = escapeForJS(id)
+        evaluateJS("window.editorAPI?.acceptPendingEdit('\(escaped)')")
+    }
+
+    func rejectPendingEdit(_ id: String) {
+        let escaped = escapeForJS(id)
+        evaluateJS("window.editorAPI?.rejectPendingEdit('\(escaped)')")
+    }
+
+    var activePendingEdit: PendingEdit? {
+        pendingEdits.first(where: \.isActive)
+    }
+
+    func focusNextPendingEdit() {
+        guard !pendingEdits.isEmpty else { return }
+        let currentIndex = pendingEditCurrentIndex >= 0 ? pendingEditCurrentIndex : 0
+        let nextIndex = (currentIndex + 1) % pendingEdits.count
+        focusPendingEdit(pendingEdits[nextIndex].id)
+    }
+
+    func focusPreviousPendingEdit() {
+        guard !pendingEdits.isEmpty else { return }
+        let currentIndex = pendingEditCurrentIndex >= 0 ? pendingEditCurrentIndex : 0
+        let previousIndex = (currentIndex - 1 + pendingEdits.count) % pendingEdits.count
+        focusPendingEdit(pendingEdits[previousIndex].id)
+    }
+
+    func acceptActivePendingEdit() {
+        guard let id = activePendingEdit?.id else { return }
+        acceptPendingEdit(id)
+    }
+
+    func rejectActivePendingEdit() {
+        guard let id = activePendingEdit?.id else { return }
+        rejectPendingEdit(id)
     }
 
     // MARK: - Find & Replace

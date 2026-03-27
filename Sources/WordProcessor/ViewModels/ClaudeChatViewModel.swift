@@ -277,10 +277,40 @@ final class ClaudeChatViewModel {
             guard replace.count <= Self.maxToolHTMLCharacters else {
                 return "Suggested replacement is too large to preview safely. Narrow the request."
             }
+
+            let resolvedTarget: ResolvedEditTarget?
+            if replaceAll {
+                resolvedTarget = nil
+            } else {
+                let documentText = await currentDocumentText(from: editor)
+                switch EditTargetResolver.resolve(
+                    findText: find,
+                    replacementHTML: replace,
+                    documentText: documentText
+                ) {
+                case .useOriginal:
+                    resolvedTarget = nil
+                case .narrowed(let target):
+                    resolvedTarget = target
+                case .retry(let message):
+                    return message
+                }
+            }
+
+            let effectiveFind = resolvedTarget?.findText ?? find
+            let effectiveReplace = resolvedTarget?.replaceHTML ?? replace
+            let scopeDetail = resolvedTarget?.scopeDescription
+
             return await withCheckedContinuation { cont in
-                editor.pendingFindAndReplace(id: editId, find: find, replaceHTML: replace, replaceAll: replaceAll) { count in
+                editor.pendingFindAndReplace(
+                    id: editId,
+                    find: effectiveFind,
+                    replaceHTML: effectiveReplace,
+                    replaceAll: replaceAll
+                ) { count in
                     if count > 0 {
-                        cont.resume(returning: "Suggested \(count) edit\(count == 1 ? "" : "s"). User will review before applying.")
+                        let scopeSuffix = scopeDetail.map { " \($0)" } ?? ""
+                        cont.resume(returning: "Suggested \(count) edit\(count == 1 ? "" : "s"). User will review before applying.\(scopeSuffix)")
                     } else if count == ToolExecutionResult.tooManyMatches.rawValue {
                         cont.resume(returning: "That replacement matches too much of the document at once. Narrow the target text or select a smaller range.")
                     } else if count == ToolExecutionResult.tooManyPendingEdits.rawValue {
@@ -335,7 +365,8 @@ final class ClaudeChatViewModel {
         You have tools to directly edit the document. When the user asks you to change, rewrite, fill in, or edit text, \
         use the appropriate tool. If the user has text selected, use replace_selection. \
         If you need to find and change specific text, use find_and_replace. \
-        To add new content, use insert_at_cursor.
+        To add new content, use insert_at_cursor. \
+        Keep edit targets as small as possible. If only one sentence or one bracketed section changes, target only that span instead of replacing a whole paragraph.
 
         When outputting HTML for the tools, you can use formatting tags like <b>, <i>, <u>, \
         <span style="color: #e53e3e"> (red), <span style="color: green">, etc.
@@ -448,6 +479,14 @@ final class ClaudeChatViewModel {
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return [:] }
         return dict
+    }
+
+    private func currentDocumentText(from editor: EditorViewModel) async -> String {
+        await withCheckedContinuation { continuation in
+            editor.getPlainText { text in
+                continuation.resume(returning: text)
+            }
+        }
     }
 }
 

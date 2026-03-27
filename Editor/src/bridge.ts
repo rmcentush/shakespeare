@@ -59,6 +59,10 @@ export function registerSwiftCallbacks(callbacks: {
   pendingFindAndReplace: (id: string, find: string, replaceHtml: string, replaceAll: boolean) => number;
   acceptAllPendingEdits: () => void;
   rejectAllPendingEdits: () => void;
+  acceptPendingEdit: (id: string) => boolean;
+  rejectPendingEdit: (id: string) => boolean;
+  focusPendingEdit: (id: string) => boolean;
+  getPendingEdits: () => string;
   getPendingEditCount: () => number;
 }): void {
   (window as any).editorAPI = callbacks;

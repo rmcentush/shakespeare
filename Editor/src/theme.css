@@ -298,14 +298,70 @@ body {
   opacity: 0.75;
 }
 
-.pending-edit-insert {
-  display: inline;
+.pending-edit-conflict {
+  color: #8a6116;
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.pending-edit-widget {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 4px;
+  padding: 2px 6px;
+  border-radius: 9px;
   background: rgba(40, 167, 69, 0.12);
   color: #1a7a34;
-  border-radius: 2px;
-  padding: 0 2px;
-  pointer-events: none;
   user-select: none;
+  vertical-align: baseline;
+}
+
+.pending-edit-preview {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+}
+
+.pending-edit-preview-content {
+  display: inline;
+}
+
+.pending-edit-placeholder {
+  font-style: italic;
+  opacity: 0.75;
+}
+
+.pending-edit-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.pending-edit-action {
+  border: 0;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pending-edit-action-accept {
+  background: rgba(18, 118, 52, 0.14);
+  color: #166534;
+}
+
+.pending-edit-action-reject {
+  background: rgba(220, 53, 69, 0.12);
+  color: #8f2433;
+}
+
+.pending-edit-widget.pending-edit-conflicted {
+  background: rgba(245, 158, 11, 0.16);
+  color: #8a6116;
 }
 
 .pending-edit-active.pending-edit-delete {
@@ -315,10 +371,19 @@ body {
   border-radius: 2px;
 }
 
-.pending-edit-active.pending-edit-insert {
-  background: rgba(40, 167, 69, 0.2);
-  outline: 2px solid rgba(40, 167, 69, 0.35);
+.pending-edit-active.pending-edit-conflict {
+  outline: 2px solid rgba(245, 158, 11, 0.3);
   outline-offset: 1px;
+  border-radius: 2px;
+}
+
+.pending-edit-widget.pending-edit-active {
+  outline: 2px solid rgba(40, 167, 69, 0.3);
+  outline-offset: 1px;
+}
+
+.pending-edit-widget.pending-edit-conflicted.pending-edit-active {
+  outline-color: rgba(245, 158, 11, 0.34);
 }
 
 /* Selection */
@@ -406,9 +471,29 @@ body {
     background: rgba(255, 107, 107, 0.12);
   }
 
-  .pending-edit-insert {
+  .pending-edit-conflict {
+    color: #ffd27a;
+    background: rgba(245, 158, 11, 0.18);
+  }
+
+  .pending-edit-widget {
     color: #6fd682;
     background: rgba(81, 207, 102, 0.12);
+  }
+
+  .pending-edit-action-accept {
+    background: rgba(81, 207, 102, 0.18);
+    color: #9af0aa;
+  }
+
+  .pending-edit-action-reject {
+    background: rgba(255, 107, 107, 0.18);
+    color: #ffb3b3;
+  }
+
+  .pending-edit-widget.pending-edit-conflicted {
+    color: #ffd27a;
+    background: rgba(245, 158, 11, 0.18);
   }
 
   .pending-edit-active.pending-edit-delete {
@@ -416,9 +501,16 @@ body {
     outline-color: rgba(255, 107, 107, 0.4);
   }
 
-  .pending-edit-active.pending-edit-insert {
-    background: rgba(81, 207, 102, 0.2);
+  .pending-edit-active.pending-edit-conflict {
+    outline-color: rgba(245, 158, 11, 0.46);
+  }
+
+  .pending-edit-widget.pending-edit-active {
     outline-color: rgba(81, 207, 102, 0.4);
+  }
+
+  .pending-edit-widget.pending-edit-conflicted.pending-edit-active {
+    outline-color: rgba(245, 158, 11, 0.46);
   }
 
   #link-preview {

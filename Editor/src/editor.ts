@@ -10,7 +10,7 @@ import Image from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
 import Color from '@tiptap/extension-color';
 import { Plugin, PluginKey, NodeSelection } from '@tiptap/pm/state';
-import { Decoration, DecorationSet } from '@tiptap/pm/view';
+import { Decoration, DecorationSet, EditorView } from '@tiptap/pm/view';
 import { sendToSwift, registerSwiftCallbacks } from './bridge';
 
 // --- Search / Find & Replace ---
@@ -41,102 +41,458 @@ const GENERATED_FOOTNOTES_SELECTOR = 'section[data-generated-footnotes="true"]';
 const searchPluginKey = new PluginKey('searchHighlight');
 
 // --- Pending Edits (Cursor-like diff review) ---
+type PendingEditKind = 'selection' | 'insert' | 'findReplace';
+type PendingEditStatus = 'pending' | 'conflicted';
+
 interface PendingEdit {
   id: string;
+  groupId: string;
+  kind: PendingEditKind;
+  source: string;
+  label: string;
   from: number;
   to: number;
   newHtml: string;
+  originalText: string;
+  replacementText: string;
+  createdAt: number;
+  status: PendingEditStatus;
+  conflictReason: string | null;
 }
 
-let pendingEdits: PendingEdit[] = [];
-let currentEditIdx = -1;
-let isApplyingPendingEdit = false;
-const pendingEditPluginKey = new PluginKey('pendingEdits');
-
-function updatePendingDecorations(ed: Editor) {
-  const tr = ed.state.tr.setMeta(pendingEditPluginKey, true);
-  ed.view.dispatch(tr);
+interface PendingEditsPluginState {
+  edits: PendingEdit[];
+  activeEditId: string | null;
+  decorations: DecorationSet;
+  version: number;
+  scrollToEditId: string | null;
 }
 
-function scrollToPendingEdit(ed: Editor, edit: PendingEdit) {
+type PendingEditAction =
+  | {
+    type: 'queue';
+    edits: PendingEdit[];
+    activeEditId: string | null;
+    scrollToEditId: string | null;
+  }
+  | { type: 'focus'; id: string }
+  | { type: 'accept'; id: string }
+  | { type: 'reject'; id: string }
+  | { type: 'acceptAll' }
+  | { type: 'rejectAll' };
+
+const pendingEditPluginKey = new PluginKey<PendingEditsPluginState>('pendingEdits');
+
+function scrollToPendingEdit(view: EditorView, edit: PendingEdit) {
   try {
-    const domAtPos = ed.view.domAtPos(edit.from);
+    const domAtPos = view.domAtPos(edit.from);
     const node = domAtPos.node as HTMLElement;
     const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   } catch (_) {}
 }
 
-function notifyPendingEditCount() {
+function notifyPendingEditState(state: PendingEditsPluginState) {
   sendToSwift('pendingEditUpdate', {
-    count: pendingEdits.length,
-    currentIndex: currentEditIdx,
+    count: state.edits.length,
+    currentIndex: currentPendingEditIndex(state),
+    activeEditId: state.activeEditId,
+    edits: state.edits.map((edit, index) => serializePendingEdit(edit, index, state.activeEditId)),
   });
 }
 
-function acceptCurrentPendingEdit(ed: Editor) {
-  if (currentEditIdx < 0 || currentEditIdx >= pendingEdits.length) return;
-  const edit = pendingEdits[currentEditIdx];
-  const sizeBefore = ed.state.doc.content.size;
+function plainTextFromHTML(html: string): string {
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  return (parsed.body.textContent || '').replace(/\u00a0/g, ' ').trim();
+}
 
-  pendingEdits.splice(currentEditIdx, 1);
+function inferPendingEditSource(id: string): string {
+  if (id.startsWith('orality_')) return 'Orality';
+  if (id.startsWith('edit_')) return 'Claude';
+  return 'Suggestion';
+}
 
-  isApplyingPendingEdit = true;
-  ed.chain().insertContentAt({ from: edit.from, to: edit.to }, edit.newHtml).run();
-  isApplyingPendingEdit = false;
+function buildPendingEditLabel(source: string, kind: PendingEditKind): string {
+  switch (kind) {
+    case 'selection':
+      return `${source} selected edit`;
+    case 'insert':
+      return `${source} insertion`;
+    case 'findReplace':
+      return `${source} suggestion`;
+  }
+}
 
-  const offset = ed.state.doc.content.size - sizeBefore;
-  for (const r of pendingEdits) {
-    if (r.from >= edit.to) {
-      r.from += offset;
-      r.to += offset;
+function createPendingEdit(
+  ed: Editor,
+  options: {
+    id: string;
+    groupId: string;
+    kind: PendingEditKind;
+    from: number;
+    to: number;
+    newHtml: string;
+  }
+): PendingEdit {
+  const source = inferPendingEditSource(options.groupId);
+  return {
+    id: options.id,
+    groupId: options.groupId,
+    kind: options.kind,
+    source,
+    label: buildPendingEditLabel(source, options.kind),
+    from: options.from,
+    to: options.to,
+    newHtml: options.newHtml,
+    originalText: ed.state.doc.textBetween(options.from, options.to, '\n', '\n'),
+    replacementText: plainTextFromHTML(options.newHtml),
+    createdAt: Date.now(),
+    status: 'pending',
+    conflictReason: null,
+  };
+}
+
+function serializePendingEdit(
+  edit: PendingEdit,
+  index: number,
+  activeEditId: string | null
+) {
+  return {
+    id: edit.id,
+    groupId: edit.groupId,
+    kind: edit.kind,
+    source: edit.source,
+    label: edit.label,
+    from: edit.from,
+    to: edit.to,
+    originalText: edit.originalText,
+    replacementText: edit.replacementText,
+    createdAt: edit.createdAt,
+    status: edit.status,
+    conflictReason: edit.conflictReason,
+    index,
+    isActive: edit.id === activeEditId,
+    canAccept: edit.status === 'pending',
+    canReject: true,
+    canFocus: true,
+  };
+}
+
+function createPendingEditWidget(edit: PendingEdit, isActive: boolean): HTMLElement {
+  const container = document.createElement('span');
+  container.className = [
+    'pending-edit-widget',
+    isActive ? 'pending-edit-active' : '',
+    edit.status === 'conflicted' ? 'pending-edit-conflicted' : '',
+  ].filter(Boolean).join(' ');
+  container.contentEditable = 'false';
+
+  const previewButton = document.createElement('button');
+  previewButton.type = 'button';
+  previewButton.className = 'pending-edit-preview';
+  previewButton.title = edit.status === 'conflicted'
+    ? 'Jump to conflicted suggestion'
+    : 'Jump to suggestion';
+  previewButton.addEventListener('mousedown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  previewButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    focusPendingEdit(editor, edit.id);
+  });
+
+  const previewContent = document.createElement('span');
+  previewContent.className = 'pending-edit-preview-content';
+  if (edit.status === 'conflicted') {
+    previewContent.textContent = 'Conflict';
+  } else if (edit.newHtml.trim().length > 0) {
+    previewContent.innerHTML = edit.newHtml;
+  } else {
+    previewContent.textContent = 'Delete';
+    previewContent.classList.add('pending-edit-placeholder');
+  }
+  previewButton.appendChild(previewContent);
+  container.appendChild(previewButton);
+
+  const actions = document.createElement('span');
+  actions.className = 'pending-edit-actions';
+
+  if (edit.status === 'pending') {
+    const acceptButton = document.createElement('button');
+    acceptButton.type = 'button';
+    acceptButton.className = 'pending-edit-action pending-edit-action-accept';
+    acceptButton.textContent = 'Accept';
+    acceptButton.title = 'Accept suggestion';
+    acceptButton.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    acceptButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      acceptPendingEdit(editor, edit.id);
+    });
+    actions.appendChild(acceptButton);
+  }
+
+  const rejectButton = document.createElement('button');
+  rejectButton.type = 'button';
+  rejectButton.className = 'pending-edit-action pending-edit-action-reject';
+  rejectButton.textContent = edit.status === 'conflicted' ? 'Dismiss' : 'Reject';
+  rejectButton.title = edit.status === 'conflicted'
+    ? 'Dismiss conflicted suggestion'
+    : 'Reject suggestion';
+  rejectButton.addEventListener('mousedown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  rejectButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    rejectPendingEdit(editor, edit.id);
+  });
+  actions.appendChild(rejectButton);
+
+  container.appendChild(actions);
+  return container;
+}
+
+function buildPendingEditDecorations(
+  doc: any,
+  edits: PendingEdit[],
+  activeEditId: string | null
+): DecorationSet {
+  if (edits.length === 0) return DecorationSet.empty;
+
+  const decorations: Decoration[] = [];
+  edits.forEach((edit) => {
+    const isActive = edit.id === activeEditId;
+    if (edit.from < edit.to) {
+      const deleteClass = edit.status === 'conflicted'
+        ? (isActive ? 'pending-edit-conflict pending-edit-active' : 'pending-edit-conflict')
+        : (isActive ? 'pending-edit-delete pending-edit-active' : 'pending-edit-delete');
+      decorations.push(
+        Decoration.inline(edit.from, edit.to, {
+          class: deleteClass,
+        })
+      );
     }
-  }
 
-  if (currentEditIdx >= pendingEdits.length) {
-    currentEditIdx = pendingEdits.length > 0 ? 0 : -1;
-  }
-  updatePendingDecorations(ed);
-  notifyPendingEditCount();
-  if (currentEditIdx >= 0) scrollToPendingEdit(ed, pendingEdits[currentEditIdx]);
+    decorations.push(
+      Decoration.widget(edit.to, () => createPendingEditWidget(edit, isActive), { side: 1 })
+    );
+  });
+
+  return DecorationSet.create(doc, decorations);
 }
 
-function rejectCurrentPendingEdit(ed: Editor) {
-  if (currentEditIdx < 0 || currentEditIdx >= pendingEdits.length) return;
-  pendingEdits.splice(currentEditIdx, 1);
-  if (currentEditIdx >= pendingEdits.length) {
-    currentEditIdx = pendingEdits.length > 0 ? 0 : -1;
-  }
-  updatePendingDecorations(ed);
-  notifyPendingEditCount();
-  if (currentEditIdx >= 0) scrollToPendingEdit(ed, pendingEdits[currentEditIdx]);
+function resolveActivePendingEditId(
+  edits: PendingEdit[],
+  preferredId: string | null,
+  fallbackIndex = 0
+): string | null {
+  if (edits.length === 0) return null;
+  if (preferredId && edits.some((edit) => edit.id === preferredId)) return preferredId;
+  const safeIndex = Math.min(Math.max(fallbackIndex, 0), edits.length - 1);
+  return edits[safeIndex].id;
 }
 
-function acceptAllPendingEdits(ed: Editor) {
-  if (pendingEdits.length === 0) return;
-  const sorted = [...pendingEdits].sort((a, b) => b.from - a.from);
-  pendingEdits = [];
-  currentEditIdx = -1;
+function createPendingEditsState(
+  doc: any,
+  edits: PendingEdit[] = [],
+  activeEditId: string | null = null,
+  version = 0,
+  scrollToEditId: string | null = null
+): PendingEditsPluginState {
+  const normalizedActiveEditId = resolveActivePendingEditId(edits, activeEditId);
 
-  isApplyingPendingEdit = true;
+  return {
+    edits,
+    activeEditId: normalizedActiveEditId,
+    decorations: buildPendingEditDecorations(doc, edits, normalizedActiveEditId),
+    version,
+    scrollToEditId,
+  };
+}
+
+function getPendingEditsState(state: any): PendingEditsPluginState {
+  return pendingEditPluginKey.getState(state) ?? createPendingEditsState(state.doc);
+}
+
+function getPendingEditById(
+  state: PendingEditsPluginState,
+  id: string | null
+): PendingEdit | null {
+  if (!id) return null;
+  return state.edits.find((edit) => edit.id === id) ?? null;
+}
+
+function getActivePendingEdit(state: PendingEditsPluginState): PendingEdit | null {
+  return getPendingEditById(state, state.activeEditId);
+}
+
+function currentPendingEditIndex(state: PendingEditsPluginState): number {
+  if (!state.activeEditId) return state.edits.length > 0 ? 0 : -1;
+  return state.edits.findIndex((edit) => edit.id === state.activeEditId);
+}
+
+function canQueuePendingEdits(state: PendingEditsPluginState, count: number): boolean {
+  return state.edits.length + count <= MAX_PENDING_EDITS;
+}
+
+function rebasePendingEdits(edits: PendingEdit[], tr: any): PendingEdit[] {
+  if (!tr.docChanged || edits.length === 0) return edits;
+
+  let didChange = false;
+  const nextEdits: PendingEdit[] = [];
+
+  edits.forEach((edit) => {
+    if (edit.from === edit.to) {
+      const mapped = tr.mapping.mapResult(edit.from, 1);
+      if (mapped.pos !== edit.from) {
+        didChange = true;
+      }
+
+      nextEdits.push({
+        ...edit,
+        from: mapped.pos,
+        to: mapped.pos,
+        status: mapped.deleted ? 'conflicted' : edit.status,
+        conflictReason: mapped.deleted
+          ? 'The document changed around this insertion.'
+          : edit.conflictReason,
+      });
+      return;
+    }
+
+    const mappedFrom = tr.mapping.map(edit.from, 1);
+    const mappedTo = tr.mapping.map(edit.to, -1);
+
+    if (edit.status === 'conflicted') {
+      didChange = true;
+      nextEdits.push({
+        ...edit,
+        from: mappedFrom,
+        to: Math.max(mappedFrom, mappedTo),
+      });
+      return;
+    }
+
+    const mappedText = tr.doc.textBetween(mappedFrom, Math.max(mappedFrom, mappedTo), '\n', '\n');
+    if (mappedFrom >= mappedTo || mappedText !== edit.originalText) {
+      didChange = true;
+      nextEdits.push({
+        ...edit,
+        from: mappedFrom,
+        to: Math.max(mappedFrom, mappedTo),
+        status: 'conflicted',
+        conflictReason: 'The document changed around this suggestion.',
+      });
+      return;
+    }
+
+    if (mappedFrom !== edit.from || mappedTo !== edit.to) {
+      didChange = true;
+    }
+
+    nextEdits.push({
+      ...edit,
+      from: mappedFrom,
+      to: mappedTo,
+      conflictReason: null,
+    });
+  });
+
+  return didChange ? nextEdits : edits;
+}
+
+function dispatchPendingEditAction(ed: Editor, action: PendingEditAction): boolean {
+  const tr = ed.state.tr.setMeta(pendingEditPluginKey, action);
+  ed.view.dispatch(tr);
+  return true;
+}
+
+function queuePendingEdits(
+  ed: Editor,
+  edits: PendingEdit[],
+  activeEditId: string | null = edits[0]?.id ?? null
+): number {
+  if (edits.length === 0) return 0;
+
+  const state = getPendingEditsState(ed.state);
+  if (!canQueuePendingEdits(state, edits.length)) return TOO_MANY_PENDING_EDITS;
+
+  dispatchPendingEditAction(ed, {
+    type: 'queue',
+    edits,
+    activeEditId,
+    scrollToEditId: activeEditId,
+  });
+  return edits.length;
+}
+
+function focusPendingEdit(ed: Editor, id: string): boolean {
+  const state = getPendingEditsState(ed.state);
+  const edit = getPendingEditById(state, id);
+  if (!edit) return false;
+  dispatchPendingEditAction(ed, { type: 'focus', id });
+  ed.chain()
+    .focus()
+    .setTextSelection({ from: edit.from, to: Math.max(edit.from, edit.to) })
+    .run();
+  return true;
+}
+
+function acceptPendingEdit(ed: Editor, id: string): boolean {
+  const state = getPendingEditsState(ed.state);
+  const edit = getPendingEditById(state, id);
+  if (!edit || edit.status === 'conflicted') return false;
+
+  return ed.chain()
+    .command(({ tr }) => {
+      tr.setMeta(pendingEditPluginKey, { type: 'accept', id } satisfies PendingEditAction);
+      return true;
+    })
+    .insertContentAt({ from: edit.from, to: edit.to }, edit.newHtml)
+    .run();
+}
+
+function rejectPendingEdit(ed: Editor, id: string): boolean {
+  const state = getPendingEditsState(ed.state);
+  if (!state.edits.some((edit) => edit.id === id)) return false;
+  return dispatchPendingEditAction(ed, { type: 'reject', id });
+}
+
+function acceptAllPendingEdits(ed: Editor): boolean {
+  const state = getPendingEditsState(ed.state);
+  if (state.edits.length === 0) return false;
+
+  const sorted = [...state.edits].sort((a, b) => b.from - a.from);
+  let chain = ed.chain().command(({ tr }) => {
+    tr.setMeta(pendingEditPluginKey, { type: 'acceptAll' } satisfies PendingEditAction);
+    return true;
+  });
+
   for (const edit of sorted) {
-    ed.chain().insertContentAt({ from: edit.from, to: edit.to }, edit.newHtml).run();
+    chain = chain.insertContentAt({ from: edit.from, to: edit.to }, edit.newHtml);
   }
-  isApplyingPendingEdit = false;
 
-  updatePendingDecorations(ed);
-  notifyPendingEditCount();
+  return chain.run();
 }
 
-function rejectAllPendingEdits(ed: Editor) {
-  pendingEdits = [];
-  currentEditIdx = -1;
-  updatePendingDecorations(ed);
-  notifyPendingEditCount();
+function rejectAllPendingEdits(ed: Editor): boolean {
+  const state = getPendingEditsState(ed.state);
+  if (state.edits.length === 0) return false;
+  return dispatchPendingEditAction(ed, { type: 'rejectAll' });
 }
 
-function canQueuePendingEdits(count: number): boolean {
-  return pendingEdits.length + count <= MAX_PENDING_EDITS;
+function pendingEditsSummaryJSON(state: PendingEditsPluginState): string {
+  return JSON.stringify({
+    activeEditId: state.activeEditId,
+    edits: state.edits.map((edit, index) => serializePendingEdit(edit, index, state.activeEditId)),
+  });
 }
 
 const PendingEditHighlight = Extension.create({
@@ -145,71 +501,141 @@ const PendingEditHighlight = Extension.create({
   addKeyboardShortcuts() {
     return {
       'Tab': () => {
-        if (pendingEdits.length === 0) return false;
-        acceptCurrentPendingEdit(this.editor);
-        return true;
+        const edit = getActivePendingEdit(getPendingEditsState(this.editor.state));
+        return edit ? acceptPendingEdit(this.editor, edit.id) : false;
       },
       'Shift-Tab': () => {
-        if (pendingEdits.length === 0) return false;
-        rejectCurrentPendingEdit(this.editor);
-        return true;
+        const edit = getActivePendingEdit(getPendingEditsState(this.editor.state));
+        return edit ? rejectPendingEdit(this.editor, edit.id) : false;
       },
       'Escape': () => {
-        if (pendingEdits.length === 0) return false;
-        rejectAllPendingEdits(this.editor);
-        return true;
+        return rejectAllPendingEdits(this.editor);
       },
       'Mod-Shift-Enter': () => {
-        if (pendingEdits.length === 0) return false;
-        acceptAllPendingEdits(this.editor);
-        return true;
+        return acceptAllPendingEdits(this.editor);
       },
     };
   },
 
   addProseMirrorPlugins() {
     return [
-      new Plugin({
+      new Plugin<PendingEditsPluginState>({
         key: pendingEditPluginKey,
         state: {
-          init() { return DecorationSet.empty; },
-          apply(tr, oldSet, _oldState, newState) {
-            const meta = tr.getMeta(pendingEditPluginKey);
-            if (meta !== undefined) {
-              if (pendingEdits.length === 0) return DecorationSet.empty;
-              const decorations: Decoration[] = [];
-              pendingEdits.forEach((edit, i) => {
-                const isActive = i === currentEditIdx;
-                // Strikethrough on old text
-                if (edit.from < edit.to) {
-                  decorations.push(
-                    Decoration.inline(edit.from, edit.to, {
-                      class: isActive ? 'pending-edit-delete pending-edit-active' : 'pending-edit-delete',
-                    })
-                  );
+          init(_, state) {
+            return createPendingEditsState(state.doc);
+          },
+          apply(tr, pluginState, _oldState, newState) {
+            const action = tr.getMeta(pendingEditPluginKey) as PendingEditAction | undefined;
+            const previousActiveIndex = currentPendingEditIndex(pluginState);
+
+            let edits = pluginState.edits;
+            let activeEditId = pluginState.activeEditId;
+            let fallbackActiveIndex = previousActiveIndex >= 0 ? previousActiveIndex : 0;
+            let scrollToEditId: string | null = null;
+            let changed = false;
+
+            if (action) {
+              switch (action.type) {
+                case 'queue':
+                  if (action.edits.length > 0) {
+                    edits = [...edits, ...action.edits];
+                    activeEditId = action.activeEditId;
+                    fallbackActiveIndex = edits.findIndex((edit) => edit.id === action.activeEditId);
+                    scrollToEditId = action.scrollToEditId;
+                    changed = true;
+                  }
+                  break;
+                case 'focus':
+                  if (pluginState.edits.some((edit) => edit.id === action.id) && action.id !== activeEditId) {
+                    activeEditId = action.id;
+                    fallbackActiveIndex = pluginState.edits.findIndex((edit) => edit.id === action.id);
+                    scrollToEditId = action.id;
+                    changed = true;
+                  }
+                  break;
+                case 'accept':
+                case 'reject': {
+                  const nextEdits = edits.filter((edit) => edit.id !== action.id);
+                  if (nextEdits.length !== edits.length) {
+                    edits = nextEdits;
+                    if (activeEditId === action.id) {
+                      activeEditId = null;
+                    }
+                    scrollToEditId = null;
+                    changed = true;
+                  }
+                  break;
                 }
-                // Widget showing new content
-                decorations.push(
-                  Decoration.widget(edit.to, () => {
-                    const span = document.createElement('span');
-                    span.className = isActive
-                      ? 'pending-edit-insert pending-edit-active'
-                      : 'pending-edit-insert';
-                    span.contentEditable = 'false';
-                    span.innerHTML = edit.newHtml;
-                    return span;
-                  }, { side: 1 })
-                );
-              });
-              return DecorationSet.create(newState.doc, decorations);
+                case 'acceptAll':
+                case 'rejectAll':
+                  if (edits.length > 0) {
+                    edits = [];
+                    activeEditId = null;
+                    scrollToEditId = null;
+                    changed = true;
+                  }
+                  break;
+              }
             }
-            return oldSet.map(tr.mapping, tr.doc);
+
+            const rebasedEdits = rebasePendingEdits(edits, tr);
+            if (rebasedEdits !== edits) {
+              edits = rebasedEdits;
+              changed = true;
+            }
+
+            const normalizedActiveEditId = resolveActivePendingEditId(
+              edits,
+              activeEditId,
+              fallbackActiveIndex
+            );
+
+            if (normalizedActiveEditId !== activeEditId) {
+              activeEditId = normalizedActiveEditId;
+              changed = true;
+            }
+
+            if (!changed) return pluginState;
+
+            if (!scrollToEditId && action && edits.length > 0 && activeEditId) {
+              if (action.type === 'accept' || action.type === 'reject' || action.type === 'focus') {
+                scrollToEditId = activeEditId;
+              }
+            }
+
+            return createPendingEditsState(
+              newState.doc,
+              edits,
+              activeEditId,
+              pluginState.version + 1,
+              scrollToEditId
+            );
           },
         },
         props: {
           decorations(state) {
-            return this.getState(state);
+            return pendingEditPluginKey.getState(state)?.decorations ?? DecorationSet.empty;
           },
+        },
+        view(view) {
+          return {
+            update(updatedView, previousState) {
+              const previousPendingState = getPendingEditsState(previousState);
+              const nextPendingState = getPendingEditsState(updatedView.state);
+
+              if (previousPendingState.version === nextPendingState.version) return;
+
+              notifyPendingEditState(nextPendingState);
+
+              if (!nextPendingState.scrollToEditId) return;
+
+              const targetEdit = getPendingEditById(nextPendingState, nextPendingState.scrollToEditId);
+              if (targetEdit) {
+                scrollToPendingEdit(updatedView, targetEdit);
+              }
+            },
+          };
         },
       }),
     ];
@@ -945,13 +1371,6 @@ const editor = new Editor({
     },
   },
   onUpdate({ editor }) {
-    // If user makes a manual edit while pending edits exist, clear them
-    if (pendingEdits.length > 0 && !isApplyingPendingEdit) {
-      pendingEdits = [];
-      currentEditIdx = -1;
-      updatePendingDecorations(editor);
-      notifyPendingEditCount();
-    }
     renderFootnotesPanel(editor);
     // Debounce content changes to avoid flooding Swift
     if (debounceTimer) clearTimeout(debounceTimer);
@@ -1016,11 +1435,13 @@ function setEditorAutocorrectEnabled(enabled: boolean) {
 // Register callbacks for Swift to call into JS
 registerSwiftCallbacks({
   loadContent(html: string) {
+    rejectAllPendingEdits(editor);
     editor.commands.setContent(stripGeneratedFootnotesSection(html), false);
     renderFootnotesPanel(editor);
   },
   loadJSONContent(json: string) {
     try {
+      rejectAllPendingEdits(editor);
       const parsed = JSON.parse(json);
       editor.commands.setContent(parsed, false);
       renderFootnotesPanel(editor);
@@ -1246,23 +1667,29 @@ registerSwiftCallbacks({
   pendingReplaceSelection(id: string, newHtml: string): number {
     const { from, to } = editor.state.selection;
     if (from === to) return 0;
-    if (!canQueuePendingEdits(1)) return TOO_MANY_PENDING_EDITS;
-    pendingEdits.push({ id, from, to, newHtml });
-    if (currentEditIdx < 0) currentEditIdx = 0;
-    updatePendingDecorations(editor);
-    notifyPendingEditCount();
-    scrollToPendingEdit(editor, pendingEdits[pendingEdits.length - 1]);
-    return 1;
+    return queuePendingEdits(editor, [
+      createPendingEdit(editor, {
+        id,
+        groupId: id,
+        kind: 'selection',
+        from,
+        to,
+        newHtml,
+      }),
+    ], id);
   },
   pendingInsertAtCursor(id: string, newHtml: string): number {
     const { from } = editor.state.selection;
-    if (!canQueuePendingEdits(1)) return TOO_MANY_PENDING_EDITS;
-    pendingEdits.push({ id, from, to: from, newHtml });
-    if (currentEditIdx < 0) currentEditIdx = 0;
-    updatePendingDecorations(editor);
-    notifyPendingEditCount();
-    scrollToPendingEdit(editor, pendingEdits[pendingEdits.length - 1]);
-    return 1;
+    return queuePendingEdits(editor, [
+      createPendingEdit(editor, {
+        id,
+        groupId: id,
+        kind: 'insert',
+        from,
+        to: from,
+        newHtml,
+      }),
+    ], id);
   },
   pendingFindAndReplace(id: string, find: string, replaceHtml: string, replaceAll: boolean): number {
     const maxMatches = replaceAll ? MAX_PENDING_FIND_REPLACE_MATCHES + 1 : 1;
@@ -1272,19 +1699,23 @@ registerSwiftCallbacks({
       return TOO_MANY_MATCHES;
     }
     const toAdd = replaceAll ? matches : [matches[0]];
-    if (!canQueuePendingEdits(toAdd.length)) return TOO_MANY_PENDING_EDITS;
-    toAdd.forEach((match, i) => {
-      pendingEdits.push({ id: `${id}_${i}`, from: match.from, to: match.to, newHtml: replaceHtml });
-    });
-    if (currentEditIdx < 0) currentEditIdx = 0;
-    updatePendingDecorations(editor);
-    notifyPendingEditCount();
-    scrollToPendingEdit(editor, pendingEdits[pendingEdits.length - toAdd.length]);
-    return toAdd.length;
+    const edits = toAdd.map((match, i) => createPendingEdit(editor, {
+      id: replaceAll ? `${id}_${i}` : id,
+      groupId: id,
+      kind: 'findReplace',
+      from: match.from,
+      to: match.to,
+      newHtml: replaceHtml,
+    }));
+    return queuePendingEdits(editor, edits, edits[0]?.id ?? null);
   },
   acceptAllPendingEdits() { acceptAllPendingEdits(editor); },
   rejectAllPendingEdits() { rejectAllPendingEdits(editor); },
-  getPendingEditCount(): number { return pendingEdits.length; },
+  acceptPendingEdit(id: string): boolean { return acceptPendingEdit(editor, id); },
+  rejectPendingEdit(id: string): boolean { return rejectPendingEdit(editor, id); },
+  focusPendingEdit(id: string): boolean { return focusPendingEdit(editor, id); },
+  getPendingEdits(): string { return pendingEditsSummaryJSON(getPendingEditsState(editor.state)); },
+  getPendingEditCount(): number { return getPendingEditsState(editor.state).edits.length; },
 });
 
 attachLinkHoverPreview(editor);
