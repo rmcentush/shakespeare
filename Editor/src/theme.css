@@ -208,9 +208,14 @@ body {
   font-weight: 600;
   color: #007aff;
   background: rgba(0, 122, 255, 0.08);
-  cursor: pointer;
+  cursor: grab;
   user-select: none;
+  -webkit-user-drag: element;
   transition: background-color 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.footnote-reference:active {
+  cursor: grabbing;
 }
 
 .footnote-reference:hover {
@@ -250,8 +255,28 @@ body {
   color: #3f3f3f;
 }
 
-.editor-footnote-note {
+.editor-footnote-editor {
+  display: block;
+  width: 100%;
+  min-height: 1.8em;
+  padding: 0;
+  border: 0;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
   white-space: pre-wrap;
+  outline: none;
+}
+
+.editor-footnote-editor:focus {
+  padding: 0.3em 0.45em;
+  margin: -0.3em -0.45em;
+  border-radius: 8px;
+  background: rgba(0, 122, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(0, 122, 255, 0.16);
 }
 
 /* Link hover preview */
@@ -452,6 +477,11 @@ body {
 
   .editor-footnotes-list li {
     color: #d0d0d0;
+  }
+
+  .editor-footnote-editor:focus {
+    background: rgba(90, 200, 250, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(90, 200, 250, 0.22);
   }
 
   .search-match {

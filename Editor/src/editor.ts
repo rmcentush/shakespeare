@@ -46,9 +46,17 @@ interface DocumentTextSnapshot {
   revision: number;
   footnotes: FootnoteDetails[];
   footnotesSignature: string;
+  footnotesStructureSignature: string;
   plainText: string;
   words: number;
   characters: number;
+}
+
+interface FocusedFootnoteEditorState {
+  id: string;
+  selectionStart: number;
+  selectionEnd: number;
+  scrollTop: number;
 }
 
 let searchResults: SearchMatch[] = [];
@@ -789,16 +797,6 @@ function collectFootnotes(doc: any): FootnoteDetails[] {
   return footnotes;
 }
 
-function appendMultilineText(container: HTMLElement, text: string) {
-  const lines = text.split('\n');
-  lines.forEach((line, index) => {
-    if (index > 0) {
-      container.appendChild(document.createElement('br'));
-    }
-    container.appendChild(document.createTextNode(line));
-  });
-}
-
 function escapeHTML(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -825,6 +823,12 @@ function footnotesSignature(footnotes: FootnoteDetails[]): string {
     .join('\u001e');
 }
 
+function footnotesStructureSignature(footnotes: FootnoteDetails[]): string {
+  return footnotes
+    .map((footnote) => `${footnote.id}\u001f${footnote.index}`)
+    .join('\u001e');
+}
+
 function buildPlainTextSnapshot(editor: Editor, footnotes: FootnoteDetails[]): DocumentTextSnapshot {
   const text = editor.getText();
 
@@ -833,6 +837,7 @@ function buildPlainTextSnapshot(editor: Editor, footnotes: FootnoteDetails[]): D
       revision: documentRevision,
       footnotes,
       footnotesSignature: '',
+      footnotesStructureSignature: '',
       plainText: text,
       words: countWords(text),
       characters: text.length,
@@ -851,6 +856,7 @@ function buildPlainTextSnapshot(editor: Editor, footnotes: FootnoteDetails[]): D
     revision: documentRevision,
     footnotes,
     footnotesSignature: footnotesSignature(footnotes),
+    footnotesStructureSignature: footnotesStructureSignature(footnotes),
     plainText,
     words: countWords(plainText),
     characters: plainText.length,
@@ -861,7 +867,7 @@ let documentRevision = 0;
 let cachedDocumentTextSnapshot: DocumentTextSnapshot | null = null;
 let cachedSerializedHTMLRevision = -1;
 let cachedSerializedHTML = '';
-let lastRenderedFootnotesSignature: string | null = null;
+let lastRenderedFootnotesStructureSignature: string | null = null;
 let lastSentContentUpdate: { html: string; text: string } | null = null;
 let lastSentSelectionState: EditorSelectionState | null = null;
 
@@ -879,7 +885,7 @@ function resetEditorSyncState() {
   if (selectionDebounceTimer) clearTimeout(selectionDebounceTimer);
 
   invalidateDerivedDocumentState();
-  lastRenderedFootnotesSignature = null;
+  lastRenderedFootnotesStructureSignature = null;
   lastSentContentUpdate = null;
   lastSentSelectionState = null;
 }
@@ -910,23 +916,158 @@ function serializeDocumentHTML(editor: Editor): string {
   return cachedSerializedHTML;
 }
 
+function autoResizeFootnoteEditor(textarea: HTMLTextAreaElement) {
+  textarea.style.height = 'auto';
+  textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
+function getFootnoteByID(editor: Editor, id: string): FootnoteDetails | null {
+  return getDocumentTextSnapshot(editor).footnotes.find((footnote) => footnote.id === id) ?? null;
+}
+
+function selectFootnoteReference(
+  editor: Editor,
+  id: string,
+  options: { focusEditor?: boolean; scrollIntoView?: boolean } = {}
+): boolean {
+  const footnote = getFootnoteByID(editor, id);
+  if (!footnote) return false;
+
+  const { focusEditor = false, scrollIntoView = false } = options;
+  if (focusEditor) {
+    editor.commands.focus();
+  }
+
+  editor.view.dispatch(
+    editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, footnote.pos))
+  );
+
+  if (scrollIntoView) {
+    try {
+      const domAtPos = editor.view.domAtPos(footnote.pos);
+      const node = domAtPos.node as HTMLElement;
+      const element = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (_) {
+      // Ignore if the DOM position can't be resolved.
+    }
+  }
+
+  return true;
+}
+
+function focusFootnoteEditor(id: string, placeCaretAtEnd = true): boolean {
+  const container = document.getElementById('footnotes');
+  if (!container) return false;
+
+  const editorElement = container.querySelector(
+    `.editor-footnote-editor[data-footnote-id="${id}"]`
+  );
+
+  if (!(editorElement instanceof HTMLTextAreaElement)) {
+    return false;
+  }
+
+  editorElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  editorElement.focus();
+
+  if (placeCaretAtEnd) {
+    const end = editorElement.value.length;
+    editorElement.setSelectionRange(end, end);
+  }
+
+  return true;
+}
+
+function updateFootnoteNote(editor: Editor, id: string, note: string) {
+  const footnote = getFootnoteByID(editor, id);
+  if (!footnote) return;
+
+  const currentNode = editor.state.doc.nodeAt(footnote.pos);
+  if (!currentNode) return;
+
+  editor.view.dispatch(
+    editor.state.tr.setNodeMarkup(footnote.pos, undefined, {
+      ...currentNode.attrs,
+      note,
+    })
+  );
+}
+
+function captureFocusedFootnoteEditorState(container: HTMLElement): FocusedFootnoteEditorState | null {
+  const activeElement = document.activeElement;
+  if (!(activeElement instanceof HTMLTextAreaElement)) return null;
+
+  const id = activeElement.dataset.footnoteId;
+  if (!id || !container.contains(activeElement)) return null;
+
+  return {
+    id,
+    selectionStart: activeElement.selectionStart ?? activeElement.value.length,
+    selectionEnd: activeElement.selectionEnd ?? activeElement.value.length,
+    scrollTop: activeElement.scrollTop,
+  };
+}
+
+function restoreFocusedFootnoteEditorState(
+  container: HTMLElement,
+  state: FocusedFootnoteEditorState | null
+) {
+  if (!state) return;
+
+  const editorElement = container.querySelector(
+    `.editor-footnote-editor[data-footnote-id="${state.id}"]`
+  );
+
+  if (!(editorElement instanceof HTMLTextAreaElement)) {
+    return;
+  }
+
+  editorElement.focus();
+  editorElement.setSelectionRange(state.selectionStart, state.selectionEnd);
+  editorElement.scrollTop = state.scrollTop;
+}
+
+function syncFootnotePanelValues(container: HTMLElement, footnotes: FootnoteDetails[]) {
+  const editors = new Map<string, HTMLTextAreaElement>();
+  container.querySelectorAll('.editor-footnote-editor').forEach((element) => {
+    if (element instanceof HTMLTextAreaElement && element.dataset.footnoteId) {
+      editors.set(element.dataset.footnoteId, element);
+    }
+  });
+
+  footnotes.forEach((footnote) => {
+    const editorElement = editors.get(footnote.id);
+    if (!editorElement) return;
+    if (document.activeElement === editorElement) return;
+
+    if (editorElement.value !== footnote.note) {
+      editorElement.value = footnote.note;
+      autoResizeFootnoteEditor(editorElement);
+    }
+  });
+}
+
 function renderFootnotesPanel(editor: Editor, force = false) {
   const container = document.getElementById('footnotes');
   if (!container) return;
 
   const snapshot = getDocumentTextSnapshot(editor);
-  if (!force && snapshot.footnotesSignature === lastRenderedFootnotesSignature) {
+  if (!force && snapshot.footnotesStructureSignature === lastRenderedFootnotesStructureSignature) {
+    syncFootnotePanelValues(container, snapshot.footnotes);
     return;
   }
 
-  lastRenderedFootnotesSignature = snapshot.footnotesSignature;
-  container.replaceChildren();
-
   if (snapshot.footnotes.length === 0) {
+    lastRenderedFootnotesStructureSignature = snapshot.footnotesStructureSignature;
+    container.replaceChildren();
     container.setAttribute('hidden', 'true');
     return;
   }
 
+  const focusedEditorState = captureFocusedFootnoteEditorState(container);
+  lastRenderedFootnotesStructureSignature = snapshot.footnotesStructureSignature;
+  container.replaceChildren();
   container.removeAttribute('hidden');
 
   const title = document.createElement('div');
@@ -941,15 +1082,37 @@ function renderFootnotesPanel(editor: Editor, force = false) {
     const item = document.createElement('li');
     item.id = `editor-footnote-${footnote.id}`;
 
-    const note = document.createElement('span');
-    note.className = 'editor-footnote-note';
-    appendMultilineText(note, footnote.note);
+    const note = document.createElement('textarea');
+    note.className = 'editor-footnote-editor';
+    note.dataset.footnoteId = footnote.id;
+    note.value = footnote.note;
+    note.rows = 1;
+    note.spellcheck = true;
+    note.placeholder = 'Footnote text';
+    note.addEventListener('focus', () => {
+      selectFootnoteReference(editor, footnote.id);
+    });
+    note.addEventListener('input', () => {
+      autoResizeFootnoteEditor(note);
+      updateFootnoteNote(editor, footnote.id, note.value);
+    });
+    note.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        selectFootnoteReference(editor, footnote.id, {
+          focusEditor: true,
+          scrollIntoView: true,
+        });
+      }
+    });
+    autoResizeFootnoteEditor(note);
     item.appendChild(note);
 
     list.appendChild(item);
   });
 
   container.appendChild(list);
+  restoreFocusedFootnoteEditorState(container, focusedEditorState);
 }
 
 function buildSelectionState(editor: Editor): EditorSelectionState {
@@ -1135,6 +1298,7 @@ const Footnote = TiptapNode.create({
   group: 'inline',
   atom: true,
   selectable: true,
+  draggable: true,
 
   addAttributes() {
     return {
@@ -1194,23 +1358,40 @@ const Footnote = TiptapNode.create({
       const element = document.createElement('sup');
       element.className = 'footnote-reference';
       element.contentEditable = 'false';
+      element.draggable = true;
 
       const updateElement = (currentNode: any) => {
         element.textContent = String(currentNode.attrs.index || '?');
-        element.title = (currentNode.attrs.note as string) || '';
+        element.title = 'Click to edit footnote. Drag to move it.';
         element.dataset.footnoteId = (currentNode.attrs.id as string) || '';
         element.dataset.footnoteIndex = String(currentNode.attrs.index || 0);
         element.dataset.footnoteNote = (currentNode.attrs.note as string) || '';
       };
 
-      const handleMouseDown = (event: MouseEvent) => {
+      const handleClick = (event: MouseEvent) => {
         event.preventDefault();
         event.stopPropagation();
 
         if (typeof getPos !== 'function') return;
         const pos = getPos();
         if (typeof pos === 'number') {
-          editor.commands.focus();
+          editor.view.dispatch(
+            editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, pos))
+          );
+
+          const id = (node.attrs.id as string) || '';
+          if (id) {
+            requestAnimationFrame(() => {
+              focusFootnoteEditor(id);
+            });
+          }
+        }
+      };
+
+      const handleDragStart = () => {
+        if (typeof getPos !== 'function') return;
+        const pos = getPos();
+        if (typeof pos === 'number') {
           editor.view.dispatch(
             editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, pos))
           );
@@ -1218,7 +1399,8 @@ const Footnote = TiptapNode.create({
       };
 
       updateElement(node);
-      element.addEventListener('mousedown', handleMouseDown);
+      element.addEventListener('click', handleClick);
+      element.addEventListener('dragstart', handleDragStart);
 
       return {
         dom: element,
@@ -1234,7 +1416,8 @@ const Footnote = TiptapNode.create({
           element.classList.remove('is-selected');
         },
         destroy() {
-          element.removeEventListener('mousedown', handleMouseDown);
+          element.removeEventListener('click', handleClick);
+          element.removeEventListener('dragstart', handleDragStart);
         },
       };
     };
