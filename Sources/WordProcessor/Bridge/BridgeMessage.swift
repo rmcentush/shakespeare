@@ -15,9 +15,9 @@ enum BridgePayload: Codable {
     case unknown
 
     struct SelectionState: Codable {
-        let from: Int
-        let to: Int
         let hasSelection: Bool
+        let selectedWords: Int
+        let selectedCharacters: Int
         let isBold: Bool
         let isItalic: Bool
         let isUnderline: Bool
@@ -90,9 +90,9 @@ enum BridgePayload: Codable {
             return .contentUpdate(html: html, text: text, words: words, characters: characters)
         case "selectionChanged":
             let state = SelectionState(
-                from: payload["from"] as? Int ?? 0,
-                to: payload["to"] as? Int ?? 0,
                 hasSelection: payload["hasSelection"] as? Bool ?? false,
+                selectedWords: payload["selectedWords"] as? Int ?? 0,
+                selectedCharacters: payload["selectedCharacters"] as? Int ?? 0,
                 isBold: payload["isBold"] as? Bool ?? false,
                 isItalic: payload["isItalic"] as? Bool ?? false,
                 isUnderline: payload["isUnderline"] as? Bool ?? false,

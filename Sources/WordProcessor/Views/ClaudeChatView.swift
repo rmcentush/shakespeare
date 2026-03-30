@@ -98,9 +98,16 @@ struct ClaudeChatView: View {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         inputText = ""
-        let content = document.plainTextContent
         let editor = editorViewModel
-        chatViewModel.sendMessage(text, documentContent: content, editorViewModel: editor)
+
+        if editor.isEditorReady {
+            editor.getPlainText { content in
+                chatViewModel.sendMessage(text, documentContent: content, editorViewModel: editor)
+            }
+            return
+        }
+
+        chatViewModel.sendMessage(text, documentContent: document.plainTextContent, editorViewModel: editor)
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = false) {

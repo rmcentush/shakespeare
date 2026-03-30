@@ -198,30 +198,33 @@ struct VersionHistoryView: View {
     }
 
     private func restoreVersion(_ version: VersionStore.Version) {
-        // Save current state as a version first (so nothing is lost)
-        if let url = document.fileURL {
-            let snapshot = document.currentSnapshot()
-            let sameJSON = snapshot.canonicalJSON == version.canonicalJSON
-            let sameHTML = snapshot.htmlContent == version.htmlContent
-            if !sameJSON || !sameHTML {
-                VersionStore.shared.saveVersion(filePath: url.path, snapshot: snapshot)
-            }
-        }
+        Task { @MainActor in
+            let currentSnapshot = await editorViewModel.latestSnapshot(for: document)
 
-        let snapshot = DocumentFileStore.FileSnapshot(
-            canonicalJSON: version.canonicalJSON,
-            htmlContent: version.htmlContent,
-            plainText: version.plainText,
-            wordCount: version.wordCount,
-            characterCount: version.characterCount,
-            documentID: version.documentID ?? document.documentID,
-            schemaVersion: document.schemaVersion,
-            createdAt: document.createdAt,
-            modifiedAt: version.createdAt
-        )
-        document.restoreVersion(snapshot: snapshot)
-        editorViewModel.loadSnapshot(snapshot)
-        refreshVersions()
+            // Save current state as a version first (so nothing is lost)
+            if let url = document.fileURL {
+                let sameJSON = currentSnapshot.canonicalJSON == version.canonicalJSON
+                let sameHTML = currentSnapshot.htmlContent == version.htmlContent
+                if !sameJSON || !sameHTML {
+                    VersionStore.shared.saveVersion(filePath: url.path, snapshot: currentSnapshot)
+                }
+            }
+
+            let snapshot = DocumentFileStore.FileSnapshot(
+                canonicalJSON: version.canonicalJSON,
+                htmlContent: version.htmlContent,
+                plainText: version.plainText,
+                wordCount: version.wordCount,
+                characterCount: version.characterCount,
+                documentID: version.documentID ?? document.documentID,
+                schemaVersion: document.schemaVersion,
+                createdAt: document.createdAt,
+                modifiedAt: version.createdAt
+            )
+            document.restoreVersion(snapshot: snapshot)
+            editorViewModel.loadSnapshot(snapshot)
+            refreshVersions()
+        }
     }
 
     private func saveNamedVersion() {

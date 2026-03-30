@@ -16,18 +16,38 @@ final class EditorViewModel {
     /// Incremented each time the editor signals ready (supports detecting web process restarts).
     var editorReadyCount = 0
 
-    struct SelectionState {
+    struct SelectionState: Equatable {
         var isBold = false
         var isItalic = false
         var isUnderline = false
         var heading = 0
         var textAlign = "left"
         var hasSelection = false
+        var selectedWords = 0
+        var selectedCharacters = 0
         var isLink = false
         var linkHref = ""
         var textColor = ""
         var isFootnote = false
         var footnoteText = ""
+
+        init() {}
+
+        init(_ state: BridgePayload.SelectionState) {
+            isBold = state.isBold
+            isItalic = state.isItalic
+            isUnderline = state.isUnderline
+            heading = state.heading
+            textAlign = state.textAlign
+            hasSelection = state.hasSelection
+            selectedWords = state.selectedWords
+            selectedCharacters = state.selectedCharacters
+            isLink = state.isLink
+            linkHref = state.linkHref
+            textColor = state.textColor
+            isFootnote = state.isFootnote
+            footnoteText = state.footnoteText
+        }
     }
 
     struct PendingEdit: Identifiable, Equatable {
@@ -107,17 +127,10 @@ final class EditorViewModel {
             )
 
         case .selectionChanged(let state):
-            selectionState.isBold = state.isBold
-            selectionState.isItalic = state.isItalic
-            selectionState.isUnderline = state.isUnderline
-            selectionState.heading = state.heading
-            selectionState.textAlign = state.textAlign
-            selectionState.hasSelection = state.hasSelection
-            selectionState.isLink = state.isLink
-            selectionState.linkHref = state.linkHref
-            selectionState.textColor = state.textColor
-            selectionState.isFootnote = state.isFootnote
-            selectionState.footnoteText = state.footnoteText
+            let nextSelectionState = SelectionState(state)
+            if nextSelectionState != selectionState {
+                selectionState = nextSelectionState
+            }
 
         case .wordCount(let words, let characters):
             NotificationCenter.default.post(
@@ -419,7 +432,7 @@ final class EditorViewModel {
         await persistDocument(
             document: document,
             to: url,
-            captureLatestEditorState: false,
+            captureLatestEditorState: true,
             createVersionSnapshot: false,
             actionName: "Auto-save"
         )

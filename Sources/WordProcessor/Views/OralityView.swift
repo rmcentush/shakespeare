@@ -461,25 +461,35 @@ struct OralityView: View {
                 return
             }
 
-            let occurrenceCount = countOccurrences(of: normalizedTarget, in: document.plainTextContent)
-            guard occurrenceCount == 1 else {
-                let error = occurrenceCount == 0
-                    ? "The original text no longer matches the document. Re-run the orality analysis."
-                    : "This text appears multiple times. Select the exact sentence or paragraph, then queue the suggestion again."
+            let resolveOccurrences: (String) -> Void = { plainText in
+                let occurrenceCount = countOccurrences(of: normalizedTarget, in: plainText)
+                guard occurrenceCount == 1 else {
+                    let error = occurrenceCount == 0
+                        ? "The original text no longer matches the document. Re-run the orality analysis."
+                        : "This text appears multiple times. Select the exact sentence or paragraph, then queue the suggestion again."
 
-                DispatchQueue.main.async {
-                    completion(nil, error)
+                    DispatchQueue.main.async {
+                        completion(nil, error)
+                    }
+                    return
                 }
-                return
+
+                editorViewModel.pendingFindAndReplace(
+                    id: editID,
+                    find: normalizedTarget,
+                    replaceHTML: replacementHTML,
+                    replaceAll: false
+                ) { count in
+                    finishQueueAction(count: count, completion: completion)
+                }
             }
 
-            editorViewModel.pendingFindAndReplace(
-                id: editID,
-                find: normalizedTarget,
-                replaceHTML: replacementHTML,
-                replaceAll: false
-            ) { count in
-                finishQueueAction(count: count, completion: completion)
+            if editorViewModel.isEditorReady {
+                editorViewModel.getPlainText { plainText in
+                    resolveOccurrences(plainText)
+                }
+            } else {
+                resolveOccurrences(document.plainTextContent)
             }
         }
     }

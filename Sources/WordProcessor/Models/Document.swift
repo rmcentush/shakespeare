@@ -67,6 +67,14 @@ final class DocumentModel {
         characterCount = characters
     }
 
+    func markEditorActivity(words: Int, characters: Int) {
+        wordCount = words
+        characterCount = characters
+        modifiedAt = Date()
+        contentRevision &+= 1
+        isDirty = true
+    }
+
     func syncFromEditor(snapshot: DocumentFileStore.FileSnapshot) {
         let changed =
             snapshot.htmlContent != htmlContent ||

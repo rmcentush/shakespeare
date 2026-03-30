@@ -26,6 +26,31 @@ interface FootnoteDetails {
   pos: number;
 }
 
+interface EditorSelectionState {
+  hasSelection: boolean;
+  selectedWords: number;
+  selectedCharacters: number;
+  isBold: boolean;
+  isItalic: boolean;
+  isUnderline: boolean;
+  heading: number;
+  textAlign: string;
+  isLink: boolean;
+  linkHref: string;
+  textColor: string;
+  isFootnote: boolean;
+  footnoteText: string;
+}
+
+interface DocumentTextSnapshot {
+  revision: number;
+  footnotes: FootnoteDetails[];
+  footnotesSignature: string;
+  plainText: string;
+  words: number;
+  characters: number;
+}
+
 let searchResults: SearchMatch[] = [];
 let currentMatchIdx = -1;
 let activeSearchQuery = '';
@@ -37,6 +62,10 @@ const TOO_MANY_MATCHES = -1;
 const TOO_MANY_PENDING_EDITS = -2;
 const FOOTNOTE_NODE_NAME = 'footnote';
 const GENERATED_FOOTNOTES_SELECTOR = 'section[data-generated-footnotes="true"]';
+const WORD_COUNT_DEBOUNCE_MS = 250;
+const CONTENT_SYNC_DEBOUNCE_MS = 1000;
+const FOOTNOTE_PANEL_DEBOUNCE_MS = 180;
+const SELECTION_SYNC_DEBOUNCE_MS = 80;
 
 const searchPluginKey = new PluginKey('searchHighlight');
 
@@ -770,37 +799,130 @@ function appendMultilineText(container: HTMLElement, text: string) {
   });
 }
 
-function buildGeneratedFootnotesSection(doc: any): HTMLElement | null {
-  const footnotes = collectFootnotes(doc);
-  if (footnotes.length === 0) return null;
-
-  const section = document.createElement('section');
-  section.className = 'generated-footnotes';
-  section.setAttribute('data-generated-footnotes', 'true');
-
-  const divider = document.createElement('hr');
-  section.appendChild(divider);
-
-  const list = document.createElement('ol');
-  footnotes.forEach((footnote) => {
-    const item = document.createElement('li');
-    item.id = `footnote-${footnote.id}`;
-    appendMultilineText(item, footnote.note);
-    list.appendChild(item);
-  });
-
-  section.appendChild(list);
-  return section;
+function escapeHTML(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
-function renderFootnotesPanel(editor: Editor) {
+function buildGeneratedFootnotesHTML(footnotes: FootnoteDetails[]): string {
+  if (footnotes.length === 0) return '';
+
+  const items = footnotes.map((footnote) => {
+    const noteHTML = escapeHTML(footnote.note).replace(/\n/g, '<br>');
+    return `<li id="footnote-${escapeHTML(footnote.id)}">${noteHTML}</li>`;
+  });
+
+  return `<section class="generated-footnotes" data-generated-footnotes="true"><hr><ol>${items.join('')}</ol></section>`;
+}
+
+function footnotesSignature(footnotes: FootnoteDetails[]): string {
+  return footnotes
+    .map((footnote) => `${footnote.id}\u001f${footnote.index}\u001f${footnote.note}`)
+    .join('\u001e');
+}
+
+function buildPlainTextSnapshot(editor: Editor, footnotes: FootnoteDetails[]): DocumentTextSnapshot {
+  const text = editor.getText();
+
+  if (footnotes.length === 0) {
+    return {
+      revision: documentRevision,
+      footnotes,
+      footnotesSignature: '',
+      plainText: text,
+      words: countWords(text),
+      characters: text.length,
+    };
+  }
+
+  const footnotesText = footnotes
+    .map((footnote) => `[${footnote.index}] ${footnote.note}`)
+    .join('\n');
+
+  const plainText = text.trim().length > 0
+    ? `${text}\n\nFootnotes\n${footnotesText}`
+    : `Footnotes\n${footnotesText}`;
+
+  return {
+    revision: documentRevision,
+    footnotes,
+    footnotesSignature: footnotesSignature(footnotes),
+    plainText,
+    words: countWords(plainText),
+    characters: plainText.length,
+  };
+}
+
+let documentRevision = 0;
+let cachedDocumentTextSnapshot: DocumentTextSnapshot | null = null;
+let cachedSerializedHTMLRevision = -1;
+let cachedSerializedHTML = '';
+let lastRenderedFootnotesSignature: string | null = null;
+let lastSentContentUpdate: { html: string; text: string } | null = null;
+let lastSentSelectionState: EditorSelectionState | null = null;
+
+function invalidateDerivedDocumentState() {
+  documentRevision += 1;
+  cachedDocumentTextSnapshot = null;
+  cachedSerializedHTMLRevision = -1;
+  cachedSerializedHTML = '';
+}
+
+function resetEditorSyncState() {
+  if (wordCountDebounceTimer) clearTimeout(wordCountDebounceTimer);
+  if (contentSyncDebounceTimer) clearTimeout(contentSyncDebounceTimer);
+  if (footnotePanelDebounceTimer) clearTimeout(footnotePanelDebounceTimer);
+  if (selectionDebounceTimer) clearTimeout(selectionDebounceTimer);
+
+  invalidateDerivedDocumentState();
+  lastRenderedFootnotesSignature = null;
+  lastSentContentUpdate = null;
+  lastSentSelectionState = null;
+}
+
+function getDocumentTextSnapshot(editor: Editor): DocumentTextSnapshot {
+  if (cachedDocumentTextSnapshot?.revision === documentRevision) {
+    return cachedDocumentTextSnapshot;
+  }
+
+  const snapshot = buildPlainTextSnapshot(editor, collectFootnotes(editor.state.doc));
+  cachedDocumentTextSnapshot = snapshot;
+  return snapshot;
+}
+
+function serializeDocumentPlainText(editor: Editor): string {
+  return getDocumentTextSnapshot(editor).plainText;
+}
+
+function serializeDocumentHTML(editor: Editor): string {
+  if (cachedSerializedHTMLRevision === documentRevision) {
+    return cachedSerializedHTML;
+  }
+
+  const content = editor.getHTML();
+  const footnotesHTML = buildGeneratedFootnotesHTML(getDocumentTextSnapshot(editor).footnotes);
+  cachedSerializedHTML = footnotesHTML ? `${content}${footnotesHTML}` : content;
+  cachedSerializedHTMLRevision = documentRevision;
+  return cachedSerializedHTML;
+}
+
+function renderFootnotesPanel(editor: Editor, force = false) {
   const container = document.getElementById('footnotes');
   if (!container) return;
 
-  const footnotes = collectFootnotes(editor.state.doc);
+  const snapshot = getDocumentTextSnapshot(editor);
+  if (!force && snapshot.footnotesSignature === lastRenderedFootnotesSignature) {
+    return;
+  }
+
+  lastRenderedFootnotesSignature = snapshot.footnotesSignature;
   container.replaceChildren();
 
-  if (footnotes.length === 0) {
+  if (snapshot.footnotes.length === 0) {
     container.setAttribute('hidden', 'true');
     return;
   }
@@ -815,7 +937,7 @@ function renderFootnotesPanel(editor: Editor) {
   const list = document.createElement('ol');
   list.className = 'editor-footnotes-list';
 
-  footnotes.forEach((footnote) => {
+  snapshot.footnotes.forEach((footnote) => {
     const item = document.createElement('li');
     item.id = `editor-footnote-${footnote.id}`;
 
@@ -830,27 +952,125 @@ function renderFootnotesPanel(editor: Editor) {
   container.appendChild(list);
 }
 
-function serializeDocumentHTML(editor: Editor): string {
-  const content = editor.getHTML();
-  const footnotesSection = buildGeneratedFootnotesSection(editor.state.doc);
-  return footnotesSection ? `${content}${footnotesSection.outerHTML}` : content;
+function buildSelectionState(editor: Editor): EditorSelectionState {
+  const { from, to } = editor.state.selection;
+  const selectedFootnote = getSelectedFootnote(editor);
+  const selectionText = from === to
+    ? ''
+    : editor.state.doc.textBetween(from, to, '\n', '\n');
+
+  return {
+    hasSelection: from !== to,
+    selectedWords: countWords(selectionText),
+    selectedCharacters: selectionText.length,
+    isBold: editor.isActive('bold'),
+    isItalic: editor.isActive('italic'),
+    isUnderline: editor.isActive('underline'),
+    heading: editor.isActive('heading', { level: 1 })
+      ? 1
+      : editor.isActive('heading', { level: 2 })
+        ? 2
+        : editor.isActive('heading', { level: 3 })
+          ? 3
+          : 0,
+    textAlign: editor.isActive({ textAlign: 'center' })
+      ? 'center'
+      : editor.isActive({ textAlign: 'right' })
+        ? 'right'
+        : editor.isActive({ textAlign: 'justify' })
+          ? 'justify'
+          : 'left',
+    isLink: editor.isActive('link'),
+    linkHref: editor.getAttributes('link').href || '',
+    textColor: editor.getAttributes('textStyle').color || '',
+    isFootnote: selectedFootnote !== null,
+    footnoteText: (selectedFootnote?.node.attrs.note as string) || '',
+  };
 }
 
-function serializeDocumentPlainText(editor: Editor): string {
-  const text = editor.getText();
-  const footnotes = collectFootnotes(editor.state.doc);
+function selectionStatesEqual(
+  a: EditorSelectionState | null,
+  b: EditorSelectionState
+): boolean {
+  if (!a) return false;
 
-  if (footnotes.length === 0) {
-    return text;
+  return a.hasSelection === b.hasSelection &&
+    a.selectedWords === b.selectedWords &&
+    a.selectedCharacters === b.selectedCharacters &&
+    a.isBold === b.isBold &&
+    a.isItalic === b.isItalic &&
+    a.isUnderline === b.isUnderline &&
+    a.heading === b.heading &&
+    a.textAlign === b.textAlign &&
+    a.isLink === b.isLink &&
+    a.linkHref === b.linkHref &&
+    a.textColor === b.textColor &&
+    a.isFootnote === b.isFootnote &&
+    a.footnoteText === b.footnoteText;
+}
+
+function emitWordCountUpdate(editor: Editor) {
+  const snapshot = getDocumentTextSnapshot(editor);
+  sendToSwift('wordCount', {
+    words: snapshot.words,
+    characters: snapshot.characters,
+  });
+}
+
+function emitContentUpdate(editor: Editor) {
+  const snapshot = getDocumentTextSnapshot(editor);
+  const html = serializeDocumentHTML(editor);
+
+  if (
+    lastSentContentUpdate &&
+    lastSentContentUpdate.html === html &&
+    lastSentContentUpdate.text === snapshot.plainText
+  ) {
+    return;
   }
 
-  const footnotesText = footnotes
-    .map((footnote) => `[${footnote.index}] ${footnote.note}`)
-    .join('\n');
+  lastSentContentUpdate = {
+    html,
+    text: snapshot.plainText,
+  };
 
-  return text.trim().length > 0
-    ? `${text}\n\nFootnotes\n${footnotesText}`
-    : `Footnotes\n${footnotesText}`;
+  sendToSwift('contentUpdate', {
+    html,
+    text: snapshot.plainText,
+    words: snapshot.words,
+    characters: snapshot.characters,
+  });
+}
+
+function emitSelectionUpdate(editor: Editor) {
+  const selectionState = buildSelectionState(editor);
+  if (selectionStatesEqual(lastSentSelectionState, selectionState)) {
+    return;
+  }
+
+  lastSentSelectionState = selectionState;
+  sendToSwift('selectionChanged', selectionState);
+}
+
+function scheduleWordCountUpdate(editor: Editor) {
+  if (wordCountDebounceTimer) clearTimeout(wordCountDebounceTimer);
+  wordCountDebounceTimer = setTimeout(() => {
+    emitWordCountUpdate(editor);
+  }, WORD_COUNT_DEBOUNCE_MS);
+}
+
+function scheduleContentUpdate(editor: Editor) {
+  if (contentSyncDebounceTimer) clearTimeout(contentSyncDebounceTimer);
+  contentSyncDebounceTimer = setTimeout(() => {
+    emitContentUpdate(editor);
+  }, CONTENT_SYNC_DEBOUNCE_MS);
+}
+
+function scheduleFootnotesPanelRender(editor: Editor) {
+  if (footnotePanelDebounceTimer) clearTimeout(footnotePanelDebounceTimer);
+  footnotePanelDebounceTimer = setTimeout(() => {
+    renderFootnotesPanel(editor);
+  }, FOOTNOTE_PANEL_DEBOUNCE_MS);
 }
 
 function stripGeneratedFootnotesSection(html: string): string {
@@ -1227,7 +1447,9 @@ const ResizableImage = Image.extend({
   },
 });
 
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let wordCountDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let contentSyncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let footnotePanelDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let selectionDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 function countWords(text: string): number {
@@ -1371,54 +1593,16 @@ const editor = new Editor({
     },
   },
   onUpdate({ editor }) {
-    renderFootnotesPanel(editor);
-    // Debounce content changes to avoid flooding Swift
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      const html = serializeDocumentHTML(editor);
-      const text = serializeDocumentPlainText(editor);
-      sendToSwift('contentUpdate', {
-        html,
-        text,
-        words: countWords(text),
-        characters: text.length,
-      });
-    }, 300);
+    invalidateDerivedDocumentState();
+    scheduleWordCountUpdate(editor);
+    scheduleContentUpdate(editor);
+    scheduleFootnotesPanelRender(editor);
   },
   onSelectionUpdate({ editor }) {
     if (selectionDebounceTimer) clearTimeout(selectionDebounceTimer);
     selectionDebounceTimer = setTimeout(() => {
-      const { from, to } = editor.state.selection;
-      const selectedFootnote = getSelectedFootnote(editor);
-      renderFootnotesPanel(editor);
-      sendToSwift('selectionChanged', {
-        from,
-        to,
-        hasSelection: from !== to,
-        isBold: editor.isActive('bold'),
-        isItalic: editor.isActive('italic'),
-        isUnderline: editor.isActive('underline'),
-        heading: editor.isActive('heading', { level: 1 })
-          ? 1
-          : editor.isActive('heading', { level: 2 })
-            ? 2
-            : editor.isActive('heading', { level: 3 })
-              ? 3
-              : 0,
-        textAlign: editor.isActive({ textAlign: 'center' })
-          ? 'center'
-          : editor.isActive({ textAlign: 'right' })
-            ? 'right'
-            : editor.isActive({ textAlign: 'justify' })
-              ? 'justify'
-              : 'left',
-        isLink: editor.isActive('link'),
-        linkHref: editor.getAttributes('link').href || '',
-        textColor: editor.getAttributes('textStyle').color || '',
-        isFootnote: selectedFootnote !== null,
-        footnoteText: (selectedFootnote?.node.attrs.note as string) || '',
-      });
-    }, 80);
+      emitSelectionUpdate(editor);
+    }, SELECTION_SYNC_DEBOUNCE_MS);
   },
 });
 
@@ -1435,16 +1619,20 @@ function setEditorAutocorrectEnabled(enabled: boolean) {
 // Register callbacks for Swift to call into JS
 registerSwiftCallbacks({
   loadContent(html: string) {
+    resetEditorSyncState();
     rejectAllPendingEdits(editor);
     editor.commands.setContent(stripGeneratedFootnotesSection(html), false);
-    renderFootnotesPanel(editor);
+    renderFootnotesPanel(editor, true);
+    emitSelectionUpdate(editor);
   },
   loadJSONContent(json: string) {
+    resetEditorSyncState();
     try {
       rejectAllPendingEdits(editor);
       const parsed = JSON.parse(json);
       editor.commands.setContent(parsed, false);
-      renderFootnotesPanel(editor);
+      renderFootnotesPanel(editor, true);
+      emitSelectionUpdate(editor);
     } catch (error) {
       console.error('Failed to load JSON content into editor', error);
     }
@@ -1453,13 +1641,13 @@ registerSwiftCallbacks({
     return serializeDocumentHTML(editor);
   },
   getDocumentSnapshot(): string {
-    const text = serializeDocumentPlainText(editor);
+    const snapshot = getDocumentTextSnapshot(editor);
     return JSON.stringify({
       html: serializeDocumentHTML(editor),
       json: editor.getJSON(),
-      text,
-      words: countWords(text),
-      characters: text.length,
+      text: snapshot.plainText,
+      words: snapshot.words,
+      characters: snapshot.characters,
     });
   },
   getPlainText(): string {
