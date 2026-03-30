@@ -28,6 +28,7 @@ install: build
 	bash scripts/bundle-app.sh
 	rm -rf /Applications/Shakespeare.app
 	cp -R Shakespeare.app /Applications/
+	rm -rf Shakespeare.app
 	@echo "Installed to /Applications/Shakespeare.app"
 
 # Clean everything
