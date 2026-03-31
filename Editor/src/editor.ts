@@ -1215,6 +1215,13 @@ function emitSelectionUpdate(editor: Editor) {
   sendToSwift('selectionChanged', selectionState);
 }
 
+function scheduleSelectionUpdate(editor: Editor) {
+  if (selectionDebounceTimer) clearTimeout(selectionDebounceTimer);
+  selectionDebounceTimer = setTimeout(() => {
+    emitSelectionUpdate(editor);
+  }, SELECTION_SYNC_DEBOUNCE_MS);
+}
+
 function scheduleWordCountUpdate(editor: Editor) {
   if (wordCountDebounceTimer) clearTimeout(wordCountDebounceTimer);
   wordCountDebounceTimer = setTimeout(() => {
@@ -1234,6 +1241,29 @@ function scheduleFootnotesPanelRender(editor: Editor) {
   footnotePanelDebounceTimer = setTimeout(() => {
     renderFootnotesPanel(editor);
   }, FOOTNOTE_PANEL_DEBOUNCE_MS);
+}
+
+function attachSelectionChangeFallback(editor: Editor) {
+  const root = editor.view.dom as HTMLElement;
+
+  const syncIfSelectionTouchesEditor = () => {
+    const selection = document.getSelection();
+    if (!selection) return;
+
+    const anchorNode = selection.anchorNode;
+    const focusNode = selection.focusNode;
+    if (
+      (anchorNode && root.contains(anchorNode)) ||
+      (focusNode && root.contains(focusNode)) ||
+      root.contains(document.activeElement)
+    ) {
+      scheduleSelectionUpdate(editor);
+    }
+  };
+
+  root.addEventListener('mouseup', syncIfSelectionTouchesEditor);
+  root.addEventListener('keyup', syncIfSelectionTouchesEditor);
+  document.addEventListener('selectionchange', syncIfSelectionTouchesEditor);
 }
 
 function stripGeneratedFootnotesSection(html: string): string {
@@ -1782,10 +1812,7 @@ const editor = new Editor({
     scheduleFootnotesPanelRender(editor);
   },
   onSelectionUpdate({ editor }) {
-    if (selectionDebounceTimer) clearTimeout(selectionDebounceTimer);
-    selectionDebounceTimer = setTimeout(() => {
-      emitSelectionUpdate(editor);
-    }, SELECTION_SYNC_DEBOUNCE_MS);
+    scheduleSelectionUpdate(editor);
   },
 });
 
@@ -2090,6 +2117,7 @@ registerSwiftCallbacks({
 });
 
 attachLinkHoverPreview(editor);
+attachSelectionChangeFallback(editor);
 renderFootnotesPanel(editor);
 
 // Notify Swift that editor is ready

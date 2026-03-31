@@ -452,6 +452,18 @@ struct StatusBarView: View {
 
     var body: some View {
         HStack {
+            if editorViewModel.selectionState.hasSelection {
+                Text("Selected \(editorViewModel.selectionState.selectedWords) words")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text("\u{00B7}")
+                    .foregroundStyle(.quaternary)
+                Text("\(editorViewModel.selectionState.selectedCharacters) characters")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("\u{00B7}")
+                    .foregroundStyle(.quaternary)
+            }
             Text("\(document.wordCount) words")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -460,18 +472,6 @@ struct StatusBarView: View {
             Text("\(document.characterCount) characters")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            if editorViewModel.selectionState.hasSelection {
-                Text("\u{00B7}")
-                    .foregroundStyle(.quaternary)
-                Text("\(editorViewModel.selectionState.selectedWords) selected words")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("\u{00B7}")
-                    .foregroundStyle(.quaternary)
-                Text("\(editorViewModel.selectionState.selectedCharacters) selected characters")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
             Spacer()
         }
         .padding(.horizontal, 12)
