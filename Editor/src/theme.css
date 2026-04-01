@@ -37,6 +37,9 @@ body {
   font-size: 18px;
   line-height: 1.7;
   color: #1a1a1a;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .editor-content:focus {

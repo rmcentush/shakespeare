@@ -18,6 +18,7 @@ struct EditorWebView: NSViewRepresentable {
         contentController.add(bridge, name: "editorBridge")
         config.userContentController = contentController
         config.setURLSchemeHandler(assetSchemeHandler, forURLScheme: DocumentAssetReference.scheme)
+        config.preferences.isTextInteractionEnabled = true
 
         // Allow file access for local resources
         config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
