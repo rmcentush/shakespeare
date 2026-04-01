@@ -105,6 +105,8 @@ final class FontManager {
             let family: String
             if nameLower.contains("lyontext") || nameLower.contains("lyon text") {
                 family = "Lyon Text"
+            } else if nameLower.contains("gentiumplus") || nameLower.contains("gentium plus") {
+                family = "Gentium Plus"
             } else if nameLower.contains("ebgaramond") {
                 family = "EBGaramond"
             } else if nameLower.contains("sourceserif") {

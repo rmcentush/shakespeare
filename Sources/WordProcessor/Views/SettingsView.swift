@@ -58,6 +58,7 @@ struct SettingsView: View {
                 Section("Font") {
                     Picker("Font Family", selection: $fontManager.currentFont) {
                         Text("Lyon Text").tag("Lyon Text")
+                        Text("Gentium Plus").tag("Gentium Plus")
                         Text("Source Serif 4").tag("Source Serif 4")
                         Text("Scala").tag("Scala")
                         Text("Charter").tag("Charter")
