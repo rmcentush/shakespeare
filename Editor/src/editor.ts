@@ -9,7 +9,7 @@ import TextStyle from '@tiptap/extension-text-style';
 import Image from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
 import Color from '@tiptap/extension-color';
-import { Plugin, PluginKey, NodeSelection } from '@tiptap/pm/state';
+import { Plugin, PluginKey, NodeSelection, TextSelection } from '@tiptap/pm/state';
 import { Decoration, DecorationSet, EditorView } from '@tiptap/pm/view';
 import { sendToSwift, registerSwiftCallbacks } from './bridge';
 
@@ -57,6 +57,15 @@ interface FocusedFootnoteEditorState {
   selectionStart: number;
   selectionEnd: number;
   scrollTop: number;
+}
+
+interface PreservedTextSelection {
+  from: number;
+  to: number;
+  text: string;
+  words: number;
+  characters: number;
+  revision: number;
 }
 
 let searchResults: SearchMatch[] = [];
@@ -614,18 +623,30 @@ function emitCommentsChanged(editor: Editor, force = false) {
 }
 
 function addComment(editor: Editor, commentId: string): boolean {
-  const { from, to } = editor.state.selection;
-  if (from === to) return false;
+  const selection = effectiveTextSelection(editor);
+  if (!selection) return false;
 
-  editor
-    .chain()
-    .focus()
-    .setMark('comment', {
-      commentId,
-      commentText: '',
-      commentCreatedAt: Date.now(),
-    })
-    .run();
+  const commentMark = editor.state.schema.marks.comment;
+  if (!commentMark) return false;
+
+  const tr = editor.state.tr
+    .setSelection(TextSelection.create(editor.state.doc, selection.from, selection.to))
+    .addMark(
+      selection.from,
+      selection.to,
+      commentMark.create({
+        commentId,
+        commentText: '',
+        commentCreatedAt: Date.now(),
+      })
+    );
+
+  editor.view.dispatch(tr);
+  preservedTextSelection = {
+    ...selection,
+    revision: documentRevision,
+  };
+  editor.commands.focus();
 
   emitCommentsChanged(editor);
   return true;
@@ -1035,6 +1056,7 @@ let lastRenderedFootnotesStructureSignature: string | null = null;
 let lastSentContentUpdate: { html: string; text: string } | null = null;
 let lastSentSelectionState: EditorSelectionState | null = null;
 let lastSentCommentsSignature: string | null = null;
+let preservedTextSelection: PreservedTextSelection | null = null;
 
 function invalidateDerivedDocumentState() {
   documentRevision += 1;
@@ -1054,6 +1076,7 @@ function resetEditorSyncState() {
   lastSentContentUpdate = null;
   lastSentSelectionState = null;
   lastSentCommentsSignature = null;
+  preservedTextSelection = null;
 }
 
 function getDocumentTextSnapshot(editor: Editor): DocumentTextSnapshot {
@@ -1281,17 +1304,65 @@ function renderFootnotesPanel(editor: Editor, force = false) {
   restoreFocusedFootnoteEditorState(container, focusedEditorState);
 }
 
-function buildSelectionState(editor: Editor): EditorSelectionState {
+function editorHasFocus(editor: Editor): boolean {
+  const root = editor.view.dom as HTMLElement;
+  const activeElement = document.activeElement;
+  return activeElement === root || !!(activeElement && root.contains(activeElement));
+}
+
+function currentTextSelection(editor: Editor): PreservedTextSelection | null {
   const { from, to } = editor.state.selection;
+  if (from === to) return null;
+
+  const text = editor.state.doc.textBetween(from, to, '\n', '\n');
+  return {
+    from,
+    to,
+    text,
+    words: countWords(text),
+    characters: text.length,
+    revision: documentRevision,
+  };
+}
+
+function updatePreservedTextSelection(editor: Editor) {
+  const selection = currentTextSelection(editor);
+  if (selection) {
+    preservedTextSelection = selection;
+    return;
+  }
+
+  if (editorHasFocus(editor)) {
+    preservedTextSelection = null;
+  }
+}
+
+function effectiveTextSelection(editor: Editor): PreservedTextSelection | null {
+  const selection = currentTextSelection(editor);
+  if (selection) {
+    preservedTextSelection = selection;
+    return selection;
+  }
+
+  if (
+    preservedTextSelection &&
+    preservedTextSelection.revision === documentRevision &&
+    !editorHasFocus(editor)
+  ) {
+    return preservedTextSelection;
+  }
+
+  return null;
+}
+
+function buildSelectionState(editor: Editor): EditorSelectionState {
+  const activeSelection = effectiveTextSelection(editor);
   const selectedFootnote = getSelectedFootnote(editor);
-  const selectionText = from === to
-    ? ''
-    : editor.state.doc.textBetween(from, to, '\n', '\n');
 
   return {
-    hasSelection: from !== to,
-    selectedWords: countWords(selectionText),
-    selectedCharacters: selectionText.length,
+    hasSelection: activeSelection !== null,
+    selectedWords: activeSelection?.words || 0,
+    selectedCharacters: activeSelection?.characters || 0,
     isBold: editor.isActive('bold'),
     isItalic: editor.isActive('italic'),
     isUnderline: editor.isActive('underline'),
@@ -1413,6 +1484,7 @@ function attachSelectionChangeFallback(editor: Editor) {
   const root = editor.view.dom as HTMLElement;
   const scheduleFromNativeSelection = () => {
     window.requestAnimationFrame(() => {
+      updatePreservedTextSelection(editor);
       scheduleSelectionUpdate(editor);
     });
   };
@@ -1877,6 +1949,47 @@ function contextCharacterBefore(doc: any, pos: number): string {
   return doc.textBetween(Math.max(pos - 1, 0), pos, '', '');
 }
 
+function buildSmartQuotesNormalizationTransaction(state: any) {
+  let transaction = state.tr;
+  let changed = false;
+
+  state.doc.descendants((node: any, pos: number) => {
+    if (!node.isText || typeof node.text !== 'string') return;
+    if (!node.text.includes('"') && !node.text.includes("'")) return;
+
+    const converted = smartifyQuotesWithContext(
+      node.text,
+      contextCharacterBefore(state.doc, pos)
+    );
+
+    if (converted === node.text) return;
+
+    transaction = transaction.replaceWith(
+      pos,
+      pos + node.nodeSize,
+      state.schema.text(converted, node.marks)
+    );
+    changed = true;
+  });
+
+  if (!changed) {
+    return null;
+  }
+
+  transaction.setMeta(SMART_QUOTES_TRANSACTION_META, true);
+  return transaction;
+}
+
+function normalizeDocumentSmartQuotes(editor: Editor): boolean {
+  const transaction = buildSmartQuotesNormalizationTransaction(editor.state);
+  if (!transaction) {
+    return false;
+  }
+
+  editor.view.dispatch(transaction);
+  return true;
+}
+
 /**
  * Apply smart quotes to all text nodes in a DOM tree (preserving HTML structure).
  */
@@ -1927,35 +2040,7 @@ const SmartQuotes = Extension.create({
           if (transactions.some((transaction) => transaction.getMeta(SMART_QUOTES_TRANSACTION_META))) {
             return null;
           }
-
-          let transaction = newState.tr;
-          let changed = false;
-
-          newState.doc.descendants((node, pos) => {
-            if (!node.isText || typeof node.text !== 'string') return;
-            if (!node.text.includes('"') && !node.text.includes("'")) return;
-
-            const converted = smartifyQuotesWithContext(
-              node.text,
-              contextCharacterBefore(newState.doc, pos)
-            );
-
-            if (converted === node.text) return;
-
-            transaction = transaction.replaceWith(
-              pos,
-              pos + node.nodeSize,
-              newState.schema.text(converted, node.marks)
-            );
-            changed = true;
-          });
-
-          if (!changed) {
-            return null;
-          }
-
-          transaction.setMeta(SMART_QUOTES_TRANSACTION_META, true);
-          return transaction;
+          return buildSmartQuotesNormalizationTransaction(newState);
         },
       }),
     ];
@@ -2105,6 +2190,7 @@ const editor = new Editor({
   },
   onUpdate({ editor }) {
     invalidateDerivedDocumentState();
+    updatePreservedTextSelection(editor);
     scheduleSelectionUpdate(editor);
     scheduleWordCountUpdate(editor);
     scheduleContentUpdate(editor);
@@ -2112,6 +2198,7 @@ const editor = new Editor({
     emitCommentsChanged(editor);
   },
   onSelectionUpdate({ editor }) {
+    updatePreservedTextSelection(editor);
     scheduleSelectionUpdate(editor);
   },
 });
@@ -2132,6 +2219,7 @@ registerSwiftCallbacks({
     resetEditorSyncState();
     rejectAllPendingEdits(editor);
     editor.commands.setContent(stripGeneratedFootnotesSection(html), false);
+    normalizeDocumentSmartQuotes(editor);
     renderFootnotesPanel(editor, true);
     emitWordCountUpdate(editor);
     emitSelectionUpdate(editor);
@@ -2143,6 +2231,7 @@ registerSwiftCallbacks({
       rejectAllPendingEdits(editor);
       const parsed = JSON.parse(json);
       editor.commands.setContent(parsed, false);
+      normalizeDocumentSmartQuotes(editor);
       renderFootnotesPanel(editor, true);
       emitWordCountUpdate(editor);
       emitSelectionUpdate(editor);

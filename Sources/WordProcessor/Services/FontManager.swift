@@ -89,12 +89,24 @@ final class FontManager {
         }
     }
 
-    /// Generate @font-face CSS for all bundled font families
-    /// Uses relative URLs (relative to editor.html in the same Resources directory)
-    func fontFaceCSS(fontsDirectoryURL: URL?) -> String {
-        guard let fontsDir = fontsDirectoryURL,
-              let files = try? FileManager.default.contentsOfDirectory(at: fontsDir, includingPropertiesForKeys: nil)
-        else { return "" }
+    /// Generate @font-face CSS for all bundled font families.
+    /// The SPM bundle may place the copied Fonts directory either under the bundle root
+    /// or under the Resources directory, so we resolve both layouts.
+    func fontFaceCSS(bundle: Bundle = .module) -> String {
+        let fileManager = FileManager.default
+        let candidateDirectories = [
+            bundle.url(forResource: "GentiumPlus-Regular", withExtension: "ttf", subdirectory: "Fonts")?.deletingLastPathComponent(),
+            bundle.bundleURL.appendingPathComponent("Fonts", isDirectory: true),
+            bundle.resourceURL?.appendingPathComponent("Fonts", isDirectory: true),
+        ].compactMap { $0 }
+
+        let fontsDir = candidateDirectories.first { fileManager.fileExists(atPath: $0.path) }
+        guard let fontsDir,
+              let files = try? fileManager.contentsOfDirectory(at: fontsDir, includingPropertiesForKeys: nil)
+        else {
+            cachedFontFaceCSS = ""
+            return ""
+        }
 
         var css = ""
         for file in files {

@@ -29,14 +29,15 @@ struct EditorWebView: NSViewRepresentable {
         TextCheckingSettings.shared.bind(webView: webView)
 
         // Load the editor HTML
-        if let resourceURL = Bundle.module.resourceURL,
-           let htmlURL = Bundle.module.url(forResource: "editor", withExtension: "html") {
-            webView.loadFileURL(htmlURL, allowingReadAccessTo: resourceURL)
+        let bundleRootURL = Bundle.module.bundleURL
+        if let htmlURL = Bundle.module.url(forResource: "editor", withExtension: "html") {
+            // The editor HTML lives under Resources/, while copied Fonts live beside it at the
+            // bundle root. Grant access to the whole bundle so WKWebView can read both.
+            webView.loadFileURL(htmlURL, allowingReadAccessTo: bundleRootURL)
         }
 
         // Prepare @font-face CSS (cached for later injection on editorReady)
-        let fontsURL = Bundle.module.resourceURL?.appendingPathComponent("Fonts")
-        let _ = FontManager.shared.fontFaceCSS(fontsDirectoryURL: fontsURL)
+        let _ = FontManager.shared.fontFaceCSS(bundle: .module)
 
         viewModel.webView = webView
         return webView
@@ -71,9 +72,8 @@ struct EditorWebView: NSViewRepresentable {
                 bridge?.viewModel?.isEditorReady = false
             }
             // Reload the editor HTML to recover
-            if let resourceURL = Bundle.module.resourceURL,
-               let htmlURL = Bundle.module.url(forResource: "editor", withExtension: "html") {
-                webView.loadFileURL(htmlURL, allowingReadAccessTo: resourceURL)
+            if let htmlURL = Bundle.module.url(forResource: "editor", withExtension: "html") {
+                webView.loadFileURL(htmlURL, allowingReadAccessTo: Bundle.module.bundleURL)
             }
         }
     }
