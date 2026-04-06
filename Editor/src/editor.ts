@@ -1511,6 +1511,16 @@ function attachSelectionChangeFallback(editor: Editor) {
   document.addEventListener('selectionchange', syncIfSelectionTouchesEditor);
 }
 
+function attachSmartQuotesNormalizationFallback(editor: Editor) {
+  const root = editor.view.dom as HTMLElement;
+  const normalizeSoon = () => {
+    scheduleSmartQuotesNormalization(editor);
+  };
+
+  root.addEventListener('paste', normalizeSoon);
+  root.addEventListener('drop', normalizeSoon);
+}
+
 function stripGeneratedFootnotesSection(html: string): string {
   if (!html.includes('data-generated-footnotes')) {
     return html;
@@ -1909,6 +1919,7 @@ let wordCountDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let contentSyncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let footnotePanelDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let selectionDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let smartQuotesNormalizationFrame: number | null = null;
 
 function countWords(text: string): number {
   const trimmed = text.trim();
@@ -1988,6 +1999,17 @@ function normalizeDocumentSmartQuotes(editor: Editor): boolean {
 
   editor.view.dispatch(transaction);
   return true;
+}
+
+function scheduleSmartQuotesNormalization(editor: Editor) {
+  if (smartQuotesNormalizationFrame !== null) {
+    window.cancelAnimationFrame(smartQuotesNormalizationFrame);
+  }
+
+  smartQuotesNormalizationFrame = window.requestAnimationFrame(() => {
+    smartQuotesNormalizationFrame = null;
+    normalizeDocumentSmartQuotes(editor);
+  });
 }
 
 /**
@@ -2399,6 +2421,7 @@ registerSwiftCallbacks({
     const match = searchResults[currentMatchIdx];
     const tr = editor.state.tr.insertText(replacement, match.from, match.to);
     editor.view.dispatch(tr);
+    normalizeDocumentSmartQuotes(editor);
     // Re-search after replacement
     searchResults = findTextInDoc(editor.state.doc, activeSearchQuery);
     if (searchResults.length === 0) {
@@ -2419,6 +2442,7 @@ registerSwiftCallbacks({
       tr = tr.insertText(replacement, searchResults[i].from, searchResults[i].to);
     }
     editor.view.dispatch(tr);
+    normalizeDocumentSmartQuotes(editor);
     searchResults = [];
     currentMatchIdx = -1;
     activeSearchQuery = '';
@@ -2433,9 +2457,11 @@ registerSwiftCallbacks({
   },
   replaceSelectionHTML(html: string) {
     editor.chain().focus().insertContent(html).run();
+    normalizeDocumentSmartQuotes(editor);
   },
   insertHTMLAtCursor(html: string) {
     editor.chain().focus().insertContent(html).run();
+    normalizeDocumentSmartQuotes(editor);
   },
   findAndReplaceText(find: string, replaceHtml: string, replaceAllOccurrences: boolean): number {
     const maxMatches = replaceAllOccurrences ? MAX_PENDING_FIND_REPLACE_MATCHES + 1 : 1;
@@ -2451,6 +2477,7 @@ registerSwiftCallbacks({
         .insertContentAt({ from: toReplace[i].from, to: toReplace[i].to }, replaceHtml)
         .run();
     }
+    normalizeDocumentSmartQuotes(editor);
     return toReplace.length;
   },
 
@@ -2516,6 +2543,7 @@ registerSwiftCallbacks({
 
 attachLinkHoverPreview(editor);
 attachSelectionChangeFallback(editor);
+attachSmartQuotesNormalizationFallback(editor);
 renderFootnotesPanel(editor);
 emitCommentsChanged(editor, true);
 
