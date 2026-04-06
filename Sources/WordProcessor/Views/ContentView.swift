@@ -57,7 +57,7 @@ struct ContentView: View {
                         Button {
                             toggleSidebar(.comments)
                         } label: {
-                            Image(systemName: activeSidebar == .comments ? "text.bubble.fill" : "text.bubble")
+                            Image(systemName: activeSidebar == .comments ? "quote.bubble.fill" : "quote.bubble")
                         }
                         .help("Toggle Comments (Cmd+Shift+M)")
                     }

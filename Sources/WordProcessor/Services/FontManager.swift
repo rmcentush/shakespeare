@@ -13,7 +13,11 @@ final class FontManager {
     private init() {
         let defaults = UserDefaults.standard
         if let font = defaults.string(forKey: "editorFont") {
-            currentFont = normalizeFontName(font)
+            let normalizedFont = normalizeFontName(font)
+            currentFont = normalizedFont
+            if normalizedFont != font {
+                defaults.set(normalizedFont, forKey: "editorFont")
+            }
         }
         if defaults.double(forKey: "editorFontSize") > 0 {
             currentSize = defaults.double(forKey: "editorFontSize")
@@ -21,7 +25,7 @@ final class FontManager {
         if defaults.double(forKey: "editorLineHeight") > 0 {
             currentLineHeight = defaults.double(forKey: "editorLineHeight")
         }
-        if currentFont == "EBGaramond" {
+        if currentFont == "EBGaramond" || currentFont == "Gentium Plus" {
             defaults.set(currentFont, forKey: "editorFont")
         }
     }
@@ -133,15 +137,27 @@ final class FontManager {
             // Use absolute file URL for reliable loading in WKWebView inline styles
             let absoluteURL = file.absoluteString
 
-            css += """
-            @font-face {
-                font-family: '\(family)';
-                src: url('\(absoluteURL)') format('\(format)');
-                font-weight: \(weight);
-                font-style: \(style);
+            let familyAliases: [String]
+            switch family {
+            case "Gentium Plus":
+                familyAliases = ["Gentium Plus", "Gentium"]
+            case "EBGaramond":
+                familyAliases = ["EBGaramond", "Garamond"]
+            default:
+                familyAliases = [family]
             }
 
-            """
+            for familyAlias in familyAliases {
+                css += """
+                @font-face {
+                    font-family: '\(familyAlias)';
+                    src: url('\(absoluteURL)') format('\(format)');
+                    font-weight: \(weight);
+                    font-style: \(style);
+                }
+
+                """
+            }
         }
         cachedFontFaceCSS = css
         return css
@@ -150,6 +166,9 @@ final class FontManager {
     private func normalizeFontName(_ fontName: String) -> String {
         if fontName == "Garamond" {
             return "EBGaramond"
+        }
+        if fontName == "Gentium" {
+            return "Gentium Plus"
         }
         return fontName
     }

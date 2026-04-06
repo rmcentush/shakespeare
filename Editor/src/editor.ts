@@ -76,6 +76,8 @@ const FOOTNOTE_PANEL_DEBOUNCE_MS = 180;
 const SELECTION_SYNC_DEBOUNCE_MS = 80;
 
 const searchPluginKey = new PluginKey('searchHighlight');
+const smartQuotesPluginKey = new PluginKey('smartQuotes');
+const SMART_QUOTES_TRANSACTION_META = 'smartQuotesNormalized';
 
 // --- Pending Edits (Cursor-like diff review) ---
 type PendingEditKind = 'selection' | 'insert' | 'findReplace';
@@ -591,8 +593,24 @@ function collectComments(editor: Editor): CommentData[] {
   return Array.from(comments.values());
 }
 
-function emitCommentsChanged(editor: Editor) {
-  sendToSwift('commentsChanged', { comments: collectComments(editor) });
+function commentsSignature(comments: CommentData[]): string {
+  return comments
+    .map((comment) => (
+      `${comment.commentId}\u001f${comment.text}\u001f${comment.selectedText}\u001f${comment.createdAt}`
+    ))
+    .join('\u001e');
+}
+
+function emitCommentsChanged(editor: Editor, force = false) {
+  const comments = collectComments(editor);
+  const signature = commentsSignature(comments);
+
+  if (!force && lastSentCommentsSignature === signature) {
+    return;
+  }
+
+  lastSentCommentsSignature = signature;
+  sendToSwift('commentsChanged', { comments });
 }
 
 function addComment(editor: Editor, commentId: string): boolean {
@@ -915,7 +933,7 @@ const HoverableLink = Link.extend({
 });
 
 function normalizeFootnoteNote(note: string): string {
-  return note.replace(/\r\n?/g, '\n').trim();
+  return smartifyQuotes(note.replace(/\r\n?/g, '\n')).trim();
 }
 
 function createFootnoteID(): string {
@@ -1016,6 +1034,7 @@ let cachedSerializedHTML = '';
 let lastRenderedFootnotesStructureSignature: string | null = null;
 let lastSentContentUpdate: { html: string; text: string } | null = null;
 let lastSentSelectionState: EditorSelectionState | null = null;
+let lastSentCommentsSignature: string | null = null;
 
 function invalidateDerivedDocumentState() {
   documentRevision += 1;
@@ -1034,6 +1053,7 @@ function resetEditorSyncState() {
   lastRenderedFootnotesStructureSignature = null;
   lastSentContentUpdate = null;
   lastSentSelectionState = null;
+  lastSentCommentsSignature = null;
 }
 
 function getDocumentTextSnapshot(editor: Editor): DocumentTextSnapshot {
@@ -1391,6 +1411,11 @@ function scheduleFootnotesPanelRender(editor: Editor) {
 
 function attachSelectionChangeFallback(editor: Editor) {
   const root = editor.view.dom as HTMLElement;
+  const scheduleFromNativeSelection = () => {
+    window.requestAnimationFrame(() => {
+      scheduleSelectionUpdate(editor);
+    });
+  };
 
   const syncIfSelectionTouchesEditor = () => {
     const selection = document.getSelection();
@@ -1403,12 +1428,14 @@ function attachSelectionChangeFallback(editor: Editor) {
       (focusNode && root.contains(focusNode)) ||
       root.contains(document.activeElement)
     ) {
-      scheduleSelectionUpdate(editor);
+      scheduleFromNativeSelection();
     }
   };
 
   root.addEventListener('mouseup', syncIfSelectionTouchesEditor);
   root.addEventListener('keyup', syncIfSelectionTouchesEditor);
+  root.addEventListener('dragend', syncIfSelectionTouchesEditor);
+  root.addEventListener('focusin', syncIfSelectionTouchesEditor);
   document.addEventListener('selectionchange', syncIfSelectionTouchesEditor);
 }
 
@@ -1817,6 +1844,10 @@ function countWords(text: string): number {
   return trimmed.split(/\s+/).length;
 }
 
+function lastCharacter(text: string): string {
+  return text.length > 0 ? text[text.length - 1] : '';
+}
+
 /**
  * Convert straight quotes to curly/smart quotes.
  * Handles double quotes, single quotes, and apostrophes.
@@ -1835,22 +1866,101 @@ function smartifyQuotes(text: string): string {
   return text;
 }
 
+function smartifyQuotesWithContext(text: string, contextBefore = ''): string {
+  if (!text) return text;
+  const syntheticPrefix = contextBefore || ' ';
+  return smartifyQuotes(`${syntheticPrefix}${text}`).slice(syntheticPrefix.length);
+}
+
+function contextCharacterBefore(doc: any, pos: number): string {
+  if (pos <= 0) return '';
+  return doc.textBetween(Math.max(pos - 1, 0), pos, '', '');
+}
+
 /**
  * Apply smart quotes to all text nodes in a DOM tree (preserving HTML structure).
  */
 function smartifyDOMTextNodes(root: Node): void {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const ownerDocument = root.ownerDocument ?? document;
+  const walker = ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const textNodes: Text[] = [];
+  let previousText = '';
   while (walker.nextNode()) {
     textNodes.push(walker.currentNode as Text);
   }
   for (const node of textNodes) {
-    const converted = smartifyQuotes(node.data);
+    const converted = smartifyQuotesWithContext(node.data, lastCharacter(previousText));
     if (converted !== node.data) {
       node.data = converted;
     }
+    previousText = converted;
   }
 }
+
+const SmartQuotes = Extension.create({
+  name: 'smartQuotes',
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: smartQuotesPluginKey,
+        props: {
+          handleTextInput(view, from, to, text) {
+            const converted = smartifyQuotesWithContext(
+              text,
+              contextCharacterBefore(view.state.doc, from)
+            );
+
+            if (converted === text) {
+              return false;
+            }
+
+            view.dispatch(view.state.tr.insertText(converted, from, to));
+            return true;
+          },
+        },
+        appendTransaction(transactions, _oldState, newState) {
+          if (!transactions.some((transaction) => transaction.docChanged)) {
+            return null;
+          }
+
+          if (transactions.some((transaction) => transaction.getMeta(SMART_QUOTES_TRANSACTION_META))) {
+            return null;
+          }
+
+          let transaction = newState.tr;
+          let changed = false;
+
+          newState.doc.descendants((node, pos) => {
+            if (!node.isText || typeof node.text !== 'string') return;
+            if (!node.text.includes('"') && !node.text.includes("'")) return;
+
+            const converted = smartifyQuotesWithContext(
+              node.text,
+              contextCharacterBefore(newState.doc, pos)
+            );
+
+            if (converted === node.text) return;
+
+            transaction = transaction.replaceWith(
+              pos,
+              pos + node.nodeSize,
+              newState.schema.text(converted, node.marks)
+            );
+            changed = true;
+          });
+
+          if (!changed) {
+            return null;
+          }
+
+          transaction.setMeta(SMART_QUOTES_TRANSACTION_META, true);
+          return transaction;
+        },
+      }),
+    ];
+  },
+});
 
 const PASTE_STYLE_PROPERTIES = [
   'font-family',
@@ -1898,6 +2008,7 @@ const editor = new Editor({
       types: ['heading', 'paragraph'],
     }),
     Typography,
+    SmartQuotes,
     FontFamily,
     TextStyle,
     HoverableLink.configure({
@@ -1994,9 +2105,11 @@ const editor = new Editor({
   },
   onUpdate({ editor }) {
     invalidateDerivedDocumentState();
+    scheduleSelectionUpdate(editor);
     scheduleWordCountUpdate(editor);
     scheduleContentUpdate(editor);
     scheduleFootnotesPanelRender(editor);
+    emitCommentsChanged(editor);
   },
   onSelectionUpdate({ editor }) {
     scheduleSelectionUpdate(editor);
@@ -2022,6 +2135,7 @@ registerSwiftCallbacks({
     renderFootnotesPanel(editor, true);
     emitWordCountUpdate(editor);
     emitSelectionUpdate(editor);
+    emitCommentsChanged(editor, true);
   },
   loadJSONContent(json: string) {
     resetEditorSyncState();
@@ -2032,6 +2146,7 @@ registerSwiftCallbacks({
       renderFootnotesPanel(editor, true);
       emitWordCountUpdate(editor);
       emitSelectionUpdate(editor);
+      emitCommentsChanged(editor, true);
     } catch (error) {
       console.error('Failed to load JSON content into editor', error);
     }
@@ -2313,6 +2428,7 @@ registerSwiftCallbacks({
 attachLinkHoverPreview(editor);
 attachSelectionChangeFallback(editor);
 renderFootnotesPanel(editor);
+emitCommentsChanged(editor, true);
 
 // Notify Swift that editor is ready
 sendToSwift('editorReady', {});

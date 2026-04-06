@@ -13,7 +13,7 @@ struct CommentsSidebarView: View {
             if editorViewModel.comments.isEmpty {
                 ContentUnavailableView(
                     "No Comments",
-                    systemImage: "text.bubble",
+                    systemImage: "quote.bubble",
                     description: Text("Select text and press Cmd+Shift+M to add a comment.")
                 )
             } else {
