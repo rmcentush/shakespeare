@@ -550,15 +550,38 @@ interface CommentData {
   text: string;
   selectedText: string;
   createdAt: number;
+  rangeStart: number;
+  rangeEnd: number;
 }
 
 const CommentMark = Mark.create({
   name: 'comment',
+  inclusive: false,
   addAttributes() {
     return {
-      commentId: { default: null },
-      commentText: { default: '' },
-      commentCreatedAt: { default: 0 },
+      commentId: {
+        default: null,
+        parseHTML: (element) => element.getAttribute('data-comment-id'),
+        renderHTML: (attributes) => (
+          attributes.commentId ? { 'data-comment-id': attributes.commentId } : {}
+        ),
+      },
+      commentText: {
+        default: '',
+        parseHTML: (element) => element.getAttribute('data-comment-text') ?? '',
+        renderHTML: (attributes) => ({ 'data-comment-text': attributes.commentText ?? '' }),
+      },
+      commentCreatedAt: {
+        default: 0,
+        parseHTML: (element) => parseCommentTimestamp(
+          element.getAttribute('data-comment-created-at')
+        ),
+        renderHTML: (attributes) => (
+          attributes.commentCreatedAt
+            ? { 'data-comment-created-at': attributes.commentCreatedAt }
+            : {}
+        ),
+      },
     };
   },
   parseHTML() {
@@ -567,45 +590,168 @@ const CommentMark = Mark.create({
   renderHTML({ HTMLAttributes }) {
     return [
       'span',
-      {
-        'data-comment-id': HTMLAttributes.commentId,
-        'data-comment-text': HTMLAttributes.commentText,
-        'data-comment-created-at': HTMLAttributes.commentCreatedAt,
-        class: 'comment-highlight',
-      },
+      mergeAttributes(HTMLAttributes, { class: 'comment-highlight' }),
       0,
     ];
   },
 });
 
-function collectComments(editor: Editor): CommentData[] {
-  const comments: Map<string, CommentData> = new Map();
-  editor.state.doc.descendants((node) => {
-    if (!node.isText) return;
+interface CommentFragment {
+  from: number;
+  to: number;
+  text: string;
+}
+
+interface CommentEntry {
+  commentId: string;
+  text: string;
+  createdAt: number;
+  rangeStart: number;
+  rangeEnd: number;
+  fragments: CommentFragment[];
+}
+
+interface CommentMarkAttributes {
+  commentId: string;
+  commentText: string;
+  commentCreatedAt: number;
+}
+
+function parseCommentTimestamp(value: unknown): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getCommentMarkAttributes(mark: any): CommentMarkAttributes | null {
+  if (mark.type.name !== 'comment') return null;
+
+  const commentId = typeof mark.attrs.commentId === 'string' ? mark.attrs.commentId : '';
+  if (!commentId) return null;
+
+  return {
+    commentId,
+    commentText: typeof mark.attrs.commentText === 'string' ? mark.attrs.commentText : '',
+    commentCreatedAt: parseCommentTimestamp(mark.attrs.commentCreatedAt),
+  };
+}
+
+function appendCommentFragment(entry: CommentEntry, from: number, to: number, text: string) {
+  if (from >= to || text.length === 0) return;
+
+  const lastFragment = entry.fragments[entry.fragments.length - 1];
+  if (lastFragment && lastFragment.to === from) {
+    lastFragment.to = to;
+    lastFragment.text += text;
+    return;
+  }
+
+  entry.fragments.push({ from, to, text });
+}
+
+function buildCommentExcerpt(fragments: CommentFragment[]): string {
+  return fragments.map((fragment) => fragment.text).join('\n');
+}
+
+function collectCommentEntries(doc: any): CommentEntry[] {
+  const comments: Map<string, CommentEntry> = new Map();
+
+  doc.descendants((node: any, pos: number) => {
+    if (!node.isText || !node.text) return;
+
     for (const mark of node.marks) {
-      if (mark.type.name === 'comment' && mark.attrs.commentId) {
-        const id = mark.attrs.commentId as string;
-        if (!comments.has(id)) {
-          comments.set(id, {
-            commentId: id,
-            text: mark.attrs.commentText as string || '',
-            selectedText: '',
-            createdAt: mark.attrs.commentCreatedAt as number || 0,
-          });
-        }
-        // Accumulate selected text for this comment
-        const existing = comments.get(id)!;
-        existing.selectedText += node.text || '';
-      }
+      const attrs = getCommentMarkAttributes(mark);
+      if (!attrs) continue;
+
+      const to = pos + node.text.length;
+      const existing = comments.get(attrs.commentId) ?? {
+        commentId: attrs.commentId,
+        text: attrs.commentText,
+        createdAt: attrs.commentCreatedAt,
+        rangeStart: pos,
+        rangeEnd: to,
+        fragments: [],
+      };
+
+      existing.text = attrs.commentText;
+      existing.createdAt = attrs.commentCreatedAt;
+      existing.rangeStart = Math.min(existing.rangeStart, pos);
+      existing.rangeEnd = Math.max(existing.rangeEnd, to);
+      appendCommentFragment(existing, pos, to, node.text);
+      comments.set(attrs.commentId, existing);
     }
   });
-  return Array.from(comments.values());
+
+  return Array.from(comments.values()).sort((a, b) => (
+    a.rangeStart - b.rangeStart ||
+    a.createdAt - b.createdAt ||
+    a.commentId.localeCompare(b.commentId)
+  ));
+}
+
+function collectComments(editor: Editor): CommentData[] {
+  return collectCommentEntries(editor.state.doc).map((comment) => ({
+    commentId: comment.commentId,
+    text: comment.text,
+    selectedText: buildCommentExcerpt(comment.fragments),
+    createdAt: comment.createdAt,
+    rangeStart: comment.rangeStart,
+    rangeEnd: comment.rangeEnd,
+  }));
+}
+
+function findCommentEntry(editor: Editor, commentId: string): CommentEntry | null {
+  return collectCommentEntries(editor.state.doc)
+    .find((comment) => comment.commentId === commentId) ?? null;
+}
+
+function findOverlappingCommentId(editor: Editor, from: number, to: number): string | null {
+  let overlappingCommentId: string | null = null;
+
+  editor.state.doc.nodesBetween(from, to, (node) => {
+    if (overlappingCommentId || !node.isText) {
+      return false;
+    }
+
+    for (const mark of node.marks) {
+      const attrs = getCommentMarkAttributes(mark);
+      if (!attrs) continue;
+
+      overlappingCommentId = attrs.commentId;
+      return false;
+    }
+
+    return undefined;
+  });
+
+  return overlappingCommentId;
+}
+
+function commentSelector(commentId: string): string {
+  const escaped = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(commentId)
+    : commentId.replace(/["\\]/g, '\\$&');
+  return `[data-comment-id="${escaped}"]`;
+}
+
+function flashCommentHighlights(commentId: string) {
+  const elements = Array.from(document.querySelectorAll<HTMLElement>(commentSelector(commentId)));
+  if (elements.length === 0) return;
+
+  elements.forEach((element) => {
+    element.classList.remove('comment-highlight-flash');
+    void element.offsetWidth;
+    element.classList.add('comment-highlight-flash');
+  });
+
+  window.setTimeout(() => {
+    elements.forEach((element) => element.classList.remove('comment-highlight-flash'));
+  }, 800);
 }
 
 function commentsSignature(comments: CommentData[]): string {
   return comments
     .map((comment) => (
-      `${comment.commentId}\u001f${comment.text}\u001f${comment.selectedText}\u001f${comment.createdAt}`
+      `${comment.commentId}\u001f${comment.text}\u001f${comment.selectedText}\u001f${comment.createdAt}\u001f${comment.rangeStart}\u001f${comment.rangeEnd}`
     ))
     .join('\u001e');
 }
@@ -625,6 +771,12 @@ function emitCommentsChanged(editor: Editor, force = false) {
 function addComment(editor: Editor, commentId: string): boolean {
   const selection = effectiveTextSelection(editor);
   if (!selection) return false;
+
+  const overlappingCommentId = findOverlappingCommentId(editor, selection.from, selection.to);
+  if (overlappingCommentId) {
+    focusComment(editor, overlappingCommentId);
+    return false;
+  }
 
   const commentMark = editor.state.schema.marks.comment;
   if (!commentMark) return false;
@@ -694,27 +846,17 @@ function removeComment(editor: Editor, commentId: string) {
 }
 
 function focusComment(editor: Editor, commentId: string) {
-  let targetPos = -1;
-  editor.state.doc.descendants((node, pos) => {
-    if (targetPos >= 0 || !node.isText) return;
-    for (const mark of node.marks) {
-      if (mark.type.name === 'comment' && mark.attrs.commentId === commentId) {
-        targetPos = pos;
-        return false;
-      }
-    }
-  });
-  if (targetPos >= 0) {
-    editor.commands.setTextSelection(targetPos);
-    editor.commands.focus();
+  const comment = findCommentEntry(editor, commentId);
+  if (!comment) return;
 
-    // Briefly flash the comment highlight
-    const el = document.querySelector(`[data-comment-id="${commentId}"]`);
-    if (el) {
-      el.classList.add('comment-highlight-flash');
-      setTimeout(() => el.classList.remove('comment-highlight-flash'), 800);
-    }
-  }
+  editor.chain()
+    .focus()
+    .setTextSelection({ from: comment.rangeStart, to: comment.rangeEnd })
+    .run();
+
+  const firstElement = document.querySelector<HTMLElement>(commentSelector(commentId));
+  firstElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  flashCommentHighlights(commentId);
 }
 
 const PendingEditHighlight = Extension.create({

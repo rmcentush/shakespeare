@@ -4,6 +4,7 @@ struct CommentsSidebarView: View {
     @Environment(EditorViewModel.self) private var editorViewModel
     @State private var editingCommentId: String?
     @State private var editingText: String = ""
+    @State private var knownCommentIDs: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -28,18 +29,16 @@ struct CommentsSidebarView: View {
                                     editorViewModel.focusComment(comment.id)
                                 },
                                 onStartEdit: {
-                                    editingCommentId = comment.id
-                                    editingText = comment.text
+                                    beginEditing(comment)
                                 },
                                 onSave: {
-                                    editorViewModel.updateCommentText(comment.id, text: editingText)
-                                    editingCommentId = nil
+                                    saveComment(comment)
                                 },
                                 onCancel: {
-                                    editingCommentId = nil
+                                    cancelEditing(comment)
                                 },
                                 onDelete: {
-                                    editorViewModel.removeComment(comment.id)
+                                    deleteComment(comment)
                                 }
                             )
                         }
@@ -49,6 +48,12 @@ struct CommentsSidebarView: View {
             }
         }
         .frame(maxHeight: .infinity)
+        .onAppear {
+            syncEditingState(with: editorViewModel.comments)
+        }
+        .onChange(of: editorViewModel.comments) { _, comments in
+            syncEditingState(with: comments)
+        }
     }
 
     private var header: some View {
@@ -75,6 +80,58 @@ struct CommentsSidebarView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    private func beginEditing(_ comment: BridgePayload.CommentData) {
+        editingCommentId = comment.id
+        editingText = comment.text
+    }
+
+    private func saveComment(_ comment: BridgePayload.CommentData) {
+        let trimmed = editingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        editorViewModel.updateCommentText(comment.id, text: trimmed)
+        editingCommentId = nil
+        editingText = ""
+    }
+
+    private func cancelEditing(_ comment: BridgePayload.CommentData) {
+        let isDraft = comment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        editingCommentId = nil
+        editingText = ""
+
+        if isDraft {
+            editorViewModel.removeComment(comment.id)
+        }
+    }
+
+    private func deleteComment(_ comment: BridgePayload.CommentData) {
+        if editingCommentId == comment.id {
+            editingCommentId = nil
+            editingText = ""
+        }
+
+        editorViewModel.removeComment(comment.id)
+    }
+
+    private func syncEditingState(with comments: [BridgePayload.CommentData]) {
+        let ids = Set(comments.map(\.id))
+
+        if let editingCommentId, !ids.contains(editingCommentId) {
+            self.editingCommentId = nil
+            editingText = ""
+        }
+
+        if self.editingCommentId == nil,
+           let draft = comments
+            .filter({ $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !knownCommentIDs.contains($0.id) })
+            .max(by: { $0.createdAt < $1.createdAt }) {
+            self.editingCommentId = draft.id
+            editingText = draft.text
+        }
+
+        knownCommentIDs = ids
     }
 }
 
@@ -123,13 +180,13 @@ private struct CommentCard: View {
                     Button("Save", action: onSave)
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
-                        .disabled(editingText.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(editingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-            } else if comment.text.isEmpty {
-                // Newly created comment — auto-edit
-                Color.clear
-                    .frame(height: 0)
-                    .onAppear { onStartEdit() }
+            } else if comment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("No comment text")
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+                    .italic()
             } else {
                 Text(comment.text)
                     .font(.callout)

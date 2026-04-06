@@ -45,6 +45,8 @@ enum BridgePayload: Codable {
         var text: String
         let selectedText: String
         let createdAt: Double
+        let rangeStart: Int
+        let rangeEnd: Int
 
         var commentId: String { id }
     }
@@ -159,7 +161,9 @@ enum BridgePayload: Codable {
                     id: item["commentId"] as? String ?? UUID().uuidString,
                     text: item["text"] as? String ?? "",
                     selectedText: item["selectedText"] as? String ?? "",
-                    createdAt: item["createdAt"] as? Double ?? 0
+                    createdAt: item["createdAt"] as? Double ?? 0,
+                    rangeStart: item["rangeStart"] as? Int ?? 0,
+                    rangeEnd: item["rangeEnd"] as? Int ?? 0
                 )
             }
             return .commentsChanged(comments)

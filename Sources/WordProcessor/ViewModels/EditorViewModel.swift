@@ -146,7 +146,15 @@ final class EditorViewModel {
             pendingEdits = update.edits.map(PendingEdit.init)
 
         case .commentsChanged(let newComments):
-            comments = newComments
+            comments = newComments.sorted {
+                if $0.rangeStart != $1.rangeStart {
+                    return $0.rangeStart < $1.rangeStart
+                }
+                if $0.createdAt != $1.createdAt {
+                    return $0.createdAt < $1.createdAt
+                }
+                return $0.id < $1.id
+            }
 
         case .unknown:
             break
