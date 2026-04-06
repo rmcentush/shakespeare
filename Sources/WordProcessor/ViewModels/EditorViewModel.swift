@@ -11,6 +11,7 @@ final class EditorViewModel {
     var pendingEdits: [PendingEdit] = []
     var pendingEditCount = 0
     var pendingEditCurrentIndex = -1
+    var comments: [BridgePayload.CommentData] = []
     private var autoSaveTimer: Timer?
     private var pendingSnapshot: DocumentFileStore.FileSnapshot?
     /// Incremented each time the editor signals ready (supports detecting web process restarts).
@@ -143,6 +144,9 @@ final class EditorViewModel {
             pendingEditCount = update.count
             pendingEditCurrentIndex = update.currentIndex
             pendingEdits = update.edits.map(PendingEdit.init)
+
+        case .commentsChanged(let newComments):
+            comments = newComments
 
         case .unknown:
             break
@@ -300,6 +304,29 @@ final class EditorViewModel {
     func rejectPendingEdit(_ id: String) {
         let escaped = escapeForJS(id)
         evaluateJS("window.editorAPI?.rejectPendingEdit('\(escaped)')")
+    }
+
+    // MARK: - Comments
+
+    func addComment() {
+        let id = UUID().uuidString
+        evaluateJS("window.editorAPI?.addComment('\(id)')")
+    }
+
+    func updateCommentText(_ commentId: String, text: String) {
+        let escapedId = escapeForJS(commentId)
+        let escapedText = escapeForJS(text)
+        evaluateJS("window.editorAPI?.updateCommentText('\(escapedId)', '\(escapedText)')")
+    }
+
+    func removeComment(_ commentId: String) {
+        let escaped = escapeForJS(commentId)
+        evaluateJS("window.editorAPI?.removeComment('\(escaped)')")
+    }
+
+    func focusComment(_ commentId: String) {
+        let escaped = escapeForJS(commentId)
+        evaluateJS("window.editorAPI?.focusComment('\(escaped)')")
     }
 
     var activePendingEdit: PendingEdit? {

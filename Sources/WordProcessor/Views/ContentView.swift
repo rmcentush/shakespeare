@@ -5,6 +5,7 @@ struct ContentView: View {
         case chat
         case orality
         case suggestions
+        case comments
     }
 
     @Environment(DocumentModel.self) private var document
@@ -51,6 +52,14 @@ struct ContentView: View {
                                 .font(.system(size: 13, weight: .bold, design: .serif))
                         }
                         .help("Toggle Orality Sidebar")
+                    }
+                    ToolbarItem(placement: .automatic) {
+                        Button {
+                            toggleSidebar(.comments)
+                        } label: {
+                            Image(systemName: activeSidebar == .comments ? "text.bubble.fill" : "text.bubble")
+                        }
+                        .help("Toggle Comments (Cmd+Shift+M)")
                     }
                     if editorViewModel.pendingEditCount > 0 {
                         ToolbarItem(placement: .automatic) {
@@ -196,6 +205,8 @@ struct ContentView: View {
                         OralityView(requestID: oralityRequestID)
                     case .suggestions:
                         PendingEditsSidebarView()
+                    case .comments:
+                        CommentsSidebarView()
                     }
                 }
                 .frame(width: 340)
@@ -261,6 +272,18 @@ struct ContentView: View {
             }
         }
         .keyboardShortcut("f", modifiers: [.command, .option])
+        .hidden()
+
+        // Cmd+Shift+M to add comment
+        Button("") {
+            if editorViewModel.selectionState.hasSelection {
+                editorViewModel.addComment()
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    activeSidebar = .comments
+                }
+            }
+        }
+        .keyboardShortcut("m", modifiers: [.command, .shift])
         .hidden()
     }
 }

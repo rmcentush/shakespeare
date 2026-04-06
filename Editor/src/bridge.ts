@@ -18,7 +18,8 @@ export type BridgeMessageType =
   | 'contentUpdate'
   | 'selectionChanged'
   | 'wordCount'
-  | 'pendingEditUpdate';
+  | 'pendingEditUpdate'
+  | 'commentsChanged';
 
 export interface BridgeMessage {
   type: BridgeMessageType;
@@ -64,6 +65,11 @@ export function registerSwiftCallbacks(callbacks: {
   focusPendingEdit: (id: string) => boolean;
   getPendingEdits: () => string;
   getPendingEditCount: () => number;
+  addComment: (commentId: string) => boolean;
+  updateCommentText: (commentId: string, text: string) => void;
+  removeComment: (commentId: string) => void;
+  focusComment: (commentId: string) => void;
+  getComments: () => string;
 }): void {
   (window as any).editorAPI = callbacks;
 }

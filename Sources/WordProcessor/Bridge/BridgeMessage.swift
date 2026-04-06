@@ -12,6 +12,7 @@ enum BridgePayload: Codable {
     case selectionChanged(SelectionState)
     case wordCount(words: Int, characters: Int)
     case pendingEditUpdate(PendingEditUpdateData)
+    case commentsChanged([CommentData])
     case unknown
 
     struct SelectionState: Codable {
@@ -37,6 +38,15 @@ enum BridgePayload: Codable {
 
     struct ContentChangedData: Codable {
         let html: String
+    }
+
+    struct CommentData: Identifiable, Equatable {
+        let id: String
+        var text: String
+        let selectedText: String
+        let createdAt: Double
+
+        var commentId: String { id }
     }
 
     struct PendingEditUpdateData: Codable {
@@ -142,6 +152,17 @@ enum BridgePayload: Codable {
                     edits: edits
                 )
             )
+        case "commentsChanged":
+            let rawComments = payload["comments"] as? [[String: Any]] ?? []
+            let comments = rawComments.map { item in
+                CommentData(
+                    id: item["commentId"] as? String ?? UUID().uuidString,
+                    text: item["text"] as? String ?? "",
+                    selectedText: item["selectedText"] as? String ?? "",
+                    createdAt: item["createdAt"] as? Double ?? 0
+                )
+            }
+            return .commentsChanged(comments)
         default:
             return .unknown
         }

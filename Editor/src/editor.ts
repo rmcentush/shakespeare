@@ -1,4 +1,4 @@
-import { Editor, Extension, Node as TiptapNode, mergeAttributes } from '@tiptap/core';
+import { Editor, Extension, Mark, Node as TiptapNode, mergeAttributes } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -530,6 +530,152 @@ function pendingEditsSummaryJSON(state: PendingEditsPluginState): string {
     activeEditId: state.activeEditId,
     edits: state.edits.map((edit, index) => serializePendingEdit(edit, index, state.activeEditId)),
   });
+}
+
+// ─── Comment Mark ───────────────────────────────────────────────────
+
+interface CommentData {
+  commentId: string;
+  text: string;
+  selectedText: string;
+  createdAt: number;
+}
+
+const CommentMark = Mark.create({
+  name: 'comment',
+  addAttributes() {
+    return {
+      commentId: { default: null },
+      commentText: { default: '' },
+      commentCreatedAt: { default: 0 },
+    };
+  },
+  parseHTML() {
+    return [{ tag: 'span[data-comment-id]' }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'span',
+      {
+        'data-comment-id': HTMLAttributes.commentId,
+        'data-comment-text': HTMLAttributes.commentText,
+        'data-comment-created-at': HTMLAttributes.commentCreatedAt,
+        class: 'comment-highlight',
+      },
+      0,
+    ];
+  },
+});
+
+function collectComments(editor: Editor): CommentData[] {
+  const comments: Map<string, CommentData> = new Map();
+  editor.state.doc.descendants((node) => {
+    if (!node.isText) return;
+    for (const mark of node.marks) {
+      if (mark.type.name === 'comment' && mark.attrs.commentId) {
+        const id = mark.attrs.commentId as string;
+        if (!comments.has(id)) {
+          comments.set(id, {
+            commentId: id,
+            text: mark.attrs.commentText as string || '',
+            selectedText: '',
+            createdAt: mark.attrs.commentCreatedAt as number || 0,
+          });
+        }
+        // Accumulate selected text for this comment
+        const existing = comments.get(id)!;
+        existing.selectedText += node.text || '';
+      }
+    }
+  });
+  return Array.from(comments.values());
+}
+
+function emitCommentsChanged(editor: Editor) {
+  sendToSwift('commentsChanged', { comments: collectComments(editor) });
+}
+
+function addComment(editor: Editor, commentId: string): boolean {
+  const { from, to } = editor.state.selection;
+  if (from === to) return false;
+
+  editor
+    .chain()
+    .focus()
+    .setMark('comment', {
+      commentId,
+      commentText: '',
+      commentCreatedAt: Date.now(),
+    })
+    .run();
+
+  emitCommentsChanged(editor);
+  return true;
+}
+
+function updateCommentText(editor: Editor, commentId: string, text: string) {
+  const { tr } = editor.state;
+  let changed = false;
+  editor.state.doc.descendants((node, pos) => {
+    if (!node.isText) return;
+    for (const mark of node.marks) {
+      if (mark.type.name === 'comment' && mark.attrs.commentId === commentId) {
+        const newMark = mark.type.create({
+          ...mark.attrs,
+          commentText: text,
+        });
+        tr.removeMark(pos, pos + node.nodeSize, mark);
+        tr.addMark(pos, pos + node.nodeSize, newMark);
+        changed = true;
+      }
+    }
+  });
+  if (changed) {
+    editor.view.dispatch(tr);
+    emitCommentsChanged(editor);
+  }
+}
+
+function removeComment(editor: Editor, commentId: string) {
+  const { tr } = editor.state;
+  let changed = false;
+  editor.state.doc.descendants((node, pos) => {
+    if (!node.isText) return;
+    for (const mark of node.marks) {
+      if (mark.type.name === 'comment' && mark.attrs.commentId === commentId) {
+        tr.removeMark(pos, pos + node.nodeSize, mark);
+        changed = true;
+      }
+    }
+  });
+  if (changed) {
+    editor.view.dispatch(tr);
+    emitCommentsChanged(editor);
+  }
+}
+
+function focusComment(editor: Editor, commentId: string) {
+  let targetPos = -1;
+  editor.state.doc.descendants((node, pos) => {
+    if (targetPos >= 0 || !node.isText) return;
+    for (const mark of node.marks) {
+      if (mark.type.name === 'comment' && mark.attrs.commentId === commentId) {
+        targetPos = pos;
+        return false;
+      }
+    }
+  });
+  if (targetPos >= 0) {
+    editor.commands.setTextSelection(targetPos);
+    editor.commands.focus();
+
+    // Briefly flash the comment highlight
+    const el = document.querySelector(`[data-comment-id="${commentId}"]`);
+    if (el) {
+      el.classList.add('comment-highlight-flash');
+      setTimeout(() => el.classList.remove('comment-highlight-flash'), 800);
+    }
+  }
 }
 
 const PendingEditHighlight = Extension.create({
@@ -1671,6 +1817,41 @@ function countWords(text: string): number {
   return trimmed.split(/\s+/).length;
 }
 
+/**
+ * Convert straight quotes to curly/smart quotes.
+ * Handles double quotes, single quotes, and apostrophes.
+ */
+function smartifyQuotes(text: string): string {
+  // Double quotes: opening after start-of-string, whitespace, or opening punctuation
+  text = text.replace(/(^|[\s(\[{])"/g, '$1\u201C'); // "
+  text = text.replace(/"/g, '\u201D'); // "
+
+  // Single quotes / apostrophes:
+  // Opening after start-of-string, whitespace, or opening punctuation
+  text = text.replace(/(^|[\s(\[{])'/g, '$1\u2018'); // '
+  // Everything else (mid-word apostrophes, closing quotes)
+  text = text.replace(/'/g, '\u2019'); // '
+
+  return text;
+}
+
+/**
+ * Apply smart quotes to all text nodes in a DOM tree (preserving HTML structure).
+ */
+function smartifyDOMTextNodes(root: Node): void {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+  while (walker.nextNode()) {
+    textNodes.push(walker.currentNode as Text);
+  }
+  for (const node of textNodes) {
+    const converted = smartifyQuotes(node.data);
+    if (converted !== node.data) {
+      node.data = converted;
+    }
+  }
+}
+
 const PASTE_STYLE_PROPERTIES = [
   'font-family',
   'background',
@@ -1697,6 +1878,8 @@ function sanitizePastedHTML(html: string): string {
       element.removeAttribute('style');
     }
   });
+
+  smartifyDOMTextNodes(parsed.body);
 
   return parsed.body.innerHTML;
 }
@@ -1730,6 +1913,7 @@ const editor = new Editor({
       inline: true,
       allowBase64: true,
     }),
+    CommentMark,
     SearchHighlight,
     PendingEditHighlight,
     Extension.create({
@@ -1804,6 +1988,9 @@ const editor = new Editor({
     transformPastedHTML(html) {
       return sanitizePastedHTML(html);
     },
+    transformPastedText(text) {
+      return smartifyQuotes(text);
+    },
   },
   onUpdate({ editor }) {
     invalidateDerivedDocumentState();
@@ -1833,6 +2020,7 @@ registerSwiftCallbacks({
     rejectAllPendingEdits(editor);
     editor.commands.setContent(stripGeneratedFootnotesSection(html), false);
     renderFootnotesPanel(editor, true);
+    emitWordCountUpdate(editor);
     emitSelectionUpdate(editor);
   },
   loadJSONContent(json: string) {
@@ -1842,6 +2030,7 @@ registerSwiftCallbacks({
       const parsed = JSON.parse(json);
       editor.commands.setContent(parsed, false);
       renderFootnotesPanel(editor, true);
+      emitWordCountUpdate(editor);
       emitSelectionUpdate(editor);
     } catch (error) {
       console.error('Failed to load JSON content into editor', error);
@@ -2114,6 +2303,11 @@ registerSwiftCallbacks({
   focusPendingEdit(id: string): boolean { return focusPendingEdit(editor, id); },
   getPendingEdits(): string { return pendingEditsSummaryJSON(getPendingEditsState(editor.state)); },
   getPendingEditCount(): number { return getPendingEditsState(editor.state).edits.length; },
+  addComment(commentId: string): boolean { return addComment(editor, commentId); },
+  updateCommentText(commentId: string, text: string) { updateCommentText(editor, commentId, text); },
+  removeComment(commentId: string) { removeComment(editor, commentId); },
+  focusComment(commentId: string) { focusComment(editor, commentId); },
+  getComments(): string { return JSON.stringify(collectComments(editor)); },
 });
 
 attachLinkHoverPreview(editor);

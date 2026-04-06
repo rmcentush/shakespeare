@@ -196,6 +196,28 @@ body {
   text-decoration-color: #007aff;
 }
 
+/* Comments */
+.comment-highlight {
+  background-color: rgba(255, 212, 0, 0.25);
+  border-bottom: 2px solid rgba(255, 180, 0, 0.5);
+  cursor: pointer;
+  border-radius: 2px;
+  transition: background-color 0.15s ease;
+}
+
+.comment-highlight:hover {
+  background-color: rgba(255, 212, 0, 0.45);
+}
+
+.comment-highlight-flash {
+  animation: comment-flash 0.8s ease;
+}
+
+@keyframes comment-flash {
+  0%, 100% { background-color: rgba(255, 212, 0, 0.25); }
+  30% { background-color: rgba(255, 180, 0, 0.6); }
+}
+
 /* Footnotes */
 .footnote-reference {
   display: inline-flex;
@@ -454,6 +476,15 @@ body {
 
   .editor-content a:hover {
     text-decoration-color: #5ac8fa;
+  }
+
+  .comment-highlight {
+    background-color: rgba(255, 212, 0, 0.18);
+    border-bottom-color: rgba(255, 180, 0, 0.4);
+  }
+
+  .comment-highlight:hover {
+    background-color: rgba(255, 212, 0, 0.35);
   }
 
   .footnote-reference {
