@@ -104,7 +104,8 @@ final class ClaudeChatViewModel {
                 for try await chunk in apiService.streamMessage(
                     messages: apiMessages,
                     systemPrompt: systemPrompt,
-                    tools: tools
+                    tools: tools,
+                    cacheControl: ClaudeAPIService.ephemeralPromptCacheControl
                 ) {
                     switch chunk {
                     case .text(let text):

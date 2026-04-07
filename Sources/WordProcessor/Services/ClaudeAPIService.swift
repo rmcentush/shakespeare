@@ -21,6 +21,10 @@ final class ClaudeAPIService: Sendable {
         "name": "web_search"
     ]
 
+    static let ephemeralPromptCacheControl: [String: Any] = [
+        "type": "ephemeral"
+    ]
+
     static let documentTools: [[String: Any]] = [
         [
             "name": "replace_selection",
@@ -79,7 +83,8 @@ final class ClaudeAPIService: Sendable {
     func streamMessage(
         messages: [[String: Any]],
         systemPrompt: String? = nil,
-        tools: [[String: Any]]? = nil
+        tools: [[String: Any]]? = nil,
+        cacheControl: [String: Any]? = nil
     ) -> AsyncThrowingStream<StreamChunk, Error> {
         AsyncThrowingStream { continuation in
             let task = Task.detached(priority: .userInitiated) { [baseURL, model, session] in
@@ -110,6 +115,11 @@ final class ClaudeAPIService: Sendable {
                     if let systemPrompt = systemPrompt {
                         body["system"] = systemPrompt
                     }
+
+                    if let cacheControl = cacheControl {
+                        body["cache_control"] = cacheControl
+                    }
+
                     request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
                     let (bytes, response) = try await session.bytes(for: request)
