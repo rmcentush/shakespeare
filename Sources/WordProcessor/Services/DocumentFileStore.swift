@@ -129,6 +129,11 @@ actor DocumentFileStore {
         let assets: [String: Data]
     }
 
+    struct ClipboardImageAsset: Sendable {
+        let data: Data
+        let pasteboardTypeIdentifier: String?
+    }
+
     enum FileStoreError: LocalizedError {
         case missingPackageManifest
         case unsupportedPackageContentFormat
@@ -184,6 +189,65 @@ actor DocumentFileStore {
             updated.htmlContent = exportableHTML
             try exportableHTML.write(to: url, atomically: true, encoding: .utf8)
             return updated
+        }
+    }
+
+    func inlineHTMLForExternalTransfer(_ html: String, sourceDocumentURL: URL?) throws -> String {
+        let accessURLs = [sourceDocumentURL].compactMap { $0 }
+
+        return try withSecurityScopedAccess(to: accessURLs) {
+            guard html.contains("\(DocumentAssetReference.scheme)://") else {
+                return html
+            }
+
+            let assets = try existingAssets(from: sourceDocumentURL)
+            guard !assets.isEmpty else { return html }
+
+            return assets.reduce(into: html) { rewrittenHTML, entry in
+                let assetURL = DocumentAssetReference.urlString(for: entry.key)
+                rewrittenHTML = rewrittenHTML.replacingOccurrences(
+                    of: assetURL,
+                    with: dataURL(for: entry.value, filename: entry.key)
+                )
+            }
+        }
+    }
+
+    func clipboardImageAsset(for source: String, sourceDocumentURL: URL?) throws -> ClipboardImageAsset? {
+        let accessURLs = [sourceDocumentURL].compactMap { $0 }
+
+        return try withSecurityScopedAccess(to: accessURLs) {
+            if source.hasPrefix("data:") {
+                let payload = try dataFromDataURL(source)
+                let type = UTType(mimeType: payload.mimeType) ?? UTType(filenameExtension: payload.fileExtension)
+                return ClipboardImageAsset(
+                    data: payload.data,
+                    pasteboardTypeIdentifier: type?.identifier
+                )
+            }
+
+            if let filename = DocumentAssetReference.filename(from: source),
+               let data = try existingAssetData(named: filename, from: sourceDocumentURL) {
+                let fileExtension = URL(fileURLWithPath: filename).pathExtension
+                let type = UTType(filenameExtension: fileExtension)
+                return ClipboardImageAsset(
+                    data: data,
+                    pasteboardTypeIdentifier: type?.identifier
+                )
+            }
+
+            if let fileURL = URL(string: source),
+               fileURL.isFileURL,
+               FileManager.default.fileExists(atPath: fileURL.path) {
+                let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
+                let type = UTType(filenameExtension: fileURL.pathExtension)
+                return ClipboardImageAsset(
+                    data: data,
+                    pasteboardTypeIdentifier: type?.identifier
+                )
+            }
+
+            return nil
         }
     }
 
@@ -360,9 +424,9 @@ actor DocumentFileStore {
         sourceDocumentURL: URL?
     ) throws -> String {
         if source.hasPrefix("data:") {
-            let (data, fileExtension) = try dataFromDataURL(source)
-            let filename = assetFilename(for: data, fileExtension: fileExtension)
-            assets[filename] = data
+            let payload = try dataFromDataURL(source)
+            let filename = assetFilename(for: payload.data, fileExtension: payload.fileExtension)
+            assets[filename] = payload.data
             return DocumentAssetReference.urlString(for: filename)
         }
 
@@ -399,20 +463,7 @@ actor DocumentFileStore {
     }
 
     private func htmlForExport(from snapshot: FileSnapshot, sourceDocumentURL: URL?) throws -> String {
-        guard let sourceDocumentURL,
-              Self.isNativeDocumentURL(sourceDocumentURL),
-              snapshot.htmlContent.contains("\(DocumentAssetReference.scheme)://")
-        else {
-            return snapshot.htmlContent
-        }
-
-        let assets = try existingAssets(from: sourceDocumentURL)
-        guard !assets.isEmpty else { return snapshot.htmlContent }
-
-        return assets.reduce(into: snapshot.htmlContent) { html, entry in
-            let assetURL = DocumentAssetReference.urlString(for: entry.key)
-            html = html.replacingOccurrences(of: assetURL, with: dataURL(for: entry.value, filename: entry.key))
-        }
+        try inlineHTMLForExternalTransfer(snapshot.htmlContent, sourceDocumentURL: sourceDocumentURL)
     }
 
     private func existingAssetData(named filename: String, from sourceDocumentURL: URL?) throws -> Data? {
@@ -430,7 +481,7 @@ actor DocumentFileStore {
         return try Data(contentsOf: assetURL, options: .mappedIfSafe)
     }
 
-    private func dataFromDataURL(_ source: String) throws -> (data: Data, fileExtension: String) {
+    private func dataFromDataURL(_ source: String) throws -> (data: Data, mimeType: String, fileExtension: String) {
         guard let commaIndex = source.firstIndex(of: ",") else {
             throw FileStoreError.invalidDataURL
         }
@@ -454,7 +505,7 @@ actor DocumentFileStore {
         }
 
         let fileExtension = UTType(mimeType: mimeType)?.preferredFilenameExtension ?? fileExtension(forMIMEType: mimeType)
-        return (data, fileExtension)
+        return (data, mimeType, fileExtension)
     }
 
     private func assetFilename(for data: Data, fileExtension: String) -> String {

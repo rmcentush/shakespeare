@@ -179,15 +179,15 @@ final class TextCheckingSettings {
 
     @discardableResult
     private func performAction(_ selector: Selector) -> Bool {
-        guard let webView else {
-            return NSApp.sendAction(selector, to: nil, from: nil)
-        }
-
-        if NSApp.sendAction(selector, to: webView, from: nil) {
+        if NSApp.sendAction(selector, to: nil, from: nil) {
             return true
         }
 
-        return NSApp.sendAction(selector, to: nil, from: nil)
+        guard let webView else {
+            return false
+        }
+
+        return NSApp.sendAction(selector, to: webView, from: nil)
     }
 
     private func persist(_ value: Bool, key: String) {

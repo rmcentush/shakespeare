@@ -39,6 +39,7 @@ export function registerSwiftCallbacks(callbacks: {
   getContent: () => string;
   getDocumentSnapshot: () => string;
   getPlainText: () => string;
+  getSelectionClipboardData: () => string;
   applyFormat: (command: string, value?: string) => void;
   focus: () => void;
   setEditable: (editable: boolean) => void;
@@ -52,6 +53,7 @@ export function registerSwiftCallbacks(callbacks: {
   replaceOne: (replacement: string) => string;
   replaceAll: (replacement: string) => number;
   clearFind: () => void;
+  deleteSelection: () => void;
   replaceSelectionHTML: (html: string) => void;
   insertHTMLAtCursor: (html: string) => void;
   findAndReplaceText: (find: string, replaceHtml: string, replaceAllOccurrences: boolean) => number;

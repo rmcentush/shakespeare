@@ -74,7 +74,7 @@ struct ContentView: View {
                 }
             }
             .background { keyboardShortcuts }
-            .onReceive(NotificationCenter.default.publisher(for: .editorContentUpdated)) { notification in
+            .onReceive(NotificationCenter.default.publisher(for: .editorContentUpdated, object: editorViewModel)) { notification in
                 if let html = notification.userInfo?["html"] as? String,
                    let text = notification.userInfo?["text"] as? String,
                    let words = notification.userInfo?["words"] as? Int,
@@ -88,7 +88,7 @@ struct ContentView: View {
                 }
                 editorViewModel.scheduleAutoSave(document: document)
             }
-            .onReceive(NotificationCenter.default.publisher(for: .editorBecameReady)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .editorBecameReady, object: editorViewModel)) { _ in
                 editorViewModel.loadSnapshot(document.currentSnapshot())
             }
             .onReceive(NotificationCenter.default.publisher(for: .fontSettingsChanged)) { _ in
@@ -108,7 +108,7 @@ struct ContentView: View {
             } message: {
                 Text("Give this version a name (e.g. \"Draft 1\", \"Final\")")
             }
-            .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode, object: editorViewModel)) { _ in
                 toggleFocusMode()
             }
             .onChange(of: editorViewModel.pendingEditCount) {
@@ -118,7 +118,7 @@ struct ContentView: View {
                     }
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .showSaveNamedVersion)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .showSaveNamedVersion, object: editorViewModel)) { _ in
                 // Open version history panel and trigger the naming alert
                 withAnimation(.easeInOut(duration: 0.15)) {
                     showVersionHistory = true
@@ -318,15 +318,14 @@ extension ContentView {
     }
 
     func toggleFocusMode() {
+        let window = editorViewModel.webView?.window ?? NSApp.mainWindow
         withAnimation(.easeInOut(duration: 0.3)) {
             isDistractionFree.toggle()
         }
         if isDistractionFree {
-            NSApp.mainWindow?.toggleFullScreen(nil)
-        } else {
-            if let window = NSApp.mainWindow, window.styleMask.contains(.fullScreen) {
-                window.toggleFullScreen(nil)
-            }
+            window?.toggleFullScreen(nil)
+        } else if let window, window.styleMask.contains(.fullScreen) {
+            window.toggleFullScreen(nil)
         }
     }
 }

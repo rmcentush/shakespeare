@@ -350,18 +350,17 @@ final class ClaudeChatViewModel {
     }
 
     private func buildSystemPrompt(documentContent: String) async -> String? {
-        guard !documentContent.isEmpty else { return nil }
-
         let preparedDocument = await Task.detached(priority: .utility) {
             Self.prepareDocumentContext(documentContent)
         }.value
+        let blogVoiceContext = await BlogVoiceLibrary.shared.ensureCorpusAvailable()
 
-        guard !preparedDocument.isEmpty else { return nil }
+        guard !preparedDocument.isEmpty || !(blogVoiceContext?.isEmpty ?? true) else {
+            return nil
+        }
 
         var prompt = """
-        You are a writing assistant embedded in a word processor. The user is currently working on the document below. \
-        Use it to understand their writing style, voice, topic, and context when responding. \
-        Keep responses concise and helpful.
+        You are a writing assistant embedded in a word processor. Keep responses concise and helpful.
 
         You have tools to directly edit the document. When the user asks you to change, rewrite, fill in, or edit text, \
         use the appropriate tool. If the user has text selected, use replace_selection. \
@@ -376,11 +375,30 @@ final class ClaudeChatViewModel {
         that benefits from current information.
 
         The document may be trimmed for performance. Prefer the most recent user request if context is ambiguous.
-
-        <current_document>
-        \(preparedDocument)
-        </current_document>
         """
+
+        if !preparedDocument.isEmpty {
+            prompt += """
+
+            The user is currently working on the document below. Use it to understand their writing style, voice, topic, and context when responding.
+
+            <current_document>
+            \(preparedDocument)
+            </current_document>
+            """
+        }
+
+        if let blogVoiceContext, !blogVoiceContext.isEmpty {
+            prompt += """
+
+            <author_voice_reference>
+            The user has a synced corpus of published writing from their blog. Use it as a high-priority reference for voice, cadence, pacing, and rhetorical habits when you draft or rewrite prose.
+            Match the style without copying distinctive phrasing, examples, or structure too closely.
+
+            \(blogVoiceContext)
+            </author_voice_reference>
+            """
+        }
 
         if !Self.aiTropesGuidance.isEmpty {
             prompt += """

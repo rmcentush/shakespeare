@@ -555,11 +555,12 @@ struct FootnoteButton: View {
 }
 
 struct FocusModeButton: View {
+    @Environment(EditorViewModel.self) private var viewModel
     @State private var isHovered = false
 
     var body: some View {
         Button {
-            NotificationCenter.default.post(name: .toggleFocusMode, object: nil)
+            NotificationCenter.default.post(name: .toggleFocusMode, object: viewModel)
         } label: {
             Image(systemName: "eye")
                 .frame(width: 28, height: 28)

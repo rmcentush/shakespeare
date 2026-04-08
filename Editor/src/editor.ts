@@ -52,6 +52,13 @@ interface DocumentTextSnapshot {
   characters: number;
 }
 
+interface SelectionClipboardData {
+  html: string;
+  text: string;
+  imageSources: string[];
+  singleImageSource: string | null;
+}
+
 interface FocusedFootnoteEditorState {
   id: string;
   selectionStart: number;
@@ -1247,6 +1254,44 @@ function serializeDocumentHTML(editor: Editor): string {
   return cachedSerializedHTML;
 }
 
+function serializeSelectionClipboardData(editor: Editor): SelectionClipboardData {
+  const emptySelection: SelectionClipboardData = {
+    html: '',
+    text: '',
+    imageSources: [],
+    singleImageSource: null,
+  };
+
+  const { selection } = editor.state;
+  if (selection.empty) {
+    return emptySelection;
+  }
+
+  const { dom, text } = editor.view.serializeForClipboard(selection.content());
+  Array.from(dom.querySelectorAll('*')).forEach((element) => {
+    Array.from(element.attributes).forEach((attribute) => {
+      if (attribute.name.startsWith('data-pm-')) {
+        element.removeAttribute(attribute.name);
+      }
+    });
+  });
+
+  const html = dom.innerHTML;
+  const imageSources = Array.from(dom.querySelectorAll('img'))
+    .map((img) => img.getAttribute('src')?.trim() || '')
+    .filter(Boolean);
+  const normalizedText = text.replace(/\u00a0/g, ' ').replace(/\uFFFC/g, '');
+  const singleImageSource =
+    imageSources.length === 1 && !normalizedText.trim() ? imageSources[0] : null;
+
+  return {
+    html,
+    text: normalizedText,
+    imageSources,
+    singleImageSource,
+  };
+}
+
 function autoResizeFootnoteEditor(textarea: HTMLTextAreaElement) {
   textarea.style.height = 'auto';
   textarea.style.height = `${textarea.scrollHeight}px`;
@@ -2420,6 +2465,9 @@ registerSwiftCallbacks({
   getPlainText(): string {
     return serializeDocumentPlainText(editor);
   },
+  getSelectionClipboardData(): string {
+    return JSON.stringify(serializeSelectionClipboardData(editor));
+  },
   applyFormat(command: string, value?: string) {
     switch (command) {
       case 'bold':
@@ -2596,6 +2644,10 @@ registerSwiftCallbacks({
     currentMatchIdx = -1;
     activeSearchQuery = '';
     updateSearchDecorations(editor);
+  },
+  deleteSelection() {
+    editor.commands.focus();
+    editor.view.dispatch(editor.state.tr.deleteSelection());
   },
   replaceSelectionHTML(html: string) {
     editor.chain().focus().insertContent(html).run();

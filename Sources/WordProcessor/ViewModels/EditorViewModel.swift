@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WebKit
 
@@ -96,6 +97,17 @@ final class EditorViewModel {
         }
     }
 
+    struct SelectionClipboardPayload: Decodable {
+        let html: String
+        let text: String
+        let imageSources: [String]
+        let singleImageSource: String?
+
+        var containsImages: Bool {
+            !imageSources.isEmpty
+        }
+    }
+
     // Called by bridge when JS sends a message
     func handleBridgeMessage(type: String, payload: BridgePayload) {
         switch payload {
@@ -106,19 +118,19 @@ final class EditorViewModel {
                 pendingSnapshot = nil
                 applySnapshotToEditor(snapshot)
             }
-            NotificationCenter.default.post(name: .editorBecameReady, object: nil)
+            NotificationCenter.default.post(name: .editorBecameReady, object: self)
 
         case .contentChanged(let html):
             NotificationCenter.default.post(
                 name: .editorContentUpdated,
-                object: nil,
+                object: self,
                 userInfo: ["html": html]
             )
 
         case .contentUpdate(let html, let text, let words, let characters):
             NotificationCenter.default.post(
                 name: .editorContentUpdated,
-                object: nil,
+                object: self,
                 userInfo: [
                     "html": html,
                     "text": text,
@@ -136,7 +148,7 @@ final class EditorViewModel {
         case .wordCount(let words, let characters):
             NotificationCenter.default.post(
                 name: .editorContentUpdated,
-                object: nil,
+                object: self,
                 userInfo: ["words": words, "characters": characters]
             )
 
@@ -238,6 +250,59 @@ final class EditorViewModel {
         }
     }
 
+    var isEditorFocused: Bool {
+        guard let webView,
+              let firstResponder = webView.window?.firstResponder
+        else {
+            return false
+        }
+
+        if let responderView = firstResponder as? NSView {
+            return responderView == webView || responderView.isDescendant(of: webView)
+        }
+
+        return false
+    }
+
+    func copySelectionWithImagesToPasteboard(cutAfterCopy: Bool) async -> Bool {
+        guard let payload = await getSelectionClipboardPayload(),
+              payload.containsImages
+        else {
+            return false
+        }
+
+        do {
+            let html = try await DocumentFileStore.shared.inlineHTMLForExternalTransfer(
+                payload.html,
+                sourceDocumentURL: assetBaseURL
+            )
+            let singleImageAsset: DocumentFileStore.ClipboardImageAsset?
+            if let singleImageSource = payload.singleImageSource {
+                singleImageAsset = try await DocumentFileStore.shared.clipboardImageAsset(
+                    for: singleImageSource,
+                    sourceDocumentURL: assetBaseURL
+                )
+            } else {
+                singleImageAsset = nil
+            }
+
+            let wroteToPasteboard = EditorClipboardWriter.write(
+                html: html,
+                plainText: payload.text,
+                singleImageAsset: singleImageAsset
+            )
+
+            if wroteToPasteboard, cutAfterCopy {
+                deleteSelection()
+            }
+
+            return wroteToPasteboard
+        } catch {
+            print("Clipboard export failed: \(error)")
+            return false
+        }
+    }
+
     func focusEditor() {
         evaluateJS("window.editorAPI?.focus()")
     }
@@ -257,6 +322,10 @@ final class EditorViewModel {
     func insertHTMLAtCursor(_ html: String) {
         let escaped = escapeForJS(html)
         evaluateJS("window.editorAPI?.insertHTMLAtCursor('\(escaped)')")
+    }
+
+    func deleteSelection() {
+        evaluateJS("window.editorAPI?.deleteSelection()")
     }
 
     func findAndReplaceText(find: String, replaceHTML: String, replaceAll: Bool, completion: @escaping (Int) -> Void) {
@@ -663,6 +732,22 @@ final class EditorViewModel {
         )
     }
 
+    private func getSelectionClipboardPayload() async -> SelectionClipboardPayload? {
+        await withCheckedContinuation { continuation in
+            evaluateJS("window.editorAPI?.getSelectionClipboardData()") { result in
+                guard let jsonString = result as? String,
+                      let data = jsonString.data(using: .utf8),
+                      let payload = try? JSONDecoder().decode(SelectionClipboardPayload.self, from: data)
+                else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+
+                continuation.resume(returning: payload)
+            }
+        }
+    }
+
     // MARK: - JS Evaluation
 
     private func escapeForJS(_ s: String) -> String {
@@ -702,6 +787,85 @@ final class EditorViewModel {
             }
             completion?(result)
         }
+    }
+}
+
+private enum EditorClipboardWriter {
+    static func write(
+        html: String,
+        plainText: String,
+        singleImageAsset: DocumentFileStore.ClipboardImageAsset?
+    ) -> Bool {
+        let item = NSPasteboardItem()
+        var wroteAnything = false
+
+        if !plainText.isEmpty {
+            item.setString(plainText, forType: .string)
+            wroteAnything = true
+        }
+
+        if !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let wrappedHTML = wrappedHTMLDocument(for: html)
+            if let htmlData = wrappedHTML.data(using: .utf8) {
+                item.setData(htmlData, forType: .html)
+                wroteAnything = true
+            }
+
+            if let rtfData = rtfData(fromHTML: wrappedHTML) {
+                item.setData(rtfData, forType: .rtf)
+            }
+        }
+
+        if let singleImageAsset {
+            if let typeIdentifier = singleImageAsset.pasteboardTypeIdentifier {
+                item.setData(singleImageAsset.data, forType: NSPasteboard.PasteboardType(typeIdentifier))
+                wroteAnything = true
+            }
+
+            if let image = NSImage(data: singleImageAsset.data),
+               let tiffData = image.tiffRepresentation {
+                item.setData(tiffData, forType: .tiff)
+                wroteAnything = true
+            }
+        }
+
+        guard wroteAnything else { return false }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        return pasteboard.writeObjects([item])
+    }
+
+    private static func wrappedHTMLDocument(for fragment: String) -> String {
+        """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        </head>
+        <body>\(fragment)</body>
+        </html>
+        """
+    }
+
+    private static func rtfData(fromHTML html: String) -> Data? {
+        guard let htmlData = html.data(using: .utf8),
+              let attributedString = try? NSAttributedString(
+                  data: htmlData,
+                  options: [
+                      .documentType: NSAttributedString.DocumentType.html,
+                      .characterEncoding: String.Encoding.utf8.rawValue,
+                  ],
+                  documentAttributes: nil
+              )
+        else {
+            return nil
+        }
+
+        return try? attributedString.data(
+            from: NSRange(location: 0, length: attributedString.length),
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+        )
     }
 }
 

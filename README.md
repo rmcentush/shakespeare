@@ -37,6 +37,16 @@ The editor works on its own, but to use the Claude sidebar (Cmd+\\):
 
 Your key is stored locally in `~/Library/Application Support/Shakespeare/` with restricted file permissions.
 
+### Blog voice sync
+
+Shakespeare can also sync a local voice corpus from `davidoks.blog` and feed that into Claude so drafts better match David Oks's published style.
+
+1. Open **Settings** (Cmd+,)
+2. Go to **Blog Voice**
+3. Click **Sync Now**
+
+The synced corpus is cached locally in `~/Library/Application Support/Shakespeare/BlogVoice/`.
+
 ## Build commands
 
 | Command | What it does |

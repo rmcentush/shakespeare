@@ -17,6 +17,17 @@ make clean        # Remove .build, node_modules, dist, copied assets
 
 The build pipeline: `Editor/src/*.ts` → esbuild IIFE → `Editor/dist/` → copied to `Sources/WordProcessor/Resources/` → bundled via SPM `.copy("Resources")`.
 
+## Blog Voice Corpus
+
+The app now maintains a local writing corpus for `https://davidoks.blog` so Claude can draft in David's published voice.
+
+- Runtime cache directory: `~/Library/Application Support/Shakespeare/BlogVoice/`
+- Full corpus JSON: `~/Library/Application Support/Shakespeare/BlogVoice/blog-voice-corpus.json`
+- Prompt-ready reference file: `~/Library/Application Support/Shakespeare/BlogVoice/blog-voice-context.md`
+- Sync sources: `https://davidoks.blog/feed` plus yearly sitemap pages such as `https://davidoks.blog/sitemap/2026`
+
+When working on prose features or prompting, assume the app can refresh this cache from **Settings → Blog Voice** and that Claude's system prompt may include the synced reference material.
+
 ## Architecture
 
 macOS 14+ SwiftUI app with a TipTap rich text editor running inside a WKWebView. Two codebases communicate through a JS↔Swift bridge.
