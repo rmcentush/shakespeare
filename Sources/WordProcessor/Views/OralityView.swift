@@ -176,8 +176,10 @@ struct OralityView: View {
                 }
                 Spacer()
                 Button {
-                    Task {
-                        await suggestionViewModel.suggestParagraphRewrite(paragraph)
+                    editorViewModel.getPlainText { plainText in
+                        Task {
+                            await suggestionViewModel.suggestParagraphRewrite(paragraph, documentContent: plainText)
+                        }
                     }
                 } label: {
                     Label("Suggest Paragraph Rewrite", systemImage: "sparkles")
@@ -256,11 +258,14 @@ struct OralityView: View {
 
             HStack {
                 Button {
-                    Task {
-                        await suggestionViewModel.suggestSentenceRewrite(
-                            sentence: sentence,
-                            paragraphText: paragraph.text
-                        )
+                    editorViewModel.getPlainText { plainText in
+                        Task {
+                            await suggestionViewModel.suggestSentenceRewrite(
+                                sentence: sentence,
+                                paragraphText: paragraph.text,
+                                documentContent: plainText
+                            )
+                        }
                     }
                 } label: {
                     Label("Suggest Sentence Rewrite", systemImage: "sparkles")

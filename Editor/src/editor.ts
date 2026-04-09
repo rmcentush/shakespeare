@@ -1020,16 +1020,40 @@ function findTextInDoc(doc: any, query: string, maxMatches = Number.POSITIVE_INF
 
   try {
     doc.descendants((node: any, pos: number) => {
-      if (!node.isText) return;
-      const text = node.text!.toLowerCase();
-      let idx = text.indexOf(lowerQuery);
-      while (idx !== -1) {
-        matches.push({ from: pos + idx, to: pos + idx + query.length });
-        if (matches.length >= maxMatches) {
-          throw SEARCH_STOP;
+      // Only process leaf block nodes (paragraphs, headings, etc.) that contain inline content.
+      // Skip text nodes directly — we handle them via their parent block.
+      if (!node.isBlock || node.isLeaf) return;
+      // If this block has nested block children, descend into them instead.
+      let hasBlockChild = false;
+      node.forEach((child: any) => { if (child.isBlock) hasBlockChild = true; });
+      if (hasBlockChild) return;
+
+      // Build concatenated text + position map across all inline text nodes in this block.
+      // Within a ProseMirror block, positions are contiguous across differently-marked text
+      // nodes, but inline atom nodes (images, hard breaks) occupy 1 position with 0 text chars.
+      const posMap: number[] = [];
+      let blockText = '';
+      node.forEach((child: any, offset: number) => {
+        if (child.isText) {
+          const t = child.text!;
+          for (let i = 0; i < t.length; i++) {
+            posMap.push(pos + 1 + offset + i);
+          }
+          blockText += t;
         }
-        idx = text.indexOf(lowerQuery, idx + 1);
+      });
+
+      const lowerBlock = blockText.toLowerCase();
+      if (lowerBlock.length < lowerQuery.length) return;
+
+      let idx = lowerBlock.indexOf(lowerQuery);
+      while (idx !== -1) {
+        matches.push({ from: posMap[idx], to: posMap[idx + query.length - 1] + 1 });
+        if (matches.length >= maxMatches) throw SEARCH_STOP;
+        idx = lowerBlock.indexOf(lowerQuery, idx + 1);
       }
+
+      return false; // Already processed children — skip descending.
     });
   } catch (error) {
     if (error !== SEARCH_STOP) throw error;
