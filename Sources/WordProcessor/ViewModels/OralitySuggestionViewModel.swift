@@ -249,11 +249,11 @@ final class OralitySuggestionViewModel {
         Paragraph context:
         "\(paragraphText)"
 
-        Havelock markers:
+        Havelock flagged these specific markers — your rewrite should directly address each one:
         \(markerDetails)
 
         Rewrite only the sentence. Keep the meaning, factual content, and point of view intact.
-        Make it sound more spoken and less institutional or academic.
+        Focus your changes on the specific issues each marker identifies. Do not make generic changes unrelated to the flags.
         Return only the rewritten sentence with no explanation, no quotation marks, and no markdown.
         """
     }
@@ -261,7 +261,7 @@ final class OralitySuggestionViewModel {
     private func buildParagraphPrompt(_ paragraph: OralityParagraphAnalysis) -> String {
         let flaggedSentences = paragraph.literateSentences
             .map { sentence in
-                "- \"\(sentence.text)\" [\(markerDetailsText(for: sentence))]"
+                "- \"\(sentence.text)\"\n  Markers: \(markerDetailsText(for: sentence))"
             }
             .joined(separator: "\n")
 
@@ -271,9 +271,10 @@ final class OralitySuggestionViewModel {
         Rewrite this paragraph so it reads more orally while staying faithful to the original content:
         "\(paragraph.text)"
 
-        Havelock flagged these sentences as literate:
+        Havelock flagged these sentences as literate. Your rewrite should directly address the specific markers for each:
         \(flaggedSentences)
 
+        Focus your changes on the specific issues each marker identifies. Do not make generic changes unrelated to the flags.
         Keep the result as a single paragraph. Preserve the meaning and order of ideas.
         Return only the rewritten paragraph with no explanation, no quotation marks, and no markdown.
         """
@@ -287,10 +288,12 @@ final class OralitySuggestionViewModel {
         let details = topMarkers
             .filter { !$0.name.isEmpty }
             .map { marker in
-                "\(marker.name.replacingOccurrences(of: "_", with: " ")) (\(Int(marker.confidence * 100))%)"
+                let displayName = marker.name.replacingOccurrences(of: "_", with: " ")
+                let description = OralityResult.descriptionForMarker(marker.name)
+                return "- \(displayName) (\(Int(marker.confidence * 100))%): \(description)"
             }
 
-        return details.isEmpty ? "none provided" : details.joined(separator: ", ")
+        return details.isEmpty ? "none provided" : details.joined(separator: "\n")
     }
 
     private func sanitizeSuggestion(_ text: String) -> String {

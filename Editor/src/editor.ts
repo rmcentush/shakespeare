@@ -190,6 +190,7 @@ function createPendingEdit(
   }
 ): PendingEdit {
   const source = inferPendingEditSource(options.groupId);
+  const smartHtml = smartifyHTMLQuotes(options.newHtml);
   return {
     id: options.id,
     groupId: options.groupId,
@@ -198,9 +199,9 @@ function createPendingEdit(
     label: buildPendingEditLabel(source, options.kind),
     from: options.from,
     to: options.to,
-    newHtml: options.newHtml,
+    newHtml: smartHtml,
     originalText: ed.state.doc.textBetween(options.from, options.to, '\n', '\n'),
-    replacementText: plainTextFromHTML(options.newHtml),
+    replacementText: plainTextFromHTML(smartHtml),
     createdAt: Date.now(),
     status: 'pending',
     conflictReason: null,
@@ -505,13 +506,19 @@ function acceptPendingEdit(ed: Editor, id: string): boolean {
   const edit = getPendingEditById(state, id);
   if (!edit || edit.status === 'conflicted') return false;
 
-  return ed.chain()
+  const result = ed.chain()
     .command(({ tr }) => {
       tr.setMeta(pendingEditPluginKey, { type: 'accept', id } satisfies PendingEditAction);
       return true;
     })
     .insertContentAt({ from: edit.from, to: edit.to }, edit.newHtml)
     .run();
+
+  if (result) {
+    scheduleSmartQuotesNormalization(ed);
+  }
+
+  return result;
 }
 
 function rejectPendingEdit(ed: Editor, id: string): boolean {
@@ -534,7 +541,13 @@ function acceptAllPendingEdits(ed: Editor): boolean {
     chain = chain.insertContentAt({ from: edit.from, to: edit.to }, edit.newHtml);
   }
 
-  return chain.run();
+  const result = chain.run();
+
+  if (result) {
+    scheduleSmartQuotesNormalization(ed);
+  }
+
+  return result;
 }
 
 function rejectAllPendingEdits(ed: Editor): boolean {
@@ -2221,6 +2234,15 @@ function scheduleSmartQuotesNormalization(editor: Editor) {
     smartQuotesNormalizationFrame = null;
     normalizeDocumentSmartQuotes(editor);
   });
+}
+
+/**
+ * Parse an HTML string, convert straight quotes to curly in text nodes, return HTML.
+ */
+function smartifyHTMLQuotes(html: string): string {
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  smartifyDOMTextNodes(parsed.body);
+  return parsed.body.innerHTML;
 }
 
 /**
