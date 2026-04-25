@@ -31,6 +31,12 @@ struct OralityParagraphAnalysis: Identifiable {
 
     var literateSentences: [OralityResult.SentenceAnalysis] {
         sentences.filter { $0.category == "literate" }
+            .sorted { a, b in
+                if a.markers.count != b.markers.count {
+                    return a.markers.count > b.markers.count
+                }
+                return a.markerConfidenceSum > b.markerConfidenceSum
+            }
     }
 
     var oralSentences: [OralityResult.SentenceAnalysis] {
@@ -52,6 +58,14 @@ final class OralityViewModel {
 
     var literateParagraphs: [OralityParagraphAnalysis] {
         paragraphs.filter { !$0.literateSentences.isEmpty }
+            .sorted { a, b in
+                let aMax = a.literateSentences.first?.markers.count ?? 0
+                let bMax = b.literateSentences.first?.markers.count ?? 0
+                if aMax != bMax { return aMax > bMax }
+                let aSum = a.literateSentences.first?.markerConfidenceSum ?? 0
+                let bSum = b.literateSentences.first?.markerConfidenceSum ?? 0
+                return aSum > bSum
+            }
     }
 
     var literateSentences: [OralityResult.SentenceAnalysis] {

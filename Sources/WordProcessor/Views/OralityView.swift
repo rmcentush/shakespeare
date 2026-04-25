@@ -176,8 +176,10 @@ struct OralityView: View {
                 }
                 Spacer()
                 Button {
-                    Task {
-                        await suggestionViewModel.suggestParagraphRewrite(paragraph)
+                    editorViewModel.getPlainText { plainText in
+                        Task {
+                            await suggestionViewModel.suggestParagraphRewrite(paragraph, documentContent: plainText)
+                        }
                     }
                 } label: {
                     Label("Suggest Paragraph Rewrite", systemImage: "sparkles")
@@ -256,11 +258,14 @@ struct OralityView: View {
 
             HStack {
                 Button {
-                    Task {
-                        await suggestionViewModel.suggestSentenceRewrite(
-                            sentence: sentence,
-                            paragraphText: paragraph.text
-                        )
+                    editorViewModel.getPlainText { plainText in
+                        Task {
+                            await suggestionViewModel.suggestSentenceRewrite(
+                                sentence: sentence,
+                                paragraphText: paragraph.text,
+                                documentContent: plainText
+                            )
+                        }
                     }
                 } label: {
                     Label("Suggest Sentence Rewrite", systemImage: "sparkles")
@@ -289,12 +294,22 @@ struct OralityView: View {
     }
 
     private func allSentencesSection(_ sentences: [OralityResult.SentenceAnalysis]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let sorted = sentences.sorted { a, b in
+            if a.category != b.category {
+                return a.category == "literate"
+            }
+            if a.markers.count != b.markers.count {
+                return a.markers.count > b.markers.count
+            }
+            return a.markerConfidenceSum > b.markerConfidenceSum
+        }
+
+        return VStack(alignment: .leading, spacing: 10) {
             Text("Sentence Analysis")
                 .font(.headline)
                 .padding(.horizontal)
 
-            ForEach(sentences) { sentence in
+            ForEach(sorted) { sentence in
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .top, spacing: 8) {
                         Text(sentence.category.uppercased())
@@ -544,26 +559,7 @@ struct OralityView: View {
     }
 
     private func markerDescription(_ marker: String) -> String {
-        switch marker {
-        case "technical_term":
-            return "Uses specialized or academic wording instead of everyday speech."
-        case "institutional_subject":
-            return "Centers abstract systems or institutions rather than a person speaking directly."
-        case "additive_formal":
-            return "Uses a formal connective that sounds more essay-like than spoken."
-        case "evidential":
-            return "Signals findings or evidence in a detached, report-like way."
-        case "third_person_reference":
-            return "Keeps the sentence at a distance instead of sounding directly addressed."
-        case "concessive_connector":
-            return "Uses a contrastive connector that can make the line sound more formal."
-        case "discourse_formula":
-            return "Uses a familiar spoken formula, which is usually a sign of oral style."
-        case "inclusive_we":
-            return "Uses a direct collective voice that often reads as spoken."
-        default:
-            return "This marker is one of Havelock's cues for how spoken or literate the sentence sounds."
-        }
+        OralityResult.descriptionForMarker(marker)
     }
 
     private func normalizeText(_ text: String) -> String {

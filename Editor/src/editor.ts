@@ -608,13 +608,19 @@ function acceptPendingEdit(ed: Editor, id: string): boolean {
     return false;
   }
 
-  return ed.chain()
+  const result = ed.chain()
     .command(({ tr }) => {
       tr.setMeta(pendingEditPluginKey, { type: 'accept', id } satisfies PendingEditAction);
       return true;
     })
     .insertContentAt({ from: edit.from, to: edit.to }, htmlForAcceptedEdit(edit))
     .run();
+
+  if (result) {
+    scheduleSmartQuotesNormalization(ed);
+  }
+
+  return result;
 }
 
 function rejectPendingEdit(ed: Editor, id: string): boolean {
@@ -662,7 +668,13 @@ function acceptAllPendingEdits(ed: Editor): boolean {
     chain = chain.insertContentAt({ from: edit.from, to: edit.to }, htmlForAcceptedEdit(edit));
   }
 
-  return chain.run();
+  const result = chain.run();
+
+  if (result) {
+    scheduleSmartQuotesNormalization(ed);
+  }
+
+  return result;
 }
 
 function rejectAllPendingEdits(ed: Editor): boolean {
@@ -1179,16 +1191,35 @@ function findTextInDoc(doc: any, query: string, maxMatches = Number.POSITIVE_INF
 
   try {
     doc.descendants((node: any, pos: number) => {
-      if (!node.isText) return;
-      const text = foldSmartQuotesForSearch(node.text!);
-      let idx = text.indexOf(lowerQuery);
-      while (idx !== -1) {
-        matches.push({ from: pos + idx, to: pos + idx + query.length });
-        if (matches.length >= maxMatches) {
-          throw SEARCH_STOP;
+      if (!node.isBlock || node.isLeaf) return;
+
+      let hasBlockChild = false;
+      node.forEach((child: any) => { if (child.isBlock) hasBlockChild = true; });
+      if (hasBlockChild) return;
+
+      const posMap: number[] = [];
+      let blockText = '';
+      node.forEach((child: any, offset: number) => {
+        if (child.isText) {
+          const t = child.text!;
+          for (let i = 0; i < t.length; i++) {
+            posMap.push(pos + 1 + offset + i);
+          }
+          blockText += t;
         }
-        idx = text.indexOf(lowerQuery, idx + advanceBy);
+      });
+
+      const lowerBlock = foldSmartQuotesForSearch(blockText);
+      if (lowerBlock.length < lowerQuery.length) return;
+
+      let idx = lowerBlock.indexOf(lowerQuery);
+      while (idx !== -1) {
+        matches.push({ from: posMap[idx], to: posMap[idx + lowerQuery.length - 1] + 1 });
+        if (matches.length >= maxMatches) throw SEARCH_STOP;
+        idx = lowerBlock.indexOf(lowerQuery, idx + advanceBy);
       }
+
+      return false;
     });
   } catch (error) {
     if (error !== SEARCH_STOP) throw error;
@@ -2407,6 +2438,15 @@ function scheduleSmartQuotesNormalization(editor: Editor) {
     smartQuotesNormalizationFrame = null;
     normalizeDocumentSmartQuotes(editor);
   });
+}
+
+/**
+ * Parse an HTML string, convert straight quotes to curly in text nodes, return HTML.
+ */
+function smartifyHTMLQuotes(html: string): string {
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  smartifyDOMTextNodes(parsed.body);
+  return parsed.body.innerHTML;
 }
 
 /**
