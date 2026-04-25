@@ -84,6 +84,7 @@ const MAX_PENDING_EDITS = 120;
 const MAX_PENDING_FIND_REPLACE_MATCHES = 60;
 const TOO_MANY_MATCHES = -1;
 const TOO_MANY_PENDING_EDITS = -2;
+const ACCEPTED_LLM_EDIT_COLOR = '#188038';
 const FOOTNOTE_NODE_NAME = 'footnote';
 const GENERATED_FOOTNOTES_SELECTOR = 'section[data-generated-footnotes="true"]';
 const WORD_COUNT_DEBOUNCE_MS = 250;
@@ -132,7 +133,9 @@ type PendingEditAction =
   }
   | { type: 'focus'; id: string }
   | { type: 'accept'; id: string }
+  | { type: 'acceptMany'; ids: string[] }
   | { type: 'reject'; id: string }
+  | { type: 'conflict'; id: string; reason: string }
   | { type: 'acceptAll' }
   | { type: 'rejectAll' };
 
@@ -190,6 +193,7 @@ function createPendingEdit(
   }
 ): PendingEdit {
   const source = inferPendingEditSource(options.groupId);
+  const newHtml = smartifyHTMLFragment(options.newHtml, contextCharacterBefore(ed.state.doc, options.from));
   return {
     id: options.id,
     groupId: options.groupId,
@@ -198,9 +202,9 @@ function createPendingEdit(
     label: buildPendingEditLabel(source, options.kind),
     from: options.from,
     to: options.to,
-    newHtml: options.newHtml,
+    newHtml,
     originalText: ed.state.doc.textBetween(options.from, options.to, '\n', '\n'),
-    replacementText: plainTextFromHTML(options.newHtml),
+    replacementText: plainTextFromHTML(newHtml),
     createdAt: Date.now(),
     status: 'pending',
     conflictReason: null,
@@ -336,7 +340,14 @@ function buildPendingEditDecorations(
     }
 
     decorations.push(
-      Decoration.widget(edit.to, () => createPendingEditWidget(edit, isActive), { side: 1 })
+      Decoration.widget(edit.to, () => createPendingEditWidget(edit, isActive), {
+        side: 1,
+        ignoreSelection: true,
+        stopEvent: (event) => (
+          event.target instanceof Element &&
+          event.target.closest('.pending-edit-widget') !== null
+        ),
+      })
     );
   });
 
@@ -469,6 +480,48 @@ function dispatchPendingEditAction(ed: Editor, action: PendingEditAction): boole
   return true;
 }
 
+function markPendingEditConflicted(ed: Editor, id: string, reason: string): boolean {
+  return dispatchPendingEditAction(ed, { type: 'conflict', id, reason });
+}
+
+function isPendingEditStillApplicable(ed: Editor, edit: PendingEdit): boolean {
+  if (edit.status !== 'pending') return false;
+  if (edit.from < 0 || edit.to < edit.from || edit.to > ed.state.doc.content.size) return false;
+  if (edit.from === edit.to) return true;
+
+  const currentText = ed.state.doc.textBetween(edit.from, edit.to, '\n', '\n');
+  return currentText === edit.originalText;
+}
+
+function nonOverlappingPendingEdits(edits: PendingEdit[]) {
+  const sorted = [...edits].sort((a, b) => a.from - b.from || a.to - b.to || a.id.localeCompare(b.id));
+  const accepted: PendingEdit[] = [];
+  const conflicted: PendingEdit[] = [];
+  const insertionPositions = new Set<number>();
+  let protectedUntil = -1;
+
+  for (const edit of sorted) {
+    const isInsertion = edit.from === edit.to;
+    const overlapsReplacement = edit.from < protectedUntil;
+    const duplicateInsertion = isInsertion && insertionPositions.has(edit.from);
+
+    if (overlapsReplacement || duplicateInsertion) {
+      conflicted.push(edit);
+      continue;
+    }
+
+    accepted.push(edit);
+
+    if (isInsertion) {
+      insertionPositions.add(edit.from);
+    } else {
+      protectedUntil = Math.max(protectedUntil, edit.to);
+    }
+  }
+
+  return { accepted, conflicted };
+}
+
 function queuePendingEdits(
   ed: Editor,
   edits: PendingEdit[],
@@ -492,25 +545,75 @@ function focusPendingEdit(ed: Editor, id: string): boolean {
   const state = getPendingEditsState(ed.state);
   const edit = getPendingEditById(state, id);
   if (!edit) return false;
-  dispatchPendingEditAction(ed, { type: 'focus', id });
-  ed.chain()
-    .focus()
-    .setTextSelection({ from: edit.from, to: Math.max(edit.from, edit.to) })
-    .run();
+  ed.commands.focus();
+  ed.view.dispatch(
+    ed.state.tr
+      .setMeta(pendingEditPluginKey, { type: 'focus', id } satisfies PendingEditAction)
+      .setSelection(TextSelection.create(ed.state.doc, edit.from, Math.max(edit.from, edit.to)))
+      .scrollIntoView()
+  );
   return true;
+}
+
+function focusRelativePendingEdit(ed: Editor, delta: 1 | -1): boolean {
+  const state = getPendingEditsState(ed.state);
+  if (state.edits.length === 0) return false;
+
+  const currentIndex = currentPendingEditIndex(state);
+  const baseIndex = currentIndex >= 0 ? currentIndex : (delta > 0 ? -1 : 0);
+  const nextIndex = (baseIndex + delta + state.edits.length) % state.edits.length;
+  return focusPendingEdit(ed, state.edits[nextIndex].id);
+}
+
+function isLLMEdit(edit: PendingEdit): boolean {
+  return edit.source === 'Claude' || edit.groupId.startsWith('edit_') || edit.id.startsWith('edit_');
+}
+
+function colorizeHTMLTextNodes(html: string, color: string): string {
+  if (!html.trim()) return html;
+
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  const walker = parsed.createTreeWalker(parsed.body, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    if (node.data.length > 0 && !/^\s*$/.test(node.data)) {
+      textNodes.push(node);
+    }
+  }
+
+  for (const node of textNodes) {
+    const span = parsed.createElement('span');
+    span.style.color = color;
+    node.parentNode?.replaceChild(span, node);
+    span.appendChild(node);
+  }
+
+  return parsed.body.innerHTML;
+}
+
+function htmlForAcceptedEdit(edit: PendingEdit): string {
+  return isLLMEdit(edit)
+    ? colorizeHTMLTextNodes(edit.newHtml, ACCEPTED_LLM_EDIT_COLOR)
+    : edit.newHtml;
 }
 
 function acceptPendingEdit(ed: Editor, id: string): boolean {
   const state = getPendingEditsState(ed.state);
   const edit = getPendingEditById(state, id);
   if (!edit || edit.status === 'conflicted') return false;
+  if (!isPendingEditStillApplicable(ed, edit)) {
+    markPendingEditConflicted(ed, id, 'The document changed around this suggestion.');
+    return false;
+  }
 
   return ed.chain()
     .command(({ tr }) => {
       tr.setMeta(pendingEditPluginKey, { type: 'accept', id } satisfies PendingEditAction);
       return true;
     })
-    .insertContentAt({ from: edit.from, to: edit.to }, edit.newHtml)
+    .insertContentAt({ from: edit.from, to: edit.to }, htmlForAcceptedEdit(edit))
     .run();
 }
 
@@ -524,14 +627,39 @@ function acceptAllPendingEdits(ed: Editor): boolean {
   const state = getPendingEditsState(ed.state);
   if (state.edits.length === 0) return false;
 
-  const sorted = [...state.edits].sort((a, b) => b.from - a.from);
+  const pendingEdits = state.edits.filter((edit) => edit.status === 'pending');
+  if (pendingEdits.length === 0) return false;
+
+  const applicable: PendingEdit[] = [];
+  const stale: PendingEdit[] = [];
+  for (const edit of pendingEdits) {
+    if (isPendingEditStillApplicable(ed, edit)) {
+      applicable.push(edit);
+    } else {
+      stale.push(edit);
+    }
+  }
+
+  stale.forEach((edit) => {
+    markPendingEditConflicted(ed, edit.id, 'The document changed around this suggestion.');
+  });
+
+  const { accepted, conflicted } = nonOverlappingPendingEdits(applicable);
+  conflicted.forEach((edit) => {
+    markPendingEditConflicted(ed, edit.id, 'This suggestion overlaps another pending edit.');
+  });
+
+  if (accepted.length === 0) return false;
+
+  const sorted = [...accepted].sort((a, b) => b.from - a.from || b.to - a.to);
+  const acceptedIds = sorted.map((edit) => edit.id);
   let chain = ed.chain().command(({ tr }) => {
-    tr.setMeta(pendingEditPluginKey, { type: 'acceptAll' } satisfies PendingEditAction);
+    tr.setMeta(pendingEditPluginKey, { type: 'acceptMany', ids: acceptedIds } satisfies PendingEditAction);
     return true;
   });
 
   for (const edit of sorted) {
-    chain = chain.insertContentAt({ from: edit.from, to: edit.to }, edit.newHtml);
+    chain = chain.insertContentAt({ from: edit.from, to: edit.to }, htmlForAcceptedEdit(edit));
   }
 
   return chain.run();
@@ -938,6 +1066,36 @@ const PendingEditHighlight = Extension.create({
                   }
                   break;
                 }
+                case 'acceptMany': {
+                  const acceptedIds = new Set(action.ids);
+                  const nextEdits = edits.filter((edit) => !acceptedIds.has(edit.id));
+                  if (nextEdits.length !== edits.length) {
+                    edits = nextEdits;
+                    if (activeEditId && acceptedIds.has(activeEditId)) {
+                      activeEditId = null;
+                    }
+                    scrollToEditId = null;
+                    changed = true;
+                  }
+                  break;
+                }
+                case 'conflict': {
+                  let didConflict = false;
+                  edits = edits.map((edit) => {
+                    if (edit.id !== action.id || edit.status === 'conflicted') return edit;
+                    didConflict = true;
+                    return {
+                      ...edit,
+                      status: 'conflicted',
+                      conflictReason: action.reason,
+                    };
+                  });
+                  if (didConflict) {
+                    scrollToEditId = action.id;
+                    changed = true;
+                  }
+                  break;
+                }
                 case 'acceptAll':
                 case 'rejectAll':
                   if (edits.length > 0) {
@@ -1016,19 +1174,20 @@ const PendingEditHighlight = Extension.create({
 function findTextInDoc(doc: any, query: string, maxMatches = Number.POSITIVE_INFINITY): SearchMatch[] {
   if (!query) return [];
   const matches: SearchMatch[] = [];
-  const lowerQuery = query.toLowerCase();
+  const lowerQuery = foldSmartQuotesForSearch(query);
+  const advanceBy = Math.max(lowerQuery.length, 1);
 
   try {
     doc.descendants((node: any, pos: number) => {
       if (!node.isText) return;
-      const text = node.text!.toLowerCase();
+      const text = foldSmartQuotesForSearch(node.text!);
       let idx = text.indexOf(lowerQuery);
       while (idx !== -1) {
         matches.push({ from: pos + idx, to: pos + idx + query.length });
         if (matches.length >= maxMatches) {
           throw SEARCH_STOP;
         }
-        idx = text.indexOf(lowerQuery, idx + 1);
+        idx = text.indexOf(lowerQuery, idx + advanceBy);
       }
     });
   } catch (error) {
@@ -2118,28 +2277,79 @@ function lastCharacter(text: string): string {
   return text.length > 0 ? text[text.length - 1] : '';
 }
 
-/**
- * Convert straight quotes to curly/smart quotes.
- * Handles double quotes, single quotes, and apostrophes.
- */
+function isWhitespaceCharacter(character: string): boolean {
+  return /\s/.test(character);
+}
+
+function isAlphaNumericCharacter(character: string): boolean {
+  return /[A-Za-z0-9]/.test(character);
+}
+
+function isOpeningQuoteContext(character: string): boolean {
+  return !character || isWhitespaceCharacter(character) || /[\([{<\u2013\u2014-]/.test(character) || character === '\u201C' || character === '\u2018';
+}
+
+function startsWithApostropheElision(text: string): boolean {
+  const lower = text.toLowerCase();
+  if (/^[a-z]'/.test(lower)) return true;
+  return [
+    'tis',
+    'twas',
+    'twere',
+    'cause',
+    'cuz',
+    'em',
+    'til',
+    'bout',
+    'round',
+  ].some((prefix) => lower.startsWith(prefix));
+}
+
+function shouldOpenDoubleQuote(text: string, index: number, previousCharacter: string): boolean {
+  const nextCharacter = text[index + 1] || '';
+  if (!nextCharacter || isWhitespaceCharacter(nextCharacter)) return false;
+  return isOpeningQuoteContext(previousCharacter);
+}
+
+function shouldOpenSingleQuote(text: string, index: number, previousCharacter: string): boolean {
+  const nextCharacter = text[index + 1] || '';
+  if (!nextCharacter || isWhitespaceCharacter(nextCharacter)) return false;
+  if (isAlphaNumericCharacter(previousCharacter)) return false;
+  if (/[0-9]/.test(nextCharacter)) return false;
+  if (startsWithApostropheElision(text.slice(index + 1))) return false;
+  return isOpeningQuoteContext(previousCharacter);
+}
+
 function smartifyQuotes(text: string): string {
-  // Double quotes: opening after start-of-string, whitespace, or opening punctuation
-  text = text.replace(/(^|[\s(\[{])"/g, '$1\u201C'); // "
-  text = text.replace(/"/g, '\u201D'); // "
+  let result = '';
 
-  // Single quotes / apostrophes:
-  // Opening after start-of-string, whitespace, or opening punctuation
-  text = text.replace(/(^|[\s(\[{])'/g, '$1\u2018'); // '
-  // Everything else (mid-word apostrophes, closing quotes)
-  text = text.replace(/'/g, '\u2019'); // '
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    const previousCharacter = lastCharacter(result);
 
-  return text;
+    if (character === '"') {
+      result += shouldOpenDoubleQuote(text, index, previousCharacter) ? '\u201C' : '\u201D';
+    } else if (character === "'") {
+      result += shouldOpenSingleQuote(text, index, previousCharacter) ? '\u2018' : '\u2019';
+    } else {
+      result += character;
+    }
+  }
+
+  return result;
 }
 
 function smartifyQuotesWithContext(text: string, contextBefore = ''): string {
   if (!text) return text;
   const syntheticPrefix = contextBefore || ' ';
   return smartifyQuotes(`${syntheticPrefix}${text}`).slice(syntheticPrefix.length);
+}
+
+function foldSmartQuotesForSearch(text: string): string {
+  return text
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .toLowerCase();
 }
 
 function contextCharacterBefore(doc: any, pos: number): string {
@@ -2202,11 +2412,11 @@ function scheduleSmartQuotesNormalization(editor: Editor) {
 /**
  * Apply smart quotes to all text nodes in a DOM tree (preserving HTML structure).
  */
-function smartifyDOMTextNodes(root: Node): void {
+function smartifyDOMTextNodes(root: Node, contextBefore = ''): void {
   const ownerDocument = root.ownerDocument ?? document;
   const walker = ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const textNodes: Text[] = [];
-  let previousText = '';
+  let previousText = contextBefore;
   while (walker.nextNode()) {
     textNodes.push(walker.currentNode as Text);
   }
@@ -2217,6 +2427,12 @@ function smartifyDOMTextNodes(root: Node): void {
     }
     previousText = converted;
   }
+}
+
+function smartifyHTMLFragment(html: string, contextBefore = ''): string {
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  smartifyDOMTextNodes(parsed.body, contextBefore);
+  return parsed.body.innerHTML;
 }
 
 const SmartQuotes = Extension.create({
@@ -2263,16 +2479,18 @@ const PASTE_STYLE_PROPERTIES = [
   '-webkit-text-fill-color',
 ];
 
-function sanitizePastedHTML(html: string): string {
+function sanitizePastedHTML(html: string, contextBefore = ''): string {
   const parsed = new DOMParser().parseFromString(stripGeneratedFootnotesSection(html), 'text/html');
 
   parsed.querySelectorAll(GENERATED_FOOTNOTES_SELECTOR).forEach((element) => element.remove());
   parsed.querySelectorAll('style, meta, link').forEach((element) => element.remove());
 
   parsed.body.querySelectorAll('*').forEach((element) => {
-    PASTE_STYLE_PROPERTIES.forEach((property) => {
-      element.style.removeProperty(property);
-    });
+    if (element instanceof HTMLElement) {
+      PASTE_STYLE_PROPERTIES.forEach((property) => {
+        element.style.removeProperty(property);
+      });
+    }
 
     ['color', 'bgcolor', 'face'].forEach((attribute) => {
       element.removeAttribute(attribute);
@@ -2283,7 +2501,7 @@ function sanitizePastedHTML(html: string): string {
     }
   });
 
-  smartifyDOMTextNodes(parsed.body);
+  smartifyDOMTextNodes(parsed.body, contextBefore);
 
   return parsed.body.innerHTML;
 }
@@ -2390,11 +2608,11 @@ const editor = new Editor({
       spellcheck: 'true',
       autocorrect: 'on',
     },
-    transformPastedHTML(html) {
-      return sanitizePastedHTML(html);
+    transformPastedHTML(html, view) {
+      return sanitizePastedHTML(html, contextCharacterBefore(view.state.doc, view.state.selection.from));
     },
-    transformPastedText(text) {
-      return smartifyQuotes(text);
+    transformPastedText(text, _plain, view) {
+      return smartifyQuotesWithContext(text, contextCharacterBefore(view.state.doc, view.state.selection.from));
     },
   },
   onUpdate({ editor }) {
@@ -2650,11 +2868,17 @@ registerSwiftCallbacks({
     editor.view.dispatch(editor.state.tr.deleteSelection());
   },
   replaceSelectionHTML(html: string) {
-    editor.chain().focus().insertContent(html).run();
+    const { from } = editor.state.selection;
+    editor.chain().focus().insertContent(
+      smartifyHTMLFragment(html, contextCharacterBefore(editor.state.doc, from))
+    ).run();
     normalizeDocumentSmartQuotes(editor);
   },
   insertHTMLAtCursor(html: string) {
-    editor.chain().focus().insertContent(html).run();
+    const { from } = editor.state.selection;
+    editor.chain().focus().insertContent(
+      smartifyHTMLFragment(html, contextCharacterBefore(editor.state.doc, from))
+    ).run();
     normalizeDocumentSmartQuotes(editor);
   },
   findAndReplaceText(find: string, replaceHtml: string, replaceAllOccurrences: boolean): number {
@@ -2667,8 +2891,12 @@ registerSwiftCallbacks({
     const toReplace = replaceAllOccurrences ? matches : [matches[0]];
     // Replace from end to start to preserve positions
     for (let i = toReplace.length - 1; i >= 0; i--) {
+      const normalizedReplaceHtml = smartifyHTMLFragment(
+        replaceHtml,
+        contextCharacterBefore(editor.state.doc, toReplace[i].from)
+      );
       editor.chain()
-        .insertContentAt({ from: toReplace[i].from, to: toReplace[i].to }, replaceHtml)
+        .insertContentAt({ from: toReplace[i].from, to: toReplace[i].to }, normalizedReplaceHtml)
         .run();
     }
     normalizeDocumentSmartQuotes(editor);
@@ -2726,6 +2954,8 @@ registerSwiftCallbacks({
   acceptPendingEdit(id: string): boolean { return acceptPendingEdit(editor, id); },
   rejectPendingEdit(id: string): boolean { return rejectPendingEdit(editor, id); },
   focusPendingEdit(id: string): boolean { return focusPendingEdit(editor, id); },
+  focusNextPendingEdit(): boolean { return focusRelativePendingEdit(editor, 1); },
+  focusPreviousPendingEdit(): boolean { return focusRelativePendingEdit(editor, -1); },
   getPendingEdits(): string { return pendingEditsSummaryJSON(getPendingEditsState(editor.state)); },
   getPendingEditCount(): number { return getPendingEditsState(editor.state).edits.length; },
   addComment(commentId: string): boolean { return addComment(editor, commentId); },

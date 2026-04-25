@@ -65,6 +65,8 @@ export function registerSwiftCallbacks(callbacks: {
   acceptPendingEdit: (id: string) => boolean;
   rejectPendingEdit: (id: string) => boolean;
   focusPendingEdit: (id: string) => boolean;
+  focusNextPendingEdit: () => boolean;
+  focusPreviousPendingEdit: () => boolean;
   getPendingEdits: () => string;
   getPendingEditCount: () => number;
   addComment: (commentId: string) => boolean;

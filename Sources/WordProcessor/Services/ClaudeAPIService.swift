@@ -25,6 +25,11 @@ final class ClaudeAPIService: Sendable {
         "type": "ephemeral"
     ]
 
+    static let oneHourPromptCacheControl: [String: Any] = [
+        "type": "ephemeral",
+        "ttl": "1h"
+    ]
+
     static let documentTools: [[String: Any]] = [
         [
             "name": "replace_selection",
@@ -82,7 +87,7 @@ final class ClaudeAPIService: Sendable {
 
     func streamMessage(
         messages: [[String: Any]],
-        systemPrompt: String? = nil,
+        systemPrompt: Any? = nil,
         tools: [[String: Any]]? = nil,
         cacheControl: [String: Any]? = nil
     ) -> AsyncThrowingStream<StreamChunk, Error> {

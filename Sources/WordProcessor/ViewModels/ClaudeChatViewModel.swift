@@ -24,6 +24,24 @@ final class ClaudeChatViewModel {
     private static let flushChunkThreshold = 12
     private static let flushInterval: TimeInterval = 0.12
 
+    private static let baseSystemPrompt = """
+    You are a writing assistant embedded in a word processor. Keep responses concise and helpful.
+
+    You have tools to directly edit the document. When the user asks you to change, rewrite, fill in, or edit text, \
+    use the appropriate tool. If the user has text selected, use replace_selection. \
+    If you need to find and change specific text, use find_and_replace. \
+    To add new content, use insert_at_cursor. \
+    Keep edit targets as small as possible. If only one sentence or one bracketed section changes, target only that span instead of replacing a whole paragraph.
+
+    When outputting HTML for the tools, you can use formatting tags like <b>, <i>, <u>, \
+    <span style="color: #e53e3e"> (red), <span style="color: green">, etc.
+
+    You also have web search available. Use it when the user asks about facts, references, or anything \
+    that benefits from current information.
+
+    The document may be trimmed for performance. Prefer the most recent user request if context is ambiguous.
+    """
+
     /// AI writing tropes guidance loaded from bundled resource.
     private static let aiTropesGuidance: String = {
         guard let resourceURL = Bundle.module.url(forResource: "ai_tropes", withExtension: "md"),
@@ -349,69 +367,75 @@ final class ClaudeChatViewModel {
         messages.remove(at: index)
     }
 
-    private func buildSystemPrompt(documentContent: String) async -> String? {
+    private func buildSystemPrompt(documentContent: String) async -> [[String: Any]] {
         let preparedDocument = await Task.detached(priority: .utility) {
             Self.prepareDocumentContext(documentContent)
         }.value
         let blogVoiceContext = await BlogVoiceLibrary.shared.ensureCorpusAvailable()
 
-        guard !preparedDocument.isEmpty || !(blogVoiceContext?.isEmpty ?? true) else {
-            return nil
-        }
-
-        var prompt = """
-        You are a writing assistant embedded in a word processor. Keep responses concise and helpful.
-
-        You have tools to directly edit the document. When the user asks you to change, rewrite, fill in, or edit text, \
-        use the appropriate tool. If the user has text selected, use replace_selection. \
-        If you need to find and change specific text, use find_and_replace. \
-        To add new content, use insert_at_cursor. \
-        Keep edit targets as small as possible. If only one sentence or one bracketed section changes, target only that span instead of replacing a whole paragraph.
-
-        When outputting HTML for the tools, you can use formatting tags like <b>, <i>, <u>, \
-        <span style="color: #e53e3e"> (red), <span style="color: green">, etc.
-
-        You also have web search available. Use it when the user asks about facts, references, or anything \
-        that benefits from current information.
-
-        The document may be trimmed for performance. Prefer the most recent user request if context is ambiguous.
-        """
-
-        if !preparedDocument.isEmpty {
-            prompt += """
-
-            The user is currently working on the document below. Use it to understand their writing style, voice, topic, and context when responding.
-
-            <current_document>
-            \(preparedDocument)
-            </current_document>
-            """
-        }
+        var blocks: [[String: Any]] = [
+            Self.cachedSystemBlock(Self.baseSystemPrompt)
+        ]
 
         if let blogVoiceContext, !blogVoiceContext.isEmpty {
-            prompt += """
+            blocks.append(
+                Self.cachedSystemBlock(
+                    """
+                    <author_voice_reference>
+                    The user has a synced corpus of published writing from their blog. Use it as a high-priority reference for voice, cadence, pacing, and rhetorical habits when you draft or rewrite prose.
+                    Match the style without copying distinctive phrasing, examples, or structure too closely.
 
-            <author_voice_reference>
-            The user has a synced corpus of published writing from their blog. Use it as a high-priority reference for voice, cadence, pacing, and rhetorical habits when you draft or rewrite prose.
-            Match the style without copying distinctive phrasing, examples, or structure too closely.
-
-            \(blogVoiceContext)
-            </author_voice_reference>
-            """
+                    \(blogVoiceContext)
+                    </author_voice_reference>
+                    """
+                )
+            )
         }
 
         if !Self.aiTropesGuidance.isEmpty {
-            prompt += """
+            blocks.append(
+                Self.cachedSystemBlock(
+                    """
+                    <writing_style_guidance>
+                    When writing or editing text for the user, follow this guidance carefully:
 
-            <writing_style_guidance>
-            When writing or editing text for the user, follow this guidance carefully:
-
-            \(Self.aiTropesGuidance)
-            </writing_style_guidance>
-            """
+                    \(Self.aiTropesGuidance)
+                    </writing_style_guidance>
+                    """
+                )
+            )
         }
 
-        return prompt
+        if !preparedDocument.isEmpty {
+            blocks.append(
+                Self.uncachedSystemBlock(
+                    """
+                    The user is currently working on the document below. Use it to understand their writing style, voice, topic, and context when responding.
+
+                    <current_document>
+                    \(preparedDocument)
+                    </current_document>
+                    """
+                )
+            )
+        }
+
+        return blocks
+    }
+
+    private static func cachedSystemBlock(_ text: String) -> [String: Any] {
+        [
+            "type": "text",
+            "text": text,
+            "cache_control": ClaudeAPIService.oneHourPromptCacheControl
+        ]
+    }
+
+    private static func uncachedSystemBlock(_ text: String) -> [String: Any] {
+        [
+            "type": "text",
+            "text": text
+        ]
     }
 
     private func trimVisibleMessages() {

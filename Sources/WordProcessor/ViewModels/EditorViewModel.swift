@@ -407,21 +407,23 @@ final class EditorViewModel {
     }
 
     var activePendingEdit: PendingEdit? {
-        pendingEdits.first(where: \.isActive)
+        if let active = pendingEdits.first(where: \.isActive) {
+            return active
+        }
+
+        if pendingEditCurrentIndex >= 0, pendingEditCurrentIndex < pendingEdits.count {
+            return pendingEdits[pendingEditCurrentIndex]
+        }
+
+        return pendingEdits.first
     }
 
     func focusNextPendingEdit() {
-        guard !pendingEdits.isEmpty else { return }
-        let currentIndex = pendingEditCurrentIndex >= 0 ? pendingEditCurrentIndex : 0
-        let nextIndex = (currentIndex + 1) % pendingEdits.count
-        focusPendingEdit(pendingEdits[nextIndex].id)
+        evaluateJS("window.editorAPI?.focusNextPendingEdit()")
     }
 
     func focusPreviousPendingEdit() {
-        guard !pendingEdits.isEmpty else { return }
-        let currentIndex = pendingEditCurrentIndex >= 0 ? pendingEditCurrentIndex : 0
-        let previousIndex = (currentIndex - 1 + pendingEdits.count) % pendingEdits.count
-        focusPendingEdit(pendingEdits[previousIndex].id)
+        evaluateJS("window.editorAPI?.focusPreviousPendingEdit()")
     }
 
     func acceptActivePendingEdit() {

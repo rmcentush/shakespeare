@@ -350,12 +350,14 @@ private struct AssistantMessageContent: View {
 private struct MarkdownText: View {
     let content: String
 
+    private var blocks: [SidebarMarkdownBlock] {
+        SidebarMarkdownBlock.parse(content)
+    }
+
     var body: some View {
-        Group {
-            if let attributed = renderedContent {
-                Text(attributed)
-            } else {
-                Text(verbatim: content)
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { entry in
+                blockView(entry.element)
             }
         }
         .foregroundStyle(.primary)
@@ -363,10 +365,203 @@ private struct MarkdownText: View {
         .lineSpacing(3)
     }
 
-    private var renderedContent: AttributedString? {
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        return try? AttributedString(markdown: content)
+    @ViewBuilder
+    private func blockView(_ block: SidebarMarkdownBlock) -> some View {
+        switch block {
+        case .heading(let level, let text):
+            InlineMarkdownText(content: text)
+                .font(headingFont(for: level))
+        case .paragraph(let lines):
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { entry in
+                    InlineMarkdownText(content: entry.element)
+                }
+            }
+        case .unorderedList(let items):
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(Array(items.enumerated()), id: \.offset) { entry in
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        Text("•")
+                            .font(.body.weight(.semibold))
+                        InlineMarkdownText(content: entry.element)
+                    }
+                }
+            }
+            .padding(.leading, 2)
+        case .orderedList(let items):
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(Array(items.enumerated()), id: \.offset) { entry in
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        Text("\(entry.offset + 1).")
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        InlineMarkdownText(content: entry.element)
+                    }
+                }
+            }
+        case .quote(let lines):
+            HStack(alignment: .top, spacing: 8) {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.18))
+                    .frame(width: 3)
+                    .clipShape(Capsule())
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(lines.enumerated()), id: \.offset) { entry in
+                        InlineMarkdownText(content: entry.element)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func headingFont(for level: Int) -> Font {
+        switch level {
+        case 1:
+            return .headline
+        case 2:
+            return .subheadline.weight(.semibold)
+        default:
+            return .body.weight(.semibold)
+        }
+    }
+}
+
+private struct InlineMarkdownText: View {
+    let content: String
+
+    var body: some View {
+        Group {
+            if let attributed = try? AttributedString(markdown: content) {
+                Text(attributed)
+            } else {
+                Text(verbatim: content)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private enum SidebarMarkdownBlock {
+    case heading(level: Int, text: String)
+    case paragraph([String])
+    case unorderedList([String])
+    case orderedList([String])
+    case quote([String])
+
+    static func parse(_ content: String) -> [SidebarMarkdownBlock] {
+        let normalized = content
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !normalized.isEmpty else { return [] }
+
+        let lines = normalized.components(separatedBy: "\n")
+        var blocks: [SidebarMarkdownBlock] = []
+        var index = 0
+
+        while index < lines.count {
+            let line = lines[index].trimmingCharacters(in: .whitespaces)
+            if line.isEmpty {
+                index += 1
+                continue
+            }
+
+            if let headingLevel = headingLevel(for: line) {
+                let headingText = String(line.dropFirst(headingLevel)).trimmingCharacters(in: .whitespaces)
+                blocks.append(.heading(level: headingLevel, text: headingText))
+                index += 1
+                continue
+            }
+
+            if let firstItem = unorderedListItem(in: line) {
+                var items = [firstItem]
+                index += 1
+                while index < lines.count {
+                    let candidate = lines[index].trimmingCharacters(in: .whitespaces)
+                    guard let item = unorderedListItem(in: candidate) else { break }
+                    items.append(item)
+                    index += 1
+                }
+                blocks.append(.unorderedList(items))
+                continue
+            }
+
+            if let firstItem = orderedListItem(in: line) {
+                var items = [firstItem]
+                index += 1
+                while index < lines.count {
+                    let candidate = lines[index].trimmingCharacters(in: .whitespaces)
+                    guard let item = orderedListItem(in: candidate) else { break }
+                    items.append(item)
+                    index += 1
+                }
+                blocks.append(.orderedList(items))
+                continue
+            }
+
+            if line.hasPrefix(">") {
+                var quoteLines: [String] = []
+                while index < lines.count {
+                    let candidate = lines[index].trimmingCharacters(in: .whitespaces)
+                    guard candidate.hasPrefix(">") else { break }
+                    quoteLines.append(String(candidate.dropFirst()).trimmingCharacters(in: .whitespaces))
+                    index += 1
+                }
+                blocks.append(.quote(quoteLines))
+                continue
+            }
+
+            var paragraphLines = [line]
+            index += 1
+            while index < lines.count {
+                let candidate = lines[index].trimmingCharacters(in: .whitespaces)
+                if candidate.isEmpty {
+                    index += 1
+                    break
+                }
+                if headingLevel(for: candidate) != nil ||
+                    unorderedListItem(in: candidate) != nil ||
+                    orderedListItem(in: candidate) != nil ||
+                    candidate.hasPrefix(">") {
+                    break
+                }
+                paragraphLines.append(candidate)
+                index += 1
+            }
+
+            blocks.append(.paragraph(paragraphLines))
+        }
+
+        return blocks
+    }
+
+    private static func headingLevel(for line: String) -> Int? {
+        let hashes = line.prefix { $0 == "#" }.count
+        guard (1...6).contains(hashes) else { return nil }
+        let remainder = line.dropFirst(hashes)
+        guard remainder.first == " " else { return nil }
+        return hashes
+    }
+
+    private static func unorderedListItem(in line: String) -> String? {
+        for marker in ["- ", "* ", "+ "] where line.hasPrefix(marker) {
+            return String(line.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
+        }
+        return nil
+    }
+
+    private static func orderedListItem(in line: String) -> String? {
+        let digits = line.prefix { $0.isNumber }
+        guard !digits.isEmpty else { return nil }
+
+        let remainder = line.dropFirst(digits.count)
+        guard let marker = remainder.first, marker == "." || marker == ")" else { return nil }
+
+        let content = String(remainder.dropFirst()).trimmingCharacters(in: .whitespaces)
+        guard !content.isEmpty else { return nil }
+        return content
     }
 }
 
