@@ -61,7 +61,7 @@ final class ClaudeAPIService: Sendable {
         ] as [String: Any],
         [
             "name": "find_and_replace",
-            "description": "Find specific text in the document and replace it with new HTML content. Useful for targeted edits without needing the user to select text first. Target the smallest exact span that changes, preferably a single sentence or bracketed section. Do not replace an entire paragraph unless the whole paragraph is being rewritten.",
+            "description": "Find specific text in the document and replace it with new HTML content. Useful for targeted edits without needing the user to select text first. Target the smallest exact span that changes, preferably a single sentence or bracketed section. Do not replace an entire paragraph unless the whole paragraph is being rewritten. For sentence-level edits, return an inline HTML fragment or plain text instead of wrapping it in <p>.",
             "input_schema": [
                 "type": "object",
                 "properties": [
@@ -71,7 +71,7 @@ final class ClaudeAPIService: Sendable {
                     ],
                     "replace": [
                         "type": "string",
-                        "description": "The HTML content to replace it with."
+                        "description": "The HTML content to replace it with. For replacements inside an existing paragraph, use plain text or inline tags, not a full <p> wrapper."
                     ],
                     "replace_all": [
                         "type": "boolean",

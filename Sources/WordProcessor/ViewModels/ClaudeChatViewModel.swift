@@ -32,6 +32,7 @@ final class ClaudeChatViewModel {
     If you need to find and change specific text, use find_and_replace. \
     To add new content, use insert_at_cursor. \
     Keep edit targets as small as possible. If only one sentence or one bracketed section changes, target only that span instead of replacing a whole paragraph.
+    For sentence-level find_and_replace edits, pass an inline HTML fragment or plain text as the replacement; do not wrap it in <p> unless replacing multiple whole paragraphs.
 
     When outputting HTML for the tools, you can use formatting tags like <b>, <i>, <u>, \
     <span style="color: #e53e3e"> (red), <span style="color: green">, etc.
@@ -320,25 +321,26 @@ final class ClaudeChatViewModel {
             let effectiveReplace = resolvedTarget?.replaceHTML ?? replace
             let scopeDetail = resolvedTarget?.scopeDescription
 
-            return await withCheckedContinuation { cont in
-                editor.pendingFindAndReplace(
+            let count = await pendingFindAndReplaceCount(
+                editor: editor,
+                id: editId,
+                find: effectiveFind,
+                replaceHTML: effectiveReplace,
+                replaceAll: replaceAll
+            )
+
+            if count == 0, resolvedTarget != nil {
+                let fallbackCount = await pendingFindAndReplaceCount(
+                    editor: editor,
                     id: editId,
-                    find: effectiveFind,
-                    replaceHTML: effectiveReplace,
+                    find: find,
+                    replaceHTML: replace,
                     replaceAll: replaceAll
-                ) { count in
-                    if count > 0 {
-                        let scopeSuffix = scopeDetail.map { " \($0)" } ?? ""
-                        cont.resume(returning: "Suggested \(count) edit\(count == 1 ? "" : "s"). User will review before applying.\(scopeSuffix)")
-                    } else if count == ToolExecutionResult.tooManyMatches.rawValue {
-                        cont.resume(returning: "That replacement matches too much of the document at once. Narrow the target text or select a smaller range.")
-                    } else if count == ToolExecutionResult.tooManyPendingEdits.rawValue {
-                        cont.resume(returning: "Too many pending edits are already queued. Review or reject them before asking for more changes.")
-                    } else {
-                        cont.resume(returning: "Text not found in document.")
-                    }
-                }
+                )
+                return findReplaceToolResult(count: fallbackCount, scopeDetail: nil)
             }
+
+            return findReplaceToolResult(count: count, scopeDetail: scopeDetail)
 
         default:
             return "Unknown tool: \(name)"
@@ -530,6 +532,42 @@ final class ClaudeChatViewModel {
                 continuation.resume(returning: text)
             }
         }
+    }
+
+    private func pendingFindAndReplaceCount(
+        editor: EditorViewModel,
+        id: String,
+        find: String,
+        replaceHTML: String,
+        replaceAll: Bool
+    ) async -> Int {
+        await withCheckedContinuation { continuation in
+            editor.pendingFindAndReplace(
+                id: id,
+                find: find,
+                replaceHTML: replaceHTML,
+                replaceAll: replaceAll
+            ) { count in
+                continuation.resume(returning: count)
+            }
+        }
+    }
+
+    private func findReplaceToolResult(count: Int, scopeDetail: String?) -> String {
+        if count > 0 {
+            let scopeSuffix = scopeDetail.map { " \($0)" } ?? ""
+            return "Suggested \(count) edit\(count == 1 ? "" : "s"). User will review before applying.\(scopeSuffix)"
+        }
+
+        if count == ToolExecutionResult.tooManyMatches.rawValue {
+            return "That replacement matches too much of the document at once. Narrow the target text or select a smaller range."
+        }
+
+        if count == ToolExecutionResult.tooManyPendingEdits.rawValue {
+            return "Too many pending edits are already queued. Review or reject them before asking for more changes."
+        }
+
+        return "Text not found in document."
     }
 }
 

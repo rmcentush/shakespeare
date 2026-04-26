@@ -38,7 +38,7 @@ enum EditTargetResolver {
     ) -> EditTargetResolution {
         let normalizedFind = normalizeText(findText)
         guard !normalizedFind.isEmpty else { return .useOriginal }
-        guard !containsHTMLMarkup(replacementHTML) else { return .useOriginal }
+        guard !containsFormattingMarkup(replacementHTML) else { return .useOriginal }
 
         let replacementPlainText = normalizeText(htmlToPlainText(replacementHTML))
         guard !replacementPlainText.isEmpty, replacementPlainText != normalizedFind else {
@@ -61,12 +61,6 @@ enum EditTargetResolver {
                     replaceHTML: escapeHTML(candidate.replacementText),
                     scopeDescription: candidate.scopeDescription
                 )
-            )
-        }
-
-        if isBroadTarget(normalizedFind) {
-            return .retry(
-                "That edit is broader than necessary. Target only the exact sentence or bracketed section that changes, or ask the user to select it first."
             )
         }
 
@@ -311,8 +305,13 @@ enum EditTargetResolver {
         text.index(text.startIndex, offsetBy: max(0, min(offset, text.count)))
     }
 
-    private static func containsHTMLMarkup(_ text: String) -> Bool {
-        text.range(of: "<[^>]+>", options: .regularExpression) != nil
+    private static func containsFormattingMarkup(_ html: String) -> Bool {
+        let wrapperMarkupRemoved = html
+            .replacingOccurrences(of: "(?i)</?p\\b[^>]*>", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "(?i)</?div\\b[^>]*>", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "(?i)<br\\s*/?>", with: "", options: .regularExpression)
+
+        return wrapperMarkupRemoved.range(of: "<[^>]+>", options: .regularExpression) != nil
     }
 
     private static func htmlToPlainText(_ html: String) -> String {
@@ -340,10 +339,6 @@ enum EditTargetResolver {
             .replacingOccurrences(of: "&#39;", with: "'")
     }
 
-    private static func isBroadTarget(_ text: String) -> Bool {
-        text.contains("\n") || sentenceOffsetRanges(in: text).count > 1
-    }
-
     private static func normalizeText(_ text: String) -> String {
         text
             .replacingOccurrences(of: "\r\n", with: "\n")
@@ -351,9 +346,40 @@ enum EditTargetResolver {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private static func normalizeForSearch(_ text: String) -> String {
+        let folded = normalizeText(text)
+            .replacingOccurrences(of: "\u{00a0}", with: " ")
+            .replacingOccurrences(of: "\u{2018}", with: "'")
+            .replacingOccurrences(of: "\u{2019}", with: "'")
+            .replacingOccurrences(of: "\u{201A}", with: "'")
+            .replacingOccurrences(of: "\u{201B}", with: "'")
+            .replacingOccurrences(of: "\u{201C}", with: "\"")
+            .replacingOccurrences(of: "\u{201D}", with: "\"")
+            .replacingOccurrences(of: "\u{201E}", with: "\"")
+            .replacingOccurrences(of: "\u{201F}", with: "\"")
+            .lowercased()
+
+        var result = ""
+        var previousWasWhitespace = false
+
+        for character in folded {
+            if character.isWhitespace {
+                if !result.isEmpty, !previousWasWhitespace {
+                    result.append(" ")
+                    previousWasWhitespace = true
+                }
+            } else {
+                result.append(character)
+                previousWasWhitespace = false
+            }
+        }
+
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private static func countOccurrences(of needle: String, in haystack: String) -> Int {
-        let normalizedNeedle = normalizeText(needle).lowercased()
-        let normalizedHaystack = normalizeText(haystack).lowercased()
+        let normalizedNeedle = normalizeForSearch(needle)
+        let normalizedHaystack = normalizeForSearch(haystack)
 
         guard !normalizedNeedle.isEmpty, normalizedHaystack.count >= normalizedNeedle.count else {
             return 0

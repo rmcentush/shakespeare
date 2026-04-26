@@ -19,6 +19,22 @@ interface SearchMatch {
   to: number;
 }
 
+interface SearchIndexRange {
+  from: number;
+  to: number;
+}
+
+interface SearchIndex {
+  text: string;
+  ranges: SearchIndexRange[];
+}
+
+interface SearchIndexBuilder {
+  text: string;
+  ranges: SearchIndexRange[];
+  lastWasWhitespace: boolean;
+}
+
 interface FootnoteDetails {
   id: string;
   index: number;
@@ -78,7 +94,6 @@ interface PreservedTextSelection {
 let searchResults: SearchMatch[] = [];
 let currentMatchIdx = -1;
 let activeSearchQuery = '';
-const SEARCH_STOP = Symbol('search-stop');
 const MAX_SEARCH_RESULTS = 500;
 const MAX_PENDING_EDITS = 120;
 const MAX_PENDING_FIND_REPLACE_MATCHES = 60;
@@ -193,7 +208,14 @@ function createPendingEdit(
   }
 ): PendingEdit {
   const source = inferPendingEditSource(options.groupId);
-  const newHtml = smartifyHTMLFragment(options.newHtml, contextCharacterBefore(ed.state.doc, options.from));
+  const newHtml = options.kind === 'insert'
+    ? smartifyHTMLFragment(options.newHtml, contextCharacterBefore(ed.state.doc, options.from))
+    : prepareReplacementHTMLForRange(
+      ed,
+      options.from,
+      options.to,
+      options.newHtml
+    );
   return {
     id: options.id,
     groupId: options.groupId,
@@ -1183,46 +1205,139 @@ const PendingEditHighlight = Extension.create({
   },
 });
 
-function findTextInDoc(doc: any, query: string, maxMatches = Number.POSITIVE_INFINITY): SearchMatch[] {
-  if (!query) return [];
-  const matches: SearchMatch[] = [];
-  const lowerQuery = foldSmartQuotesForSearch(query);
-  const advanceBy = Math.max(lowerQuery.length, 1);
+function isSearchWhitespace(character: string): boolean {
+  return character === '\u00a0' || /\s/.test(character);
+}
 
-  try {
-    doc.descendants((node: any, pos: number) => {
-      if (!node.isBlock || node.isLeaf) return;
+function foldSearchCharacter(character: string): string {
+  switch (character) {
+    case '\u2018':
+    case '\u2019':
+    case '\u201A':
+    case '\u201B':
+      return "'";
+    case '\u201C':
+    case '\u201D':
+    case '\u201E':
+    case '\u201F':
+      return '"';
+    default:
+      return character.toLowerCase();
+  }
+}
 
-      let hasBlockChild = false;
-      node.forEach((child: any) => { if (child.isBlock) hasBlockChild = true; });
-      if (hasBlockChild) return;
+function appendSearchCharacter(
+  builder: SearchIndexBuilder,
+  character: string,
+  from: number,
+  to: number
+) {
+  if (isSearchWhitespace(character)) {
+    if (builder.text.length === 0) return;
 
-      const posMap: number[] = [];
-      let blockText = '';
-      node.forEach((child: any, offset: number) => {
-        if (child.isText) {
-          const t = child.text!;
-          for (let i = 0; i < t.length; i++) {
-            posMap.push(pos + 1 + offset + i);
-          }
-          blockText += t;
+    if (builder.lastWasWhitespace) {
+      const lastRange = builder.ranges[builder.ranges.length - 1];
+      if (lastRange) {
+        lastRange.from = Math.min(lastRange.from, from);
+        lastRange.to = Math.max(lastRange.to, to);
+      }
+      return;
+    }
+
+    builder.text += ' ';
+    builder.ranges.push({ from, to });
+    builder.lastWasWhitespace = true;
+    return;
+  }
+
+  const folded = foldSearchCharacter(character);
+  for (let i = 0; i < folded.length; i += 1) {
+    builder.text += folded[i];
+    builder.ranges.push({ from, to });
+  }
+  builder.lastWasWhitespace = false;
+}
+
+function trimTrailingSearchWhitespace(builder: SearchIndexBuilder) {
+  while (builder.text.endsWith(' ')) {
+    builder.text = builder.text.slice(0, -1);
+    builder.ranges.pop();
+  }
+  builder.lastWasWhitespace = builder.text.endsWith(' ');
+}
+
+function normalizeSearchQuery(query: string): string {
+  const builder: SearchIndexBuilder = {
+    text: '',
+    ranges: [],
+    lastWasWhitespace: false,
+  };
+
+  for (let i = 0; i < query.length; i += 1) {
+    appendSearchCharacter(builder, query[i], i, i + 1);
+  }
+
+  trimTrailingSearchWhitespace(builder);
+  return builder.text;
+}
+
+function buildDocumentSearchIndex(doc: any): SearchIndex {
+  const builder: SearchIndexBuilder = {
+    text: '',
+    ranges: [],
+    lastWasWhitespace: false,
+  };
+  let hasVisitedTextBlock = false;
+
+  doc.descendants((node: any, pos: number) => {
+    if (!node.isTextblock) return;
+
+    if (hasVisitedTextBlock) {
+      appendSearchCharacter(builder, '\n', pos, pos);
+    }
+    hasVisitedTextBlock = true;
+
+    node.forEach((child: any, offset: number) => {
+      const childPos = pos + 1 + offset;
+
+      if (child.isText && typeof child.text === 'string') {
+        for (let i = 0; i < child.text.length; i += 1) {
+          appendSearchCharacter(builder, child.text[i], childPos + i, childPos + i + 1);
         }
-      });
-
-      const lowerBlock = foldSmartQuotesForSearch(blockText);
-      if (lowerBlock.length < lowerQuery.length) return;
-
-      let idx = lowerBlock.indexOf(lowerQuery);
-      while (idx !== -1) {
-        matches.push({ from: posMap[idx], to: posMap[idx + lowerQuery.length - 1] + 1 });
-        if (matches.length >= maxMatches) throw SEARCH_STOP;
-        idx = lowerBlock.indexOf(lowerQuery, idx + advanceBy);
+        return;
       }
 
-      return false;
+      if (child.type?.name === 'hardBreak') {
+        appendSearchCharacter(builder, '\n', childPos, childPos + child.nodeSize);
+      }
     });
-  } catch (error) {
-    if (error !== SEARCH_STOP) throw error;
+
+    return false;
+  });
+
+  trimTrailingSearchWhitespace(builder);
+  return {
+    text: builder.text,
+    ranges: builder.ranges,
+  };
+}
+
+function findTextInDoc(doc: any, query: string, maxMatches = Number.POSITIVE_INFINITY): SearchMatch[] {
+  const normalizedQuery = normalizeSearchQuery(query);
+  if (!normalizedQuery) return [];
+  const matches: SearchMatch[] = [];
+  const searchIndex = buildDocumentSearchIndex(doc);
+  const advanceBy = Math.max(normalizedQuery.length, 1);
+
+  let idx = searchIndex.text.indexOf(normalizedQuery);
+  while (idx !== -1) {
+    const start = searchIndex.ranges[idx];
+    const end = searchIndex.ranges[idx + normalizedQuery.length - 1];
+    if (start && end) {
+      matches.push({ from: start.from, to: end.to });
+      if (matches.length >= maxMatches) break;
+    }
+    idx = searchIndex.text.indexOf(normalizedQuery, idx + advanceBy);
   }
 
   return matches;
@@ -2376,13 +2491,6 @@ function smartifyQuotesWithContext(text: string, contextBefore = ''): string {
   return smartifyQuotes(`${syntheticPrefix}${text}`).slice(syntheticPrefix.length);
 }
 
-function foldSmartQuotesForSearch(text: string): string {
-  return text
-    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
-    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
-    .toLowerCase();
-}
-
 function contextCharacterBefore(doc: any, pos: number): string {
   if (pos <= 0) return '';
   return doc.textBetween(Math.max(pos - 1, 0), pos, '', '');
@@ -2473,6 +2581,60 @@ function smartifyHTMLFragment(html: string, contextBefore = ''): string {
   const parsed = new DOMParser().parseFromString(html, 'text/html');
   smartifyDOMTextNodes(parsed.body, contextBefore);
   return parsed.body.innerHTML;
+}
+
+function singleElementChildIgnoringWhitespace(root: HTMLElement): HTMLElement | null {
+  let element: HTMLElement | null = null;
+
+  for (const child of Array.from(root.childNodes)) {
+    if (child.nodeType === Node.TEXT_NODE) {
+      if (child.textContent?.trim()) return null;
+      continue;
+    }
+
+    if (child instanceof HTMLElement) {
+      if (element) return null;
+      element = child;
+      continue;
+    }
+
+    return null;
+  }
+
+  return element;
+}
+
+function unwrapSingleParagraphHTML(html: string): string {
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  const onlyChild = singleElementChildIgnoringWhitespace(parsed.body);
+  if (!onlyChild) return html;
+
+  const tagName = onlyChild.tagName.toLowerCase();
+  if (tagName !== 'p' && tagName !== 'div') return html;
+
+  return onlyChild.innerHTML;
+}
+
+function isTextblockRange(ed: Editor, from: number, to: number): boolean {
+  try {
+    const resolvedFrom = ed.state.doc.resolve(from);
+    const resolvedTo = ed.state.doc.resolve(Math.max(from, to));
+    return resolvedFrom.sameParent(resolvedTo) && resolvedFrom.parent.isTextblock;
+  } catch (_) {
+    return false;
+  }
+}
+
+function prepareReplacementHTMLForRange(
+  ed: Editor,
+  from: number,
+  to: number,
+  html: string
+): string {
+  const smartified = smartifyHTMLFragment(html, contextCharacterBefore(ed.state.doc, from));
+  return isTextblockRange(ed, from, to)
+    ? unwrapSingleParagraphHTML(smartified)
+    : smartified;
 }
 
 const SmartQuotes = Extension.create({
@@ -2931,9 +3093,11 @@ registerSwiftCallbacks({
     const toReplace = replaceAllOccurrences ? matches : [matches[0]];
     // Replace from end to start to preserve positions
     for (let i = toReplace.length - 1; i >= 0; i--) {
-      const normalizedReplaceHtml = smartifyHTMLFragment(
+      const normalizedReplaceHtml = prepareReplacementHTMLForRange(
+        editor,
+        toReplace[i].from,
+        toReplace[i].to,
         replaceHtml,
-        contextCharacterBefore(editor.state.doc, toReplace[i].from)
       );
       editor.chain()
         .insertContentAt({ from: toReplace[i].from, to: toReplace[i].to }, normalizedReplaceHtml)
