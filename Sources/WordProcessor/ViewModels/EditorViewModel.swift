@@ -13,8 +13,13 @@ final class EditorViewModel {
     var pendingEditCount = 0
     var pendingEditCurrentIndex = -1
     var comments: [BridgePayload.CommentData] = []
+    var persistenceStatusText = ""
+    var persistenceStatusIsError = false
     private var autoSaveTimer: Timer?
+    private var recoveryDraftTimer: Timer?
     private var pendingSnapshot: DocumentFileStore.FileSnapshot?
+    private var lastAutoSaveCheckpointByDocumentID: [String: Date] = [:]
+    private let autoSaveCheckpointInterval: TimeInterval = 60
     /// Incremented each time the editor signals ready (supports detecting web process restarts).
     var editorReadyCount = 0
 
@@ -508,6 +513,16 @@ final class EditorViewModel {
 
     // MARK: - Auto-Save
 
+    func scheduleRecoveryDraft(document: DocumentModel) {
+        recoveryDraftTimer?.invalidate()
+        guard document.isDirty else { return }
+        recoveryDraftTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                await self?.saveRecoveryDraft(document: document)
+            }
+        }
+    }
+
     func scheduleAutoSave(document: DocumentModel) {
         autoSaveTimer?.invalidate()
         guard document.fileURL != nil else { return }
@@ -535,11 +550,12 @@ final class EditorViewModel {
 
     private func autoSave(document: DocumentModel) async {
         guard let url = document.fileURL, document.isDirty else { return }
+        let shouldCheckpoint = shouldCreateAutoSaveCheckpoint(for: document)
         await persistDocument(
             document: document,
             to: url,
             captureLatestEditorState: true,
-            createVersionSnapshot: false,
+            createVersionSnapshot: shouldCheckpoint,
             actionName: "Auto-save"
         )
     }
@@ -547,7 +563,13 @@ final class EditorViewModel {
     private func flushBeforeDocumentChange(document: DocumentModel) async {
         autoSaveTimer?.invalidate()
         autoSaveTimer = nil
-        guard let url = document.fileURL, document.isDirty else { return }
+        recoveryDraftTimer?.invalidate()
+        recoveryDraftTimer = nil
+
+        guard document.isDirty else { return }
+        await saveRecoveryDraft(document: document)
+
+        guard let url = document.fileURL else { return }
         await persistDocument(
             document: document,
             to: url,
@@ -555,6 +577,69 @@ final class EditorViewModel {
             createVersionSnapshot: false,
             actionName: "Flush"
         )
+    }
+
+    private func shouldCreateAutoSaveCheckpoint(for document: DocumentModel) -> Bool {
+        let documentID = document.documentID
+        let now = Date()
+        defer { lastAutoSaveCheckpointByDocumentID[documentID] = now }
+
+        guard let lastCheckpoint = lastAutoSaveCheckpointByDocumentID[documentID] else {
+            return true
+        }
+        return now.timeIntervalSince(lastCheckpoint) >= autoSaveCheckpointInterval
+    }
+
+    private func saveRecoveryDraft(document: DocumentModel) async {
+        guard document.isDirty else { return }
+
+        do {
+            let snapshot = await latestSnapshot(for: document)
+            _ = try await RecoveryDraftStore.shared.saveDraft(
+                snapshot: snapshot,
+                assetSourceDocumentURL: assetBaseURL ?? document.fileURL,
+                originalDocumentURL: document.fileURL,
+                displayName: document.displayName
+            )
+            if document.fileURL == nil {
+                setPersistenceStatus("Recovery draft saved \(formattedStatusTime())", isError: false)
+            }
+        } catch {
+            setPersistenceStatus("Recovery draft failed: \(error.localizedDescription)", isError: true)
+        }
+    }
+
+    func recoverDraft(_ metadata: RecoveryDraftStore.DraftMetadata, document: DocumentModel) {
+        Task { @MainActor in
+            autoSaveTimer?.invalidate()
+            autoSaveTimer = nil
+            recoveryDraftTimer?.invalidate()
+            recoveryDraftTimer = nil
+
+            do {
+                let draft = try await RecoveryDraftStore.shared.loadDraft(id: metadata.id)
+                let originalFileURL = await RecoveryDraftStore.shared.originalFileURL(for: draft.metadata)
+                document.recoverDraft(snapshot: draft.snapshot, originalFileURL: originalFileURL)
+                assetBaseURL = draft.packageURL
+                loadSnapshot(draft.snapshot)
+                setPersistenceStatus("Recovered draft \(formattedStatusTime())", isError: false)
+                scheduleRecoveryDraft(document: document)
+            } catch {
+                setPersistenceStatus("Recover failed: \(error.localizedDescription)", isError: true)
+            }
+        }
+    }
+
+    func discardRecoveryDraft(_ metadata: RecoveryDraftStore.DraftMetadata) {
+        Task {
+            do {
+                try await RecoveryDraftStore.shared.deleteDraft(id: metadata.id)
+            } catch {
+                await MainActor.run {
+                    setPersistenceStatus("Discard draft failed: \(error.localizedDescription)", isError: true)
+                }
+            }
+        }
     }
 
     // MARK: - File Operations
@@ -579,8 +664,9 @@ final class EditorViewModel {
                 assetBaseURL = DocumentFileStore.isNativeDocumentURL(url) ? url : nil
                 loadSnapshot(snapshot)
                 VersionStore.shared.saveVersion(filePath: url.path, snapshot: snapshot)
+                setPersistenceStatus("Opened \(url.lastPathComponent)", isError: false)
             } catch {
-                print("Failed to open file: \(error)")
+                setPersistenceStatus("Open failed: \(error.localizedDescription)", isError: true)
             }
         }
     }
@@ -588,6 +674,8 @@ final class EditorViewModel {
     func saveDocument(document: DocumentModel) {
         autoSaveTimer?.invalidate()
         autoSaveTimer = nil
+        recoveryDraftTimer?.invalidate()
+        recoveryDraftTimer = nil
 
         if let url = document.fileURL {
             Task { @MainActor in
@@ -607,6 +695,8 @@ final class EditorViewModel {
     func saveDocumentAs(document: DocumentModel) {
         autoSaveTimer?.invalidate()
         autoSaveTimer = nil
+        recoveryDraftTimer?.invalidate()
+        recoveryDraftTimer = nil
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.shakespeareDocument]
@@ -637,9 +727,14 @@ final class EditorViewModel {
                 guard let self else { return }
                 let snapshot = await self.latestSnapshot(for: document)
                 do {
-                    _ = try await DocumentFileStore.shared.save(snapshot, to: url, sourceDocumentURL: document.fileURL)
+                    _ = try await DocumentFileStore.shared.save(
+                        snapshot,
+                        to: url,
+                        sourceDocumentURL: self.assetBaseURL ?? document.fileURL
+                    )
+                    self.setPersistenceStatus("Exported \(url.lastPathComponent)", isError: false)
                 } catch {
-                    print("HTML export failed for \(url.lastPathComponent): \(error)")
+                    self.setPersistenceStatus("Export failed: \(error.localizedDescription)", isError: true)
                 }
             }
         }
@@ -654,7 +749,8 @@ final class EditorViewModel {
     ) async {
         let latestSnapshot = await latestSnapshot(for: document, preferEditorState: captureLatestEditorState)
         let request = document.makePersistenceRequest(snapshot: latestSnapshot)
-        let sourceDocumentURL = document.fileURL
+        let sourceDocumentURL = assetBaseURL ?? document.fileURL
+        setPersistenceStatus("\(actionName) saving...", isError: false)
 
         do {
             let persistedSnapshot = try await DocumentFileStore.shared.save(
@@ -674,8 +770,13 @@ final class EditorViewModel {
             if createVersionSnapshot {
                 VersionStore.shared.saveVersion(filePath: url.path, snapshot: persistedSnapshot)
             }
+
+            if !document.isDirty {
+                try? await RecoveryDraftStore.shared.deleteDraft(documentID: persistedSnapshot.documentID)
+            }
+            setPersistenceStatus("\(actionName) saved \(formattedStatusTime())", isError: false)
         } catch {
-            print("\(actionName) failed for \(url.lastPathComponent): \(error)")
+            setPersistenceStatus("\(actionName) failed: \(error.localizedDescription)", isError: true)
         }
     }
 
@@ -748,6 +849,15 @@ final class EditorViewModel {
                 continuation.resume(returning: payload)
             }
         }
+    }
+
+    private func setPersistenceStatus(_ text: String, isError: Bool) {
+        persistenceStatusText = text
+        persistenceStatusIsError = isError
+    }
+
+    private func formattedStatusTime(_ date: Date = Date()) -> String {
+        DateFormatter.localizedString(from: date, dateStyle: .none, timeStyle: .short)
     }
 
     // MARK: - JS Evaluation

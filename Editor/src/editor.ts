@@ -180,7 +180,6 @@ function plainTextFromHTML(html: string): string {
 }
 
 function inferPendingEditSource(id: string): string {
-  if (id.startsWith('orality_')) return 'Orality';
   if (id.startsWith('edit_')) return 'Claude';
   return 'Suggestion';
 }
@@ -2905,6 +2904,9 @@ registerSwiftCallbacks({
       case 'heading':
         const level = parseInt(value || '1') as 1 | 2 | 3;
         editor.chain().focus().toggleHeading({ level }).run();
+        break;
+      case 'paragraph':
+        editor.chain().focus().setParagraph().run();
         break;
       case 'bulletList':
         editor.chain().focus().toggleBulletList().run();

@@ -100,25 +100,26 @@ struct VersionHistoryView: View {
         let isSelected = selectedVersionID == version.id
         return VStack(alignment: .leading, spacing: 4) {
             HStack {
-                if version.isNamed {
-                    if renamingVersionID == version.id {
-                        TextField("Name", text: $renameText, onCommit: {
-                            commitRename(version)
-                        })
-                        .textFieldStyle(.plain)
+                if renamingVersionID == version.id {
+                    TextField("Name", text: $renameText, onCommit: {
+                        commitRename(version)
+                    })
+                    .textFieldStyle(.plain)
+                    .font(.subheadline.weight(.semibold))
+                } else if version.isNamed {
+                    Text(version.versionName ?? "")
                         .font(.subheadline.weight(.semibold))
-                    } else {
-                        Text(version.versionName ?? "")
-                            .font(.subheadline.weight(.semibold))
-                            .lineLimit(1)
-                    }
-                    Image(systemName: "bookmark.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
+                        .lineLimit(1)
                 } else {
                     Text(formattedDate(version.createdAt))
                         .font(.subheadline)
                         .lineLimit(1)
+                }
+
+                if version.isNamed {
+                    Image(systemName: "bookmark.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
                 }
                 Spacer()
             }
@@ -194,7 +195,7 @@ struct VersionHistoryView: View {
             versions = []
             return
         }
-        versions = VersionStore.shared.versions(forFile: url.path)
+        versions = VersionStore.shared.versions(forFile: url.path, documentID: document.documentID)
     }
 
     private func restoreVersion(_ version: VersionStore.Version) {
@@ -241,15 +242,8 @@ struct VersionHistoryView: View {
     }
 
     private func nameUnnamedVersion(_ version: VersionStore.Version) {
-        namedVersionName = ""
-        // Reuse the save-named alert but redirect to renaming
-        showSaveNamedAlert = true
-        // After dismiss, the save action will create a new named version
-        // Instead, let's directly rename this version
-        // We'll use a different approach - set renaming state
         renamingVersionID = version.id
         renameText = ""
-        showSaveNamedAlert = false
     }
 
     private func commitRename(_ version: VersionStore.Version) {

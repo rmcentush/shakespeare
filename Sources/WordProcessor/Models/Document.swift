@@ -1,7 +1,8 @@
 import SwiftUI
 
 @Observable
-final class DocumentModel {
+@MainActor
+final class DocumentModel: @unchecked Sendable {
     struct PersistenceRequest: Sendable {
         let requestID: UInt64
         let generation: UInt64
@@ -49,7 +50,8 @@ final class DocumentModel {
         applySnapshot(.empty(), fileURL: nil, markDirty: false, resetRevision: true)
     }
 
-    func updateContent(_ html: String, plainText: String? = nil) {
+    @discardableResult
+    func updateContent(_ html: String, plainText: String? = nil) -> Bool {
         let resolvedPlainText = plainText ?? plainTextContent
         let changed = html != htmlContent || resolvedPlainText != plainTextContent
 
@@ -60,6 +62,7 @@ final class DocumentModel {
             contentRevision &+= 1
             isDirty = true
         }
+        return changed
     }
 
     func updateWordCount(words: Int, characters: Int) {
@@ -71,11 +74,10 @@ final class DocumentModel {
         wordCount = words
         characterCount = characters
         modifiedAt = Date()
-        contentRevision &+= 1
-        isDirty = true
     }
 
-    func syncFromEditor(snapshot: DocumentFileStore.FileSnapshot) {
+    @discardableResult
+    func syncFromEditor(snapshot: DocumentFileStore.FileSnapshot) -> Bool {
         let changed =
             snapshot.htmlContent != htmlContent ||
             snapshot.plainText != plainTextContent ||
@@ -87,9 +89,11 @@ final class DocumentModel {
             contentRevision &+= 1
             isDirty = true
         }
+        return changed
     }
 
-    func syncFromEditor(html: String, plainText: String, words: Int, characters: Int) {
+    @discardableResult
+    func syncFromEditor(html: String, plainText: String, words: Int, characters: Int) -> Bool {
         let changed = html != htmlContent || plainText != plainTextContent
         htmlContent = html
         plainTextContent = plainText
@@ -101,6 +105,7 @@ final class DocumentModel {
             contentRevision &+= 1
             isDirty = true
         }
+        return changed
     }
 
     func markSaved(url: URL, request: PersistenceRequest) {
@@ -117,6 +122,14 @@ final class DocumentModel {
         documentGeneration &+= 1
         applySnapshot(snapshot, fileURL: url, markDirty: false, resetRevision: true)
         Self.addToRecentFiles(url)
+    }
+
+    func recoverDraft(snapshot: DocumentFileStore.FileSnapshot, originalFileURL: URL?) {
+        documentGeneration &+= 1
+        applySnapshot(snapshot, fileURL: originalFileURL, markDirty: true, resetRevision: true)
+        if let originalFileURL {
+            Self.addToRecentFiles(originalFileURL)
+        }
     }
 
     func restoreVersion(snapshot: DocumentFileStore.FileSnapshot) {

@@ -62,6 +62,6 @@ The synced corpus is cached locally in `~/Library/Application Support/Shakespear
 Two layers communicating through a JS↔Swift bridge:
 
 - **TypeScript** (`Editor/src/`) — TipTap rich text editor, built as a single IIFE bundle targeting Safari 17
-- **Swift** (`Sources/WordProcessor/`) — SwiftUI app shell, file I/O, Claude API integration, hosted Havelock orality analysis
+- **Swift** (`Sources/WordProcessor/`) — SwiftUI app shell, file I/O, and Claude API integration
 
 All JS↔Swift communication goes through a single `WKScriptMessageHandler`. The editor runs inside a `WKWebView`.

@@ -89,16 +89,11 @@ struct ToolbarView: View {
                 .frame(height: 20)
                 .padding(.horizontal, 4)
 
-            // Headings
-            Group {
-                HeadingButton(level: 1, currentHeading: viewModel.selectionState.heading) {
-                    viewModel.applyFormat("heading", value: "1")
-                }
-                HeadingButton(level: 2, currentHeading: viewModel.selectionState.heading) {
-                    viewModel.applyFormat("heading", value: "2")
-                }
-                HeadingButton(level: 3, currentHeading: viewModel.selectionState.heading) {
-                    viewModel.applyFormat("heading", value: "3")
+            DocumentStylePicker(currentHeading: viewModel.selectionState.heading) { level in
+                if level == 0 {
+                    viewModel.applyFormat("paragraph")
+                } else {
+                    viewModel.applyFormat("heading", value: "\(level)")
                 }
             }
 
@@ -251,27 +246,25 @@ struct FormatButton: View {
     }
 }
 
-struct HeadingButton: View {
-    let level: Int
+struct DocumentStylePicker: View {
     let currentHeading: Int
-    let action: () -> Void
-    @State private var isHovered = false
+    let onSelect: (Int) -> Void
 
     var body: some View {
-        Button(action: action) {
-            Text("H\(level)")
-                .font(.system(size: 12, weight: .bold))
-                .frame(width: 28, height: 28)
-                .background(
-                    currentHeading == level ? Color.accentColor.opacity(0.2) :
-                    isHovered ? Color.primary.opacity(0.08) : Color.clear
-                )
-                .cornerRadius(4)
+        Picker("", selection: Binding(
+            get: { currentHeading },
+            set: { newLevel in
+                guard newLevel != currentHeading else { return }
+                onSelect(newLevel)
+            }
+        )) {
+            Text("Body").tag(0)
+            Text("Title").tag(1)
+            Text("Subtitle").tag(2)
+            Text("Section head").tag(3)
         }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            isHovered = hovering
-        }
+        .frame(width: 132)
+        .help("Document Style")
     }
 }
 

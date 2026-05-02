@@ -3,7 +3,6 @@ import SwiftUI
 struct ContentView: View {
     private enum SidebarPanel {
         case chat
-        case orality
         case suggestions
         case comments
     }
@@ -18,7 +17,9 @@ struct ContentView: View {
     @State private var showVersionHistory = false
     @State private var showNamedVersionAlert = false
     @State private var namedVersionName = ""
-    @State private var oralityRequestID = 0
+    @State private var didCheckRecoveryDrafts = false
+    @State private var recoveryDrafts: [RecoveryDraftStore.DraftMetadata] = []
+    @State private var showRecoveryDrafts = false
 
     var body: some View {
         mainLayout
@@ -46,15 +47,6 @@ struct ContentView: View {
                     }
                     ToolbarItem(placement: .automatic) {
                         Button {
-                            toggleOralityPanel()
-                        } label: {
-                            Text("A")
-                                .font(.system(size: 13, weight: .bold, design: .serif))
-                        }
-                        .help("Toggle Orality Sidebar")
-                    }
-                    ToolbarItem(placement: .automatic) {
-                        Button {
                             toggleSidebar(.comments)
                         } label: {
                             Image(systemName: activeSidebar == .comments ? "quote.bubble.fill" : "quote.bubble")
@@ -75,18 +67,22 @@ struct ContentView: View {
             }
             .background { keyboardShortcuts }
             .onReceive(NotificationCenter.default.publisher(for: .editorContentUpdated, object: editorViewModel)) { notification in
+                var contentChanged = false
                 if let html = notification.userInfo?["html"] as? String,
                    let text = notification.userInfo?["text"] as? String,
                    let words = notification.userInfo?["words"] as? Int,
                    let characters = notification.userInfo?["characters"] as? Int {
-                    document.syncFromEditor(html: html, plainText: text, words: words, characters: characters)
+                    contentChanged = document.syncFromEditor(html: html, plainText: text, words: words, characters: characters)
                 } else if let html = notification.userInfo?["html"] as? String {
-                    document.updateContent(html)
+                    contentChanged = document.updateContent(html)
                 } else if let words = notification.userInfo?["words"] as? Int,
                           let characters = notification.userInfo?["characters"] as? Int {
                     document.markEditorActivity(words: words, characters: characters)
                 }
-                editorViewModel.scheduleAutoSave(document: document)
+                if contentChanged {
+                    editorViewModel.scheduleRecoveryDraft(document: document)
+                    editorViewModel.scheduleAutoSave(document: document)
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .editorBecameReady, object: editorViewModel)) { _ in
                 editorViewModel.loadSnapshot(document.currentSnapshot())
@@ -98,6 +94,24 @@ struct ContentView: View {
             }
             .onDisappear {
                 editorViewModel.flushPendingChanges(document: document)
+            }
+            .onAppear {
+                checkForRecoveryDrafts()
+            }
+            .sheet(isPresented: $showRecoveryDrafts) {
+                RecoveryDraftsView(
+                    drafts: recoveryDrafts,
+                    onRecover: { draft in
+                        showRecoveryDrafts = false
+                        editorViewModel.recoverDraft(draft, document: document)
+                    },
+                    onDiscard: { draft in
+                        discardRecoveryDraft(draft)
+                    },
+                    onClose: {
+                        showRecoveryDrafts = false
+                    }
+                )
             }
             .alert("Save Named Version", isPresented: $showNamedVersionAlert) {
                 TextField("Version name", text: $namedVersionName)
@@ -201,8 +215,6 @@ struct ContentView: View {
                     switch activeSidebar {
                     case .chat:
                         ClaudeChatView()
-                    case .orality:
-                        OralityView(requestID: oralityRequestID)
                     case .suggestions:
                         PendingEditsSidebarView()
                     case .comments:
@@ -289,20 +301,29 @@ struct ContentView: View {
 }
 
 extension ContentView {
-    private func toggleSidebar(_ panel: SidebarPanel) {
-        withAnimation(.easeInOut(duration: 0.15)) {
-            activeSidebar = activeSidebar == panel ? nil : panel
+    private func checkForRecoveryDrafts() {
+        guard !didCheckRecoveryDrafts else { return }
+        didCheckRecoveryDrafts = true
+
+        Task { @MainActor in
+            let drafts = (try? await RecoveryDraftStore.shared.availableDrafts()) ?? []
+            guard !drafts.isEmpty, document.fileURL == nil, !document.isDirty else { return }
+            recoveryDrafts = drafts
+            showRecoveryDrafts = true
         }
     }
 
-    func toggleOralityPanel() {
+    private func discardRecoveryDraft(_ draft: RecoveryDraftStore.DraftMetadata) {
+        editorViewModel.discardRecoveryDraft(draft)
+        recoveryDrafts.removeAll { $0.id == draft.id }
+        if recoveryDrafts.isEmpty {
+            showRecoveryDrafts = false
+        }
+    }
+
+    private func toggleSidebar(_ panel: SidebarPanel) {
         withAnimation(.easeInOut(duration: 0.15)) {
-            if activeSidebar == .orality {
-                activeSidebar = nil
-            } else {
-                activeSidebar = .orality
-                oralityRequestID += 1
-            }
+            activeSidebar = activeSidebar == panel ? nil : panel
         }
     }
 
@@ -495,6 +516,13 @@ struct StatusBarView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
+            if !editorViewModel.persistenceStatusText.isEmpty {
+                Text(editorViewModel.persistenceStatusText)
+                    .font(.caption)
+                    .foregroundColor(editorViewModel.persistenceStatusIsError ? .red : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 4)

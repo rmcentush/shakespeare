@@ -58,7 +58,7 @@ The bridge is the core integration point. All communication flows through a sing
 | `Sources/WordProcessor/Bridge/BridgeMessage.swift` | Bridge payload enum with manual JSON parsing |
 | `Sources/WordProcessor/ViewModels/EditorViewModel.swift` | Central hub: webview ref, JS evaluation, file I/O, bridge dispatch |
 | `Sources/WordProcessor/Views/EditorWebView.swift` | NSViewRepresentable wrapping WKWebView, loads editor.html |
-| `Sources/WordProcessor/Views/ContentView.swift` | Main layout: editor + optional sidebar (chat/orality) |
+| `Sources/WordProcessor/Views/ContentView.swift` | Main layout: editor + optional sidebars |
 | `Sources/WordProcessor/Services/ClaudeAPIService.swift` | Anthropic Messages API with SSE streaming |
 | `Sources/WordProcessor/Services/FontManager.swift` | Font config, @font-face CSS generation, UserDefaults persistence |
 | `Sources/WordProcessor/Services/KeychainService.swift` | macOS Keychain wrapper (service prefix: `com.wordprocessor.*`) |
