@@ -7,6 +7,21 @@ struct ContentView: View {
         case comments
     }
 
+    private enum Layout {
+        static let versionHistoryWidth: CGFloat = 280
+        static let compactVersionHistoryWidth: CGFloat = 220
+        static let sidebarWidth: CGFloat = 340
+        static let compactSidebarWidth: CGFloat = 260
+        static let preferredEditorWidth: CGFloat = 360
+        static let dividerWidth: CGFloat = 1
+    }
+
+    private struct MainLayoutWidths {
+        var versionHistory: CGFloat
+        var editor: CGFloat
+        var sidebar: CGFloat
+    }
+
     @Environment(DocumentModel.self) private var document
     @Environment(EditorViewModel.self) private var editorViewModel
     @State private var activeSidebar: SidebarPanel?
@@ -142,89 +157,143 @@ struct ContentView: View {
     }
 
     private var mainLayout: some View {
-        HStack(spacing: 0) {
-            if showVersionHistory && !isDistractionFree {
-                VersionHistoryView()
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-                Divider()
-            }
-            VStack(spacing: 0) {
-                if !isDistractionFree {
-                    ToolbarView()
-                }
-                if showFindBar {
-                    FindBarView(
-                        isVisible: $showFindBar,
-                        showReplace: $showReplace,
-                        focusRequest: findBarFocusRequest
-                    )
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-                ZStack {
-                    EditorWebView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if isDistractionFree {
-                        VStack {
-                            HStack {
-                                Spacer()
-                                Button {
-                                    toggleFocusMode()
-                                } label: {
-                                    Image(systemName: "arrow.down.right.and.arrow.up.left")
-                                        .font(.system(size: 14))
-                                        .foregroundColor(.secondary)
-                                        .padding(8)
-                                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
-                                }
-                                .buttonStyle(.plain)
-                                .padding(12)
-                                .help("Exit Focus Mode (Cmd+Shift+F or Esc)")
-                            }
-                            Spacer()
-                        }
-                    }
-                    if editorViewModel.pendingEditCount > 0 {
-                        VStack {
-                            Spacer()
-                            PendingEditsBar(
-                                count: editorViewModel.pendingEditCount,
-                                currentIndex: editorViewModel.pendingEditCurrentIndex,
-                                canAcceptCurrent: editorViewModel.activePendingEdit?.canAccept ?? false,
-                                onFocusPrevious: { editorViewModel.focusPreviousPendingEdit() },
-                                onFocusNext: { editorViewModel.focusNextPendingEdit() },
-                                onAcceptCurrent: { editorViewModel.acceptActivePendingEdit() },
-                                onRejectCurrent: { editorViewModel.rejectActivePendingEdit() },
-                                onReview: { toggleSidebar(.suggestions) },
-                                onAcceptAll: { editorViewModel.acceptAllPendingEdits() },
-                                onRejectAll: { editorViewModel.rejectAllPendingEdits() }
-                            )
-                            .padding(.bottom, 12)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                        }
-                        .animation(.easeInOut(duration: 0.2), value: editorViewModel.pendingEditCount)
-                    }
-                }
-                if !isDistractionFree {
-                    StatusBarView()
-                }
-            }
+        GeometryReader { proxy in
+            let widths = mainLayoutWidths(for: proxy.size.width)
 
-            if let activeSidebar, !isDistractionFree {
-                Divider()
-                Group {
-                    switch activeSidebar {
-                    case .chat:
-                        ClaudeChatView()
-                    case .suggestions:
-                        PendingEditsSidebarView()
-                    case .comments:
-                        CommentsSidebarView()
+            HStack(spacing: 0) {
+                if showVersionHistory && !isDistractionFree {
+                    VersionHistoryView()
+                        .frame(width: widths.versionHistory)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                    Divider()
+                }
+
+                editorColumn
+                    .frame(width: widths.editor)
+                    .frame(maxHeight: .infinity)
+                    .clipped()
+
+                if let activeSidebar, !isDistractionFree {
+                    Divider()
+                    sidebarView(for: activeSidebar)
+                        .frame(width: widths.sidebar)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
+            .clipped()
+        }
+    }
+
+    private var editorColumn: some View {
+        VStack(spacing: 0) {
+            if !isDistractionFree {
+                ToolbarView()
+            }
+            if showFindBar {
+                FindBarView(
+                    isVisible: $showFindBar,
+                    showReplace: $showReplace,
+                    focusRequest: findBarFocusRequest
+                )
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            ZStack {
+                EditorWebView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if isDistractionFree {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Button {
+                                toggleFocusMode()
+                            } label: {
+                                Image(systemName: "arrow.down.right.and.arrow.up.left")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.secondary)
+                                    .padding(8)
+                                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
+                            }
+                            .buttonStyle(.plain)
+                            .padding(12)
+                            .help("Exit Focus Mode (Cmd+Shift+F or Esc)")
+                        }
+                        Spacer()
                     }
                 }
-                .frame(width: 340)
-                .transition(.move(edge: .trailing).combined(with: .opacity))
+                if editorViewModel.pendingEditCount > 0 {
+                    VStack {
+                        Spacer()
+                        PendingEditsBar(
+                            count: editorViewModel.pendingEditCount,
+                            currentIndex: editorViewModel.pendingEditCurrentIndex,
+                            canAcceptCurrent: editorViewModel.activePendingEdit?.canAccept ?? false,
+                            onFocusPrevious: { editorViewModel.focusPreviousPendingEdit() },
+                            onFocusNext: { editorViewModel.focusNextPendingEdit() },
+                            onAcceptCurrent: { editorViewModel.acceptActivePendingEdit() },
+                            onRejectCurrent: { editorViewModel.rejectActivePendingEdit() },
+                            onReview: { toggleSidebar(.suggestions) },
+                            onAcceptAll: { editorViewModel.acceptAllPendingEdits() },
+                            onRejectAll: { editorViewModel.rejectAllPendingEdits() }
+                        )
+                        .padding(.bottom, 12)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                    .animation(.easeInOut(duration: 0.2), value: editorViewModel.pendingEditCount)
+                }
+            }
+            if !isDistractionFree {
+                StatusBarView()
             }
         }
+    }
+
+    @ViewBuilder
+    private func sidebarView(for panel: SidebarPanel) -> some View {
+        switch panel {
+        case .chat:
+            ClaudeChatView()
+        case .suggestions:
+            PendingEditsSidebarView()
+        case .comments:
+            CommentsSidebarView()
+        }
+    }
+
+    private func mainLayoutWidths(for totalWidth: CGFloat) -> MainLayoutWidths {
+        let showsVersionHistory = showVersionHistory && !isDistractionFree
+        let showsSidebar = activeSidebar != nil && !isDistractionFree
+        let dividerCount = (showsVersionHistory ? 1 : 0) + (showsSidebar ? 1 : 0)
+        let availableWidth = max(totalWidth - CGFloat(dividerCount) * Layout.dividerWidth, 0)
+
+        guard showsVersionHistory || showsSidebar else {
+            return MainLayoutWidths(versionHistory: 0, editor: availableWidth, sidebar: 0)
+        }
+
+        var versionHistoryWidth = showsVersionHistory ? Layout.versionHistoryWidth : 0
+        var sidebarWidth = showsSidebar ? Layout.sidebarWidth : 0
+        let desiredPanelWidth = versionHistoryWidth + sidebarWidth
+        let maximumPanelWidth = max(availableWidth - Layout.preferredEditorWidth, 0)
+
+        if desiredPanelWidth > maximumPanelWidth {
+            let versionShrinkCapacity = showsVersionHistory ? Layout.versionHistoryWidth - Layout.compactVersionHistoryWidth : 0
+            let sidebarShrinkCapacity = showsSidebar ? Layout.sidebarWidth - Layout.compactSidebarWidth : 0
+            let shrinkCapacity = versionShrinkCapacity + sidebarShrinkCapacity
+
+            if shrinkCapacity > 0 {
+                let requestedShrink = desiredPanelWidth - maximumPanelWidth
+                let shrinkRatio = min(requestedShrink / shrinkCapacity, 1)
+                versionHistoryWidth -= versionShrinkCapacity * shrinkRatio
+                sidebarWidth -= sidebarShrinkCapacity * shrinkRatio
+            }
+        }
+
+        let editorWidth = max(availableWidth - versionHistoryWidth - sidebarWidth, 0)
+        return MainLayoutWidths(
+            versionHistory: versionHistoryWidth,
+            editor: editorWidth,
+            sidebar: sidebarWidth
+        )
     }
 
     @ViewBuilder

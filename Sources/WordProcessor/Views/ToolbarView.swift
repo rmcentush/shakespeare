@@ -9,6 +9,17 @@ struct ToolbarView: View {
     }
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            toolbarContent
+            ScrollView(.horizontal, showsIndicators: false) {
+                toolbarContent
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.bar)
+    }
+
+    private var toolbarContent: some View {
         HStack(spacing: 2) {
             // Font picker
             Picker("", selection: Binding(
@@ -153,7 +164,6 @@ struct ToolbarView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(.bar)
     }
 
     private func insertImage() {

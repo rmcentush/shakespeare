@@ -23,7 +23,7 @@ struct VersionHistoryView: View {
                 versionList
             }
         }
-        .frame(width: 280)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.background)
         .onAppear { refreshVersions() }
         .onChange(of: document.fileURL) { refreshVersions() }
