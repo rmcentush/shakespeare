@@ -130,6 +130,14 @@ struct ToolbarView: View {
                 insertImage()
             }
 
+            if viewModel.selectionState.isImage {
+                Divider()
+                    .frame(height: 20)
+                    .padding(.horizontal, 4)
+
+                ImageLayoutControls()
+            }
+
             Divider()
                 .frame(height: 20)
                 .padding(.horizontal, 4)
@@ -306,6 +314,46 @@ struct AlignButton: View {
         .buttonStyle(.plain)
         .onHover { hovering in
             isHovered = hovering
+        }
+    }
+}
+
+struct ImageLayoutControls: View {
+    @Environment(EditorViewModel.self) private var viewModel
+
+    private var state: EditorViewModel.SelectionState {
+        viewModel.selectionState
+    }
+
+    var body: some View {
+        Group {
+            FormatButton(icon: "textformat", isActive: state.imageLayout == "inline") {
+                viewModel.applyFormat("setImageLayout", value: "inline")
+            }
+            .help("Inline Image")
+
+            FormatButton(
+                icon: "text.aligncenter",
+                isActive: state.imageLayout == "block" && state.imageAlign == "center"
+            ) {
+                viewModel.applyFormat("setImageLayout", value: "block-center")
+            }
+            .help("Centered Image")
+
+            FormatButton(icon: "text.alignleft", isActive: state.imageLayout == "float-left") {
+                viewModel.applyFormat("setImageLayout", value: "float-left")
+            }
+            .help("Float Image Left")
+
+            FormatButton(icon: "text.alignright", isActive: state.imageLayout == "float-right") {
+                viewModel.applyFormat("setImageLayout", value: "float-right")
+            }
+            .help("Float Image Right")
+
+            FormatButton(icon: "arrow.counterclockwise", isActive: false) {
+                viewModel.applyFormat("resetImageCrop")
+            }
+            .help("Reset Image Crop")
         }
     }
 }

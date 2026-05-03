@@ -46,6 +46,11 @@ final class EditorViewModel {
         var textColor = ""
         var isFootnote = false
         var footnoteText = ""
+        var isImage = false
+        var imageLayout = "inline"
+        var imageAlign = "center"
+        var imageWidth = ""
+        var imageHeight = ""
 
         init() {}
 
@@ -63,6 +68,11 @@ final class EditorViewModel {
             textColor = state.textColor
             isFootnote = state.isFootnote
             footnoteText = state.footnoteText
+            isImage = state.isImage
+            imageLayout = state.imageLayout
+            imageAlign = state.imageAlign
+            imageWidth = state.imageWidth
+            imageHeight = state.imageHeight
         }
     }
 
