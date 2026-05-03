@@ -32,9 +32,6 @@ struct ContentView: View {
     @State private var showVersionHistory = false
     @State private var showNamedVersionAlert = false
     @State private var namedVersionName = ""
-    @State private var didCheckRecoveryDrafts = false
-    @State private var recoveryDrafts: [RecoveryDraftStore.DraftMetadata] = []
-    @State private var showRecoveryDrafts = false
 
     var body: some View {
         mainLayout
@@ -127,24 +124,6 @@ struct ContentView: View {
             }
             .onDisappear {
                 editorViewModel.flushPendingChanges(document: document)
-            }
-            .onAppear {
-                checkForRecoveryDrafts()
-            }
-            .sheet(isPresented: $showRecoveryDrafts) {
-                RecoveryDraftsView(
-                    drafts: recoveryDrafts,
-                    onRecover: { draft in
-                        showRecoveryDrafts = false
-                        editorViewModel.recoverDraft(draft, document: document)
-                    },
-                    onDiscard: { draft in
-                        discardRecoveryDraft(draft)
-                    },
-                    onClose: {
-                        showRecoveryDrafts = false
-                    }
-                )
             }
             .alert("Save Named Version", isPresented: $showNamedVersionAlert) {
                 TextField("Version name", text: $namedVersionName)
@@ -388,26 +367,6 @@ struct ContentView: View {
 }
 
 extension ContentView {
-    private func checkForRecoveryDrafts() {
-        guard !didCheckRecoveryDrafts else { return }
-        didCheckRecoveryDrafts = true
-
-        Task { @MainActor in
-            let drafts = (try? await RecoveryDraftStore.shared.availableDrafts()) ?? []
-            guard !drafts.isEmpty, document.fileURL == nil, !document.isDirty else { return }
-            recoveryDrafts = drafts
-            showRecoveryDrafts = true
-        }
-    }
-
-    private func discardRecoveryDraft(_ draft: RecoveryDraftStore.DraftMetadata) {
-        editorViewModel.discardRecoveryDraft(draft)
-        recoveryDrafts.removeAll { $0.id == draft.id }
-        if recoveryDrafts.isEmpty {
-            showRecoveryDrafts = false
-        }
-    }
-
     private func toggleSidebar(_ panel: SidebarPanel) {
         withAnimation(.easeInOut(duration: 0.15)) {
             activeSidebar = activeSidebar == panel ? nil : panel

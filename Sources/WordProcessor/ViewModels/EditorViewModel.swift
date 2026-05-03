@@ -24,6 +24,7 @@ final class EditorViewModel {
     private var recoveryDraftTimer: Timer?
     private var ambientReviewTimer: Timer?
     private var ambientReviewTask: Task<Void, Never>?
+    private var lastAmbientReviewedDocumentHash: String?
     private var pendingSnapshot: DocumentFileStore.FileSnapshot?
     private var lastAutoSaveCheckpointByDocumentID: [String: Date] = [:]
     private let autoSaveCheckpointInterval: TimeInterval = 60
@@ -271,6 +272,8 @@ final class EditorViewModel {
     // MARK: - Content Loading
 
     func loadSnapshot(_ snapshot: DocumentFileStore.FileSnapshot) {
+        lastAmbientReviewedDocumentHash = nil
+
         guard isEditorReady else {
             pendingSnapshot = snapshot
             return
@@ -628,26 +631,33 @@ final class EditorViewModel {
         guard ambientReviewEnabled, !isAmbientReviewing else { return }
 
         ambientReviewTask?.cancel()
+        isAmbientReviewing = true
         ambientReviewTask = Task { [weak self] in
             await self?.runAmbientReview()
         }
     }
 
     private func runAmbientReview() async {
-        guard ambientReviewEnabled else { return }
-        guard let context = await currentEditContextSnapshot(), !context.blocks.isEmpty else { return }
-
-        isAmbientReviewing = true
-        ambientReviewStatusText = "Reviewing..."
         defer {
             isAmbientReviewing = false
             ambientReviewTask = nil
         }
 
+        guard ambientReviewEnabled else { return }
+        guard let context = await currentEditContextSnapshot(), !context.blocks.isEmpty else { return }
+
+        guard lastAmbientReviewedDocumentHash != context.documentHash else {
+            ambientReviewStatusText = "Ambient review is up to date."
+            return
+        }
+
+        ambientReviewStatusText = "Reviewing..."
+
         do {
             let responseText = try await collectAmbientReviewResponse(context: context)
             let suggestions = parseAmbientReviewSuggestions(from: responseText)
             let addedCount = await addAmbientReviewComments(suggestions, context: context)
+            lastAmbientReviewedDocumentHash = context.documentHash
 
             if addedCount > 0 {
                 ambientReviewStatusText = "Added \(addedCount) suggestion\(addedCount == 1 ? "" : "s")."
@@ -678,6 +688,8 @@ final class EditorViewModel {
                 Return only compact JSON. Do not use Markdown.
                 Find at most 4 high-signal opportunities to improve clarity, structure, accuracy, tone, or concision.
                 Only comment on text you can anchor to a block in the supplied edit context.
+                You will receive existing comments. Treat them as already-covered feedback, even if resolved or dismissed.
+                Do not repeat, paraphrase, or add a nearby overlapping version of an existing comment. If the only useful feedback is already covered, return {"comments":[]}.
                 Schema:
                 {"comments":[{"block_id":"...","exact_original":"exact current text span","comment":"short rationale","kind":"clarity|structure|tone|concision|grammar|accuracy","severity":"low|medium|high","suggested_replacement":"optional replacement HTML or plain text"}]}
                 If there is nothing worth saying, return {"comments":[]}.
@@ -707,6 +719,7 @@ final class EditorViewModel {
     }
 
     private func ambientReviewPrompt(_ context: EditContextSnapshot) -> String {
+        let existingComments = ambientExistingCommentsXML()
         let blockLines = context.blocks.map { block in
             """
             <block id="\(xmlEscaped(block.id))" type="\(xmlEscaped(block.type))" from="\(block.from)" to="\(block.to)" text_hash="\(xmlEscaped(block.textHash))">
@@ -718,10 +731,41 @@ final class EditorViewModel {
         return """
         Review the current document using these anchorable blocks. Return JSON only.
         <edit_context revision="\(context.revision)" document_hash="\(xmlEscaped(context.documentHash))">
+        \(existingComments)
         <block_index>
         \(blockLines)
         </block_index>
         </edit_context>
+        """
+    }
+
+    private func ambientExistingCommentsXML(limit: Int = 40) -> String {
+        let visibleComments = comments.filter {
+            !$0.selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        guard !visibleComments.isEmpty else {
+            return "<existing_comments />"
+        }
+
+        let commentLines = visibleComments.prefix(limit).map { comment in
+            """
+            <comment id="\(xmlEscaped(comment.id))" source="\(xmlEscaped(comment.source))" status="\(xmlEscaped(comment.status))" kind="\(xmlEscaped(comment.kind))" severity="\(xmlEscaped(comment.severity))" from="\(comment.rangeStart)" to="\(comment.rangeEnd)">
+            <selected_text>\(xmlEscaped(comment.selectedText))</selected_text>
+            <comment_text>\(xmlEscaped(comment.text))</comment_text>
+            </comment>
+            """
+        }.joined(separator: "\n")
+
+        let omittedLine = visibleComments.count > limit
+            ? "\n<omitted_comments count=\"\(visibleComments.count - limit)\" />"
+            : ""
+
+        return """
+        <existing_comments>
+        \(commentLines)\(omittedLine)
+        </existing_comments>
         """
     }
 
@@ -755,18 +799,36 @@ final class EditorViewModel {
         context: EditContextSnapshot
     ) async -> Int {
         var addedCount = 0
-        var existingFingerprints = Set(comments
-            .filter { $0.source == "agent" }
+        let existingAgentComments = comments.filter { $0.source == "agent" }
+        var existingCommentFingerprints = Set(existingAgentComments
             .map { ambientCommentFingerprint(selectedText: $0.selectedText, comment: $0.text) })
+        var existingAnchorFingerprints = Set(existingAgentComments
+            .map { ambientAnchorFingerprint(selectedText: $0.selectedText) }
+            .filter { !$0.isEmpty })
+        var protectedRanges = existingAgentComments.map {
+            (start: $0.rangeStart, end: $0.rangeEnd)
+        }
 
         for suggestion in suggestions.prefix(4) {
             guard let range = resolveAmbientSuggestion(suggestion, context: context) else { continue }
+
+            let suggestedRange = (start: range.start, end: range.end)
+            guard !protectedRanges.contains(where: { rangesOverlap($0, suggestedRange) }) else {
+                continue
+            }
+
+            let anchorFingerprint = ambientAnchorFingerprint(selectedText: suggestion.exactOriginal)
+            guard !anchorFingerprint.isEmpty,
+                  !existingAnchorFingerprints.contains(anchorFingerprint)
+            else {
+                continue
+            }
 
             let fingerprint = ambientCommentFingerprint(
                 selectedText: suggestion.exactOriginal,
                 comment: suggestion.comment
             )
-            guard !existingFingerprints.contains(fingerprint) else { continue }
+            guard !existingCommentFingerprints.contains(fingerprint) else { continue }
 
             let added = await addAgentCommentAsync(
                 rangeStart: range.start,
@@ -778,7 +840,9 @@ final class EditorViewModel {
             )
             if added {
                 addedCount += 1
-                existingFingerprints.insert(fingerprint)
+                existingCommentFingerprints.insert(fingerprint)
+                existingAnchorFingerprints.insert(anchorFingerprint)
+                protectedRanges.append(suggestedRange)
             }
         }
 
@@ -838,7 +902,26 @@ final class EditorViewModel {
     }
 
     private func ambientCommentFingerprint(selectedText: String, comment: String) -> String {
-        "\(selectedText.trimmingCharacters(in: .whitespacesAndNewlines))|\(comment.trimmingCharacters(in: .whitespacesAndNewlines))"
+        "\(ambientAnchorFingerprint(selectedText: selectedText))|\(normalizedAmbientText(comment))"
+    }
+
+    private func ambientAnchorFingerprint(selectedText: String) -> String {
+        normalizedAmbientText(selectedText)
+    }
+
+    private func normalizedAmbientText(_ text: String) -> String {
+        text
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    private func rangesOverlap(
+        _ lhs: (start: Int, end: Int),
+        _ rhs: (start: Int, end: Int)
+    ) -> Bool {
+        lhs.start < rhs.end && rhs.start < lhs.end
     }
 
     var activePendingEdit: PendingEdit? {
