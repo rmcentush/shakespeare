@@ -91,14 +91,68 @@ interface PreservedTextSelection {
   revision: number;
 }
 
+interface EditContextBlock {
+  id: string;
+  path: string;
+  type: string;
+  from: number;
+  to: number;
+  text: string;
+  textHash: string;
+}
+
+interface EditContextSelection {
+  from: number;
+  to: number;
+  text: string;
+  html: string;
+  words: number;
+  characters: number;
+}
+
+interface EditContextSnapshot {
+  revision: number;
+  documentHash: string;
+  plainText: string;
+  cursorPosition: number;
+  nearbyText: string;
+  selection: EditContextSelection | null;
+  blocks: EditContextBlock[];
+}
+
+interface ProposedEditTarget {
+  block_id?: string;
+  exact_original?: string;
+  prefix?: string;
+  suffix?: string;
+  occurrence_index?: number;
+  document_revision?: number;
+  document_hash?: string;
+}
+
+interface SelectionEditTarget {
+  from?: number;
+  to?: number;
+  text?: string;
+  position?: number;
+  document_revision?: number;
+  document_hash?: string;
+}
+
 let searchResults: SearchMatch[] = [];
 let currentMatchIdx = -1;
 let activeSearchQuery = '';
 const MAX_SEARCH_RESULTS = 500;
 const MAX_PENDING_EDITS = 120;
 const MAX_PENDING_FIND_REPLACE_MATCHES = 60;
+const MAX_EDIT_CONTEXT_BLOCKS = 160;
+const MAX_EDIT_CONTEXT_BLOCK_TEXT = 900;
+const NEARBY_EDIT_CONTEXT_CHARS = 900;
 const TOO_MANY_MATCHES = -1;
 const TOO_MANY_PENDING_EDITS = -2;
+const AMBIGUOUS_EDIT_TARGET = -3;
+const STALE_EDIT_TARGET = -4;
+const INVALID_EDIT_TARGET = -5;
 const ACCEPTED_LLM_EDIT_COLOR = '#188038';
 const FOOTNOTE_NODE_NAME = 'footnote';
 const GENERATED_FOOTNOTES_SELECTOR = 'section[data-generated-footnotes="true"]';
@@ -562,6 +616,260 @@ function queuePendingEdits(
   return edits.length;
 }
 
+function currentDocumentHash(ed: Editor): string {
+  return hashString(serializeDocumentPlainText(ed));
+}
+
+function targetDocumentIsCurrent(ed: Editor, target: SelectionEditTarget | ProposedEditTarget): boolean {
+  if (
+    typeof target.document_revision === 'number' &&
+    target.document_revision !== documentRevision
+  ) {
+    return false;
+  }
+
+  if (
+    typeof target.document_hash === 'string' &&
+    target.document_hash.length > 0 &&
+    target.document_hash !== currentDocumentHash(ed)
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function rangeFromSelectionTarget(ed: Editor, target: SelectionEditTarget | null): SearchMatch | number | null {
+  if (!target) return null;
+  if (!targetDocumentIsCurrent(ed, target)) return STALE_EDIT_TARGET;
+
+  const from = typeof target.from === 'number' ? target.from : -1;
+  const to = typeof target.to === 'number' ? target.to : -1;
+  if (from < 0 || to <= from || to > ed.state.doc.content.size) return INVALID_EDIT_TARGET;
+
+  if (typeof target.text === 'string') {
+    const currentText = ed.state.doc.textBetween(from, to, '\n', '\n');
+    if (currentText !== target.text) return STALE_EDIT_TARGET;
+  }
+
+  return { from, to };
+}
+
+function positionFromInsertionTarget(ed: Editor, target: SelectionEditTarget | null): number | null {
+  if (!target) return null;
+  if (!targetDocumentIsCurrent(ed, target)) return STALE_EDIT_TARGET;
+
+  const position = typeof target.position === 'number'
+    ? target.position
+    : (typeof target.from === 'number' ? target.from : -1);
+
+  if (position < 0 || position > ed.state.doc.content.size) return INVALID_EDIT_TARGET;
+  return position;
+}
+
+function findEditContextBlock(ed: Editor, blockId: string): EditContextBlock | null {
+  if (!blockId) return null;
+  return buildEditBlockIndex(ed.state.doc).find((block) => block.id === blockId) ?? null;
+}
+
+function normalizedContextIncludesSuffix(text: string, suffix: string): boolean {
+  const normalizedText = normalizeSearchQuery(text);
+  const normalizedSuffix = normalizeSearchQuery(suffix);
+  return !normalizedSuffix || normalizedText.endsWith(normalizedSuffix);
+}
+
+function normalizedContextIncludesPrefix(text: string, prefix: string): boolean {
+  const normalizedText = normalizeSearchQuery(text);
+  const normalizedPrefix = normalizeSearchQuery(prefix);
+  return !normalizedPrefix || normalizedText.startsWith(normalizedPrefix);
+}
+
+function matchSatisfiesContext(ed: Editor, match: SearchMatch, target: ProposedEditTarget): boolean {
+  const prefix = target.prefix ?? '';
+  if (prefix) {
+    const before = ed.state.doc.textBetween(Math.max(0, match.from - 1200), match.from, '\n', '\n');
+    if (!normalizedContextIncludesSuffix(before, prefix)) return false;
+  }
+
+  const suffix = target.suffix ?? '';
+  if (suffix) {
+    const after = ed.state.doc.textBetween(match.to, Math.min(ed.state.doc.content.size, match.to + 1200), '\n', '\n');
+    if (!normalizedContextIncludesPrefix(after, suffix)) return false;
+  }
+
+  return true;
+}
+
+function resolveProposedEditMatches(
+  ed: Editor,
+  target: ProposedEditTarget,
+  replaceAll: boolean
+): SearchMatch[] | number {
+  if (!targetDocumentIsCurrent(ed, target)) return STALE_EDIT_TARGET;
+
+  const exactOriginal = target.exact_original ?? '';
+  if (!normalizeSearchQuery(exactOriginal)) return INVALID_EDIT_TARGET;
+
+  let scope: SearchMatch | null = null;
+  if (target.block_id) {
+    const block = findEditContextBlock(ed, target.block_id);
+    if (!block) return STALE_EDIT_TARGET;
+    scope = { from: block.from, to: block.to };
+  }
+
+  const maxMatches = replaceAll ? MAX_PENDING_FIND_REPLACE_MATCHES + 1 : Number.POSITIVE_INFINITY;
+  const matches = findTextInDoc(ed.state.doc, exactOriginal, maxMatches, scope)
+    .filter((match) => matchSatisfiesContext(ed, match, target));
+
+  if (matches.length === 0) return STALE_EDIT_TARGET;
+
+  if (replaceAll) {
+    return matches.length > MAX_PENDING_FIND_REPLACE_MATCHES ? TOO_MANY_MATCHES : matches;
+  }
+
+  const occurrenceIndex = target.occurrence_index;
+  if (typeof occurrenceIndex === 'number') {
+    if (!Number.isInteger(occurrenceIndex) || occurrenceIndex < 0 || occurrenceIndex >= matches.length) {
+      return AMBIGUOUS_EDIT_TARGET;
+    }
+    return [matches[occurrenceIndex]];
+  }
+
+  if (matches.length > 1) return AMBIGUOUS_EDIT_TARGET;
+  return matches;
+}
+
+interface SentenceRange {
+  from: number;
+  to: number;
+  text: string;
+}
+
+function trimSentenceRange(text: string, from: number, to: number): SentenceRange | null {
+  let start = from;
+  let end = to;
+
+  while (start < end && /\s/.test(text[start])) start += 1;
+  while (end > start && /\s/.test(text[end - 1])) end -= 1;
+
+  if (start >= end) return null;
+  return {
+    from: start,
+    to: end,
+    text: text.slice(start, end),
+  };
+}
+
+function sentenceRanges(text: string): SentenceRange[] {
+  const segmenterConstructor = (Intl as any).Segmenter;
+  if (segmenterConstructor) {
+    const segmenter = new segmenterConstructor(undefined, { granularity: 'sentence' });
+    const ranges: SentenceRange[] = [];
+    for (const segment of segmenter.segment(text)) {
+      const range = trimSentenceRange(text, segment.index, segment.index + segment.segment.length);
+      if (range) ranges.push(range);
+    }
+    if (ranges.length > 0) return ranges;
+  }
+
+  const ranges: SentenceRange[] = [];
+  const regex = /[^.!?]+[.!?]+["')\]]*|[^.!?]+$/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    const range = trimSentenceRange(text, match.index, match.index + match[0].length);
+    if (range) ranges.push(range);
+  }
+  return ranges.length > 0 ? ranges : (text.trim() ? [{ from: 0, to: text.length, text: text.trim() }] : []);
+}
+
+function containsMeaningfulFormattingMarkup(html: string): boolean {
+  const wrapperMarkupRemoved = html
+    .replace(/<\/?p\b[^>]*>/gi, '')
+    .replace(/<\/?div\b[^>]*>/gi, '')
+    .replace(/<br\s*\/?>/gi, '');
+
+  return /<[^>]+>/.test(wrapperMarkupRemoved);
+}
+
+function sentenceSplitPendingEdits(
+  ed: Editor,
+  groupId: string,
+  match: SearchMatch,
+  replaceHtml: string
+): PendingEdit[] {
+  if (containsMeaningfulFormattingMarkup(replaceHtml)) return [];
+
+  const originalText = ed.state.doc.textBetween(match.from, match.to, '\n', '\n');
+  const replacementText = plainTextFromHTML(replaceHtml);
+  const originalSentences = sentenceRanges(originalText);
+  const replacementSentences = sentenceRanges(replacementText);
+
+  if (originalSentences.length <= 1 || originalSentences.length !== replacementSentences.length) {
+    return [];
+  }
+
+  const changed: PendingEdit[] = [];
+  for (let index = 0; index < originalSentences.length; index += 1) {
+    const originalSentence = originalSentences[index];
+    const replacementSentence = replacementSentences[index];
+    if (normalizeSearchQuery(originalSentence.text) === normalizeSearchQuery(replacementSentence.text)) {
+      continue;
+    }
+
+    const scopedMatches = findTextInDoc(ed.state.doc, originalSentence.text, 2, match);
+    if (scopedMatches.length !== 1) {
+      return [];
+    }
+
+    changed.push(createPendingEdit(ed, {
+      id: `${groupId}_sentence_${index}`,
+      groupId,
+      kind: 'findReplace',
+      from: scopedMatches[0].from,
+      to: scopedMatches[0].to,
+      newHtml: escapeHTML(replacementSentence.text),
+    }));
+  }
+
+  return changed;
+}
+
+function queueProposedEdit(
+  ed: Editor,
+  id: string,
+  target: ProposedEditTarget,
+  replaceHtml: string,
+  replaceAll: boolean
+): number {
+  const resolved = resolveProposedEditMatches(ed, target, replaceAll);
+  if (typeof resolved === 'number') return resolved;
+  if (resolved.length === 0) return 0;
+
+  const edits: PendingEdit[] = [];
+  resolved.forEach((match, matchIndex) => {
+    const groupId = replaceAll ? `${id}_${matchIndex}` : id;
+    const splitEdits = replaceAll
+      ? []
+      : sentenceSplitPendingEdits(ed, groupId, match, replaceHtml);
+
+    if (splitEdits.length > 0) {
+      edits.push(...splitEdits);
+      return;
+    }
+
+    edits.push(createPendingEdit(ed, {
+      id: replaceAll ? `${id}_${matchIndex}` : id,
+      groupId,
+      kind: 'findReplace',
+      from: match.from,
+      to: match.to,
+      newHtml: replaceHtml,
+    }));
+  });
+
+  return queuePendingEdits(ed, edits, edits[0]?.id ?? null);
+}
+
 function focusPendingEdit(ed: Editor, id: string): boolean {
   const state = getPendingEditsState(ed.state);
   const edit = getPendingEditById(state, id);
@@ -718,13 +1026,37 @@ interface CommentData {
   text: string;
   selectedText: string;
   createdAt: number;
+  updatedAt: number;
   rangeStart: number;
   rangeEnd: number;
+  authorName: string;
+  source: string;
+  kind: string;
+  severity: string;
+  status: string;
+  suggestedReplacement: string;
+  agentRunId: string;
+}
+
+interface CommentInput {
+  commentId: string;
+  from: number;
+  to: number;
+  text?: string;
+  authorName?: string;
+  source?: string;
+  kind?: string;
+  severity?: string;
+  status?: string;
+  suggestedReplacement?: string;
+  agentRunId?: string;
+  allowOverlap?: boolean;
 }
 
 const CommentMark = Mark.create({
   name: 'comment',
   inclusive: false,
+  excludes: '',
   addAttributes() {
     return {
       commentId: {
@@ -739,6 +1071,45 @@ const CommentMark = Mark.create({
         parseHTML: (element) => element.getAttribute('data-comment-text') ?? '',
         renderHTML: (attributes) => ({ 'data-comment-text': attributes.commentText ?? '' }),
       },
+      commentAuthorName: {
+        default: '',
+        parseHTML: (element) => element.getAttribute('data-comment-author') ?? '',
+        renderHTML: (attributes) => (
+          attributes.commentAuthorName ? { 'data-comment-author': attributes.commentAuthorName } : {}
+        ),
+      },
+      commentSource: {
+        default: 'user',
+        parseHTML: (element) => element.getAttribute('data-comment-source') ?? 'user',
+        renderHTML: (attributes) => (
+          attributes.commentSource && attributes.commentSource !== 'user'
+            ? { 'data-comment-source': attributes.commentSource }
+            : {}
+        ),
+      },
+      commentKind: {
+        default: '',
+        parseHTML: (element) => element.getAttribute('data-comment-kind') ?? '',
+        renderHTML: (attributes) => (
+          attributes.commentKind ? { 'data-comment-kind': attributes.commentKind } : {}
+        ),
+      },
+      commentSeverity: {
+        default: '',
+        parseHTML: (element) => element.getAttribute('data-comment-severity') ?? '',
+        renderHTML: (attributes) => (
+          attributes.commentSeverity ? { 'data-comment-severity': attributes.commentSeverity } : {}
+        ),
+      },
+      commentStatus: {
+        default: 'open',
+        parseHTML: (element) => element.getAttribute('data-comment-status') ?? 'open',
+        renderHTML: (attributes) => (
+          attributes.commentStatus && attributes.commentStatus !== 'open'
+            ? { 'data-comment-status': attributes.commentStatus }
+            : {}
+        ),
+      },
       commentCreatedAt: {
         default: 0,
         parseHTML: (element) => parseCommentTimestamp(
@@ -747,6 +1118,35 @@ const CommentMark = Mark.create({
         renderHTML: (attributes) => (
           attributes.commentCreatedAt
             ? { 'data-comment-created-at': attributes.commentCreatedAt }
+            : {}
+        ),
+      },
+      commentUpdatedAt: {
+        default: 0,
+        parseHTML: (element) => parseCommentTimestamp(
+          element.getAttribute('data-comment-updated-at')
+        ),
+        renderHTML: (attributes) => (
+          attributes.commentUpdatedAt
+            ? { 'data-comment-updated-at': attributes.commentUpdatedAt }
+            : {}
+        ),
+      },
+      commentSuggestedReplacement: {
+        default: '',
+        parseHTML: (element) => element.getAttribute('data-comment-suggested-replacement') ?? '',
+        renderHTML: (attributes) => (
+          attributes.commentSuggestedReplacement
+            ? { 'data-comment-suggested-replacement': attributes.commentSuggestedReplacement }
+            : {}
+        ),
+      },
+      commentAgentRunId: {
+        default: '',
+        parseHTML: (element) => element.getAttribute('data-comment-agent-run-id') ?? '',
+        renderHTML: (attributes) => (
+          attributes.commentAgentRunId
+            ? { 'data-comment-agent-run-id': attributes.commentAgentRunId }
             : {}
         ),
       },
@@ -774,8 +1174,16 @@ interface CommentEntry {
   commentId: string;
   text: string;
   createdAt: number;
+  updatedAt: number;
   rangeStart: number;
   rangeEnd: number;
+  authorName: string;
+  source: string;
+  kind: string;
+  severity: string;
+  status: string;
+  suggestedReplacement: string;
+  agentRunId: string;
   fragments: CommentFragment[];
 }
 
@@ -783,6 +1191,14 @@ interface CommentMarkAttributes {
   commentId: string;
   commentText: string;
   commentCreatedAt: number;
+  commentUpdatedAt: number;
+  commentAuthorName: string;
+  commentSource: string;
+  commentKind: string;
+  commentSeverity: string;
+  commentStatus: string;
+  commentSuggestedReplacement: string;
+  commentAgentRunId: string;
 }
 
 function parseCommentTimestamp(value: unknown): number {
@@ -790,16 +1206,72 @@ function parseCommentTimestamp(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function commentString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function normalizeCommentStatus(value: unknown): string {
+  const status = commentString(value, 'open').trim().toLowerCase();
+  return status || 'open';
+}
+
+function normalizeCommentSource(value: unknown): string {
+  const source = commentString(value, 'user').trim().toLowerCase();
+  return source || 'user';
+}
+
+function buildCommentMarkAttributes(input: {
+  commentId: string;
+  text?: string;
+  authorName?: string;
+  source?: string;
+  kind?: string;
+  severity?: string;
+  status?: string;
+  suggestedReplacement?: string;
+  agentRunId?: string;
+  createdAt?: number;
+  updatedAt?: number;
+}): CommentMarkAttributes {
+  const now = Date.now();
+  const createdAt = parseCommentTimestamp(input.createdAt) || now;
+  const updatedAt = parseCommentTimestamp(input.updatedAt) || createdAt;
+
+  return {
+    commentId: input.commentId,
+    commentText: input.text ?? '',
+    commentCreatedAt: createdAt,
+    commentUpdatedAt: updatedAt,
+    commentAuthorName: input.authorName ?? '',
+    commentSource: normalizeCommentSource(input.source),
+    commentKind: input.kind ?? '',
+    commentSeverity: input.severity ?? '',
+    commentStatus: normalizeCommentStatus(input.status),
+    commentSuggestedReplacement: input.suggestedReplacement ?? '',
+    commentAgentRunId: input.agentRunId ?? '',
+  };
+}
+
 function getCommentMarkAttributes(mark: any): CommentMarkAttributes | null {
   if (mark.type.name !== 'comment') return null;
 
   const commentId = typeof mark.attrs.commentId === 'string' ? mark.attrs.commentId : '';
   if (!commentId) return null;
+  const commentCreatedAt = parseCommentTimestamp(mark.attrs.commentCreatedAt);
+  const commentUpdatedAt = parseCommentTimestamp(mark.attrs.commentUpdatedAt) || commentCreatedAt;
 
   return {
     commentId,
     commentText: typeof mark.attrs.commentText === 'string' ? mark.attrs.commentText : '',
-    commentCreatedAt: parseCommentTimestamp(mark.attrs.commentCreatedAt),
+    commentCreatedAt,
+    commentUpdatedAt,
+    commentAuthorName: commentString(mark.attrs.commentAuthorName),
+    commentSource: normalizeCommentSource(mark.attrs.commentSource),
+    commentKind: commentString(mark.attrs.commentKind),
+    commentSeverity: commentString(mark.attrs.commentSeverity),
+    commentStatus: normalizeCommentStatus(mark.attrs.commentStatus),
+    commentSuggestedReplacement: commentString(mark.attrs.commentSuggestedReplacement),
+    commentAgentRunId: commentString(mark.attrs.commentAgentRunId),
   };
 }
 
@@ -835,13 +1307,29 @@ function collectCommentEntries(doc: any): CommentEntry[] {
         commentId: attrs.commentId,
         text: attrs.commentText,
         createdAt: attrs.commentCreatedAt,
+        updatedAt: attrs.commentUpdatedAt,
         rangeStart: pos,
         rangeEnd: to,
+        authorName: attrs.commentAuthorName,
+        source: attrs.commentSource,
+        kind: attrs.commentKind,
+        severity: attrs.commentSeverity,
+        status: attrs.commentStatus,
+        suggestedReplacement: attrs.commentSuggestedReplacement,
+        agentRunId: attrs.commentAgentRunId,
         fragments: [],
       };
 
       existing.text = attrs.commentText;
       existing.createdAt = attrs.commentCreatedAt;
+      existing.updatedAt = attrs.commentUpdatedAt;
+      existing.authorName = attrs.commentAuthorName;
+      existing.source = attrs.commentSource;
+      existing.kind = attrs.commentKind;
+      existing.severity = attrs.commentSeverity;
+      existing.status = attrs.commentStatus;
+      existing.suggestedReplacement = attrs.commentSuggestedReplacement;
+      existing.agentRunId = attrs.commentAgentRunId;
       existing.rangeStart = Math.min(existing.rangeStart, pos);
       existing.rangeEnd = Math.max(existing.rangeEnd, to);
       appendCommentFragment(existing, pos, to, node.text);
@@ -862,8 +1350,16 @@ function collectComments(editor: Editor): CommentData[] {
     text: comment.text,
     selectedText: buildCommentExcerpt(comment.fragments),
     createdAt: comment.createdAt,
+    updatedAt: comment.updatedAt,
     rangeStart: comment.rangeStart,
     rangeEnd: comment.rangeEnd,
+    authorName: comment.authorName,
+    source: comment.source,
+    kind: comment.kind,
+    severity: comment.severity,
+    status: comment.status,
+    suggestedReplacement: comment.suggestedReplacement,
+    agentRunId: comment.agentRunId,
   }));
 }
 
@@ -916,15 +1412,47 @@ function flashCommentHighlights(commentId: string) {
   }, 800);
 }
 
+function attachCommentActivation(editor: Editor) {
+  const root = editor.view.dom as HTMLElement;
+  root.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+
+    const commentElement = target.closest('[data-comment-id]');
+    if (!(commentElement instanceof HTMLElement) || !root.contains(commentElement)) return;
+
+    const commentId = commentElement.dataset.commentId;
+    if (!commentId) return;
+
+    flashCommentHighlights(commentId);
+    sendToSwift('commentActivated', { commentId });
+  });
+}
+
 function commentsSignature(comments: CommentData[]): string {
   return comments
     .map((comment) => (
-      `${comment.commentId}\u001f${comment.text}\u001f${comment.selectedText}\u001f${comment.createdAt}\u001f${comment.rangeStart}\u001f${comment.rangeEnd}`
+      [
+        comment.commentId,
+        comment.text,
+        comment.selectedText,
+        comment.createdAt,
+        comment.updatedAt,
+        comment.rangeStart,
+        comment.rangeEnd,
+        comment.authorName,
+        comment.source,
+        comment.kind,
+        comment.severity,
+        comment.status,
+        comment.suggestedReplacement,
+        comment.agentRunId,
+      ].join('\u001f')
     ))
     .join('\u001e');
 }
 
-function emitCommentsChanged(editor: Editor, force = false) {
+function emitCommentsChanged(editor: Editor, force = false, documentChanged = false) {
   const comments = collectComments(editor);
   const signature = commentsSignature(comments);
 
@@ -933,7 +1461,7 @@ function emitCommentsChanged(editor: Editor, force = false) {
   }
 
   lastSentCommentsSignature = signature;
-  sendToSwift('commentsChanged', { comments });
+  sendToSwift('commentsChanged', { comments, documentChanged });
 }
 
 function addComment(editor: Editor, commentId: string): boolean {
@@ -955,9 +1483,11 @@ function addComment(editor: Editor, commentId: string): boolean {
       selection.from,
       selection.to,
       commentMark.create({
-        commentId,
-        commentText: '',
-        commentCreatedAt: Date.now(),
+        ...buildCommentMarkAttributes({
+          commentId,
+          source: 'user',
+          status: 'open',
+        }),
       })
     );
 
@@ -968,13 +1498,73 @@ function addComment(editor: Editor, commentId: string): boolean {
   };
   editor.commands.focus();
 
-  emitCommentsChanged(editor);
+  emitCommentsChanged(editor, false, true);
   return true;
+}
+
+function parsedCommentInput(json: string): CommentInput | null {
+  try {
+    const input = JSON.parse(json);
+    if (!input || typeof input !== 'object') return null;
+    return input as CommentInput;
+  } catch (_) {
+    return null;
+  }
+}
+
+function addCommentAtRange(editor: Editor, input: CommentInput): boolean {
+  const from = Number(input.from);
+  const to = Number(input.to);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) return false;
+
+  const commentId = commentString(input.commentId).trim();
+  if (!commentId) return false;
+
+  if (!input.allowOverlap) {
+    const overlappingCommentId = findOverlappingCommentId(editor, from, to);
+    if (overlappingCommentId) {
+      focusComment(editor, overlappingCommentId);
+      return false;
+    }
+  }
+
+  const commentMark = editor.state.schema.marks.comment;
+  if (!commentMark) return false;
+
+  try {
+    const selection = TextSelection.create(editor.state.doc, from, to);
+    const attrs = buildCommentMarkAttributes({
+      commentId,
+      text: input.text,
+      authorName: input.authorName,
+      source: input.source,
+      kind: input.kind,
+      severity: input.severity,
+      status: input.status,
+      suggestedReplacement: input.suggestedReplacement,
+      agentRunId: input.agentRunId,
+    });
+    const tr = editor.state.tr
+      .setSelection(selection)
+      .addMark(from, to, commentMark.create(attrs));
+
+    editor.view.dispatch(tr);
+    emitCommentsChanged(editor, false, true);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function addCommentAtRangeFromJSON(editor: Editor, json: string): boolean {
+  const input = parsedCommentInput(json);
+  return input ? addCommentAtRange(editor, input) : false;
 }
 
 function updateCommentText(editor: Editor, commentId: string, text: string) {
   const { tr } = editor.state;
   let changed = false;
+  const updatedAt = Date.now();
   editor.state.doc.descendants((node, pos) => {
     if (!node.isText) return;
     for (const mark of node.marks) {
@@ -982,6 +1572,7 @@ function updateCommentText(editor: Editor, commentId: string, text: string) {
         const newMark = mark.type.create({
           ...mark.attrs,
           commentText: text,
+          commentUpdatedAt: updatedAt,
         });
         tr.removeMark(pos, pos + node.nodeSize, mark);
         tr.addMark(pos, pos + node.nodeSize, newMark);
@@ -991,7 +1582,35 @@ function updateCommentText(editor: Editor, commentId: string, text: string) {
   });
   if (changed) {
     editor.view.dispatch(tr);
-    emitCommentsChanged(editor);
+    emitCommentsChanged(editor, false, true);
+  }
+}
+
+function setCommentStatus(editor: Editor, commentId: string, status: string) {
+  const { tr } = editor.state;
+  let changed = false;
+  const normalizedStatus = normalizeCommentStatus(status);
+  const updatedAt = Date.now();
+
+  editor.state.doc.descendants((node, pos) => {
+    if (!node.isText) return;
+    for (const mark of node.marks) {
+      if (mark.type.name === 'comment' && mark.attrs.commentId === commentId) {
+        const newMark = mark.type.create({
+          ...mark.attrs,
+          commentStatus: normalizedStatus,
+          commentUpdatedAt: updatedAt,
+        });
+        tr.removeMark(pos, pos + node.nodeSize, mark);
+        tr.addMark(pos, pos + node.nodeSize, newMark);
+        changed = true;
+      }
+    }
+  });
+
+  if (changed) {
+    editor.view.dispatch(tr);
+    emitCommentsChanged(editor, false, true);
   }
 }
 
@@ -1009,8 +1628,26 @@ function removeComment(editor: Editor, commentId: string) {
   });
   if (changed) {
     editor.view.dispatch(tr);
-    emitCommentsChanged(editor);
+    emitCommentsChanged(editor, false, true);
   }
+}
+
+function pendingReplaceComment(editor: Editor, commentId: string, editId: string, html: string): number {
+  if (!html.trim()) return 0;
+
+  const comment = findCommentEntry(editor, commentId);
+  if (!comment) return 0;
+
+  const edit = createPendingEdit(editor, {
+    id: editId,
+    groupId: editId,
+    kind: 'selection',
+    from: comment.rangeStart,
+    to: comment.rangeEnd,
+    newHtml: html,
+  });
+
+  return queuePendingEdits(editor, [edit], edit.id);
 }
 
 function focusComment(editor: Editor, commentId: string) {
@@ -1041,10 +1678,8 @@ const PendingEditHighlight = Extension.create({
         return edit ? rejectPendingEdit(this.editor, edit.id) : false;
       },
       'Escape': () => {
-        return rejectAllPendingEdits(this.editor);
-      },
-      'Mod-Shift-Enter': () => {
-        return acceptAllPendingEdits(this.editor);
+        const edit = getActivePendingEdit(getPendingEditsState(this.editor.state));
+        return edit ? rejectPendingEdit(this.editor, edit.id) : false;
       },
     };
   },
@@ -1321,7 +1956,12 @@ function buildDocumentSearchIndex(doc: any): SearchIndex {
   };
 }
 
-function findTextInDoc(doc: any, query: string, maxMatches = Number.POSITIVE_INFINITY): SearchMatch[] {
+function findTextInDoc(
+  doc: any,
+  query: string,
+  maxMatches = Number.POSITIVE_INFINITY,
+  scope: SearchMatch | null = null
+): SearchMatch[] {
   const normalizedQuery = normalizeSearchQuery(query);
   if (!normalizedQuery) return [];
   const matches: SearchMatch[] = [];
@@ -1333,8 +1973,11 @@ function findTextInDoc(doc: any, query: string, maxMatches = Number.POSITIVE_INF
     const start = searchIndex.ranges[idx];
     const end = searchIndex.ranges[idx + normalizedQuery.length - 1];
     if (start && end) {
-      matches.push({ from: start.from, to: end.to });
-      if (matches.length >= maxMatches) break;
+      const match = { from: start.from, to: end.to };
+      if (!scope || (match.from >= scope.from && match.to <= scope.to)) {
+        matches.push(match);
+        if (matches.length >= maxMatches) break;
+      }
     }
     idx = searchIndex.text.indexOf(normalizedQuery, idx + advanceBy);
   }
@@ -1546,6 +2189,87 @@ function serializeDocumentPlainText(editor: Editor): string {
   return getDocumentTextSnapshot(editor).plainText;
 }
 
+function hashString(value: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function truncateForEditContext(text: string): string {
+  if (text.length <= MAX_EDIT_CONTEXT_BLOCK_TEXT) return text;
+  const headCount = Math.floor(MAX_EDIT_CONTEXT_BLOCK_TEXT / 2);
+  const tailCount = MAX_EDIT_CONTEXT_BLOCK_TEXT - headCount;
+  return `${text.slice(0, headCount)}\n[...]\n${text.slice(text.length - tailCount)}`;
+}
+
+function buildEditBlockIndex(doc: any): EditContextBlock[] {
+  const blocks: EditContextBlock[] = [];
+
+  const visit = (node: any, pos: number, path: number[], isRoot: boolean) => {
+    if (blocks.length >= MAX_EDIT_CONTEXT_BLOCKS) return;
+
+    if (node.isTextblock) {
+      const text = node.textBetween(0, node.content.size, '\n', '\n');
+      const pathString = path.join('.');
+      const textHash = hashString(text);
+      blocks.push({
+        id: `block_${pathString || 'root'}_${textHash}`,
+        path: pathString,
+        type: node.type.name,
+        from: pos + 1,
+        to: pos + node.nodeSize - 1,
+        text: truncateForEditContext(text),
+        textHash,
+      });
+    }
+
+    node.forEach((child: any, offset: number, index: number) => {
+      if (blocks.length >= MAX_EDIT_CONTEXT_BLOCKS) return;
+      const childPos = (isRoot ? 0 : pos + 1) + offset;
+      visit(child, childPos, [...path, index], false);
+    });
+  };
+
+  visit(doc, 0, [], true);
+  return blocks;
+}
+
+function textNearPosition(doc: any, pos: number): string {
+  const from = Math.max(0, pos - NEARBY_EDIT_CONTEXT_CHARS);
+  const to = Math.min(doc.content.size, pos + NEARBY_EDIT_CONTEXT_CHARS);
+  return doc.textBetween(from, to, '\n', '\n');
+}
+
+function buildEditContextSnapshot(editor: Editor): EditContextSnapshot {
+  const plainText = serializeDocumentPlainText(editor);
+  const activeSelection = effectiveTextSelection(editor);
+  const selection = activeSelection
+    ? {
+      from: activeSelection.from,
+      to: activeSelection.to,
+      text: activeSelection.text,
+      html: serializeClipboardDataForRange(editor, activeSelection.from, activeSelection.to).html,
+      words: activeSelection.words,
+      characters: activeSelection.characters,
+    }
+    : null;
+
+  const cursorPosition = selection?.to ?? editor.state.selection.from;
+
+  return {
+    revision: documentRevision,
+    documentHash: hashString(plainText),
+    plainText,
+    cursorPosition,
+    nearbyText: textNearPosition(editor.state.doc, cursorPosition),
+    selection,
+    blocks: buildEditBlockIndex(editor.state.doc),
+  };
+}
+
 function serializeDocumentHTML(editor: Editor): string {
   if (cachedSerializedHTMLRevision === documentRevision) {
     return cachedSerializedHTML;
@@ -1558,7 +2282,11 @@ function serializeDocumentHTML(editor: Editor): string {
   return cachedSerializedHTML;
 }
 
-function serializeSelectionClipboardData(editor: Editor): SelectionClipboardData {
+function serializeClipboardDataForRange(
+  editor: Editor,
+  from: number,
+  to: number
+): SelectionClipboardData {
   const emptySelection: SelectionClipboardData = {
     html: '',
     text: '',
@@ -1566,8 +2294,14 @@ function serializeSelectionClipboardData(editor: Editor): SelectionClipboardData
     singleImageSource: null,
   };
 
-  const { selection } = editor.state;
-  if (selection.empty) {
+  if (from >= to) {
+    return emptySelection;
+  }
+
+  let selection: TextSelection;
+  try {
+    selection = TextSelection.create(editor.state.doc, from, to);
+  } catch (_) {
     return emptySelection;
   }
 
@@ -1594,6 +2328,11 @@ function serializeSelectionClipboardData(editor: Editor): SelectionClipboardData
     imageSources,
     singleImageSource,
   };
+}
+
+function serializeSelectionClipboardData(editor: Editor): SelectionClipboardData {
+  const { from, to } = editor.state.selection;
+  return serializeClipboardDataForRange(editor, from, to);
 }
 
 function autoResizeFootnoteEditor(textarea: HTMLTextAreaElement) {
@@ -2823,7 +3562,7 @@ const editor = new Editor({
     scheduleWordCountUpdate(editor);
     scheduleContentUpdate(editor);
     scheduleFootnotesPanelRender(editor);
-    emitCommentsChanged(editor);
+    emitCommentsChanged(editor, false, true);
   },
   onSelectionUpdate({ editor }) {
     updatePreservedTextSelection(editor);
@@ -3086,9 +3825,12 @@ registerSwiftCallbacks({
     normalizeDocumentSmartQuotes(editor);
   },
   findAndReplaceText(find: string, replaceHtml: string, replaceAllOccurrences: boolean): number {
-    const maxMatches = replaceAllOccurrences ? MAX_PENDING_FIND_REPLACE_MATCHES + 1 : 1;
+    const maxMatches = replaceAllOccurrences ? MAX_PENDING_FIND_REPLACE_MATCHES + 1 : 2;
     const matches = findTextInDoc(editor.state.doc, find, maxMatches);
     if (matches.length === 0) return 0;
+    if (!replaceAllOccurrences && matches.length > 1) {
+      return AMBIGUOUS_EDIT_TARGET;
+    }
     if (replaceAllOccurrences && matches.length > MAX_PENDING_FIND_REPLACE_MATCHES) {
       return TOO_MANY_MATCHES;
     }
@@ -3110,8 +3852,11 @@ registerSwiftCallbacks({
   },
 
   // --- Pending Edits API (Cursor-like diff review) ---
-  pendingReplaceSelection(id: string, newHtml: string): number {
-    const { from, to } = editor.state.selection;
+  pendingReplaceSelection(id: string, newHtml: string, target?: SelectionEditTarget): number {
+    const targetedRange = rangeFromSelectionTarget(editor, target ?? null);
+    if (typeof targetedRange === 'number') return targetedRange;
+
+    const { from, to } = targetedRange ?? editor.state.selection;
     if (from === to) return 0;
     return queuePendingEdits(editor, [
       createPendingEdit(editor, {
@@ -3124,8 +3869,13 @@ registerSwiftCallbacks({
       }),
     ], id);
   },
-  pendingInsertAtCursor(id: string, newHtml: string): number {
-    const { from } = editor.state.selection;
+  pendingInsertAtCursor(id: string, newHtml: string, target?: SelectionEditTarget): number {
+    const targetedPosition = positionFromInsertionTarget(editor, target ?? null);
+    if (targetedPosition === STALE_EDIT_TARGET || targetedPosition === INVALID_EDIT_TARGET) {
+      return targetedPosition;
+    }
+
+    const from = targetedPosition ?? editor.state.selection.from;
     return queuePendingEdits(editor, [
       createPendingEdit(editor, {
         id,
@@ -3138,13 +3888,22 @@ registerSwiftCallbacks({
     ], id);
   },
   pendingFindAndReplace(id: string, find: string, replaceHtml: string, replaceAll: boolean): number {
-    const maxMatches = replaceAll ? MAX_PENDING_FIND_REPLACE_MATCHES + 1 : 1;
+    const maxMatches = replaceAll ? MAX_PENDING_FIND_REPLACE_MATCHES + 1 : 2;
     const matches = findTextInDoc(editor.state.doc, find, maxMatches);
     if (matches.length === 0) return 0;
+    if (!replaceAll && matches.length > 1) {
+      return AMBIGUOUS_EDIT_TARGET;
+    }
     if (replaceAll && matches.length > MAX_PENDING_FIND_REPLACE_MATCHES) {
       return TOO_MANY_MATCHES;
     }
     const toAdd = replaceAll ? matches : [matches[0]];
+    if (!replaceAll) {
+      const splitEdits = sentenceSplitPendingEdits(editor, id, matches[0], replaceHtml);
+      if (splitEdits.length > 0) {
+        return queuePendingEdits(editor, splitEdits, splitEdits[0]?.id ?? null);
+      }
+    }
     const edits = toAdd.map((match, i) => createPendingEdit(editor, {
       id: replaceAll ? `${id}_${i}` : id,
       groupId: id,
@@ -3155,6 +3914,14 @@ registerSwiftCallbacks({
     }));
     return queuePendingEdits(editor, edits, edits[0]?.id ?? null);
   },
+  pendingProposeEdit(
+    id: string,
+    target: ProposedEditTarget,
+    replaceHtml: string,
+    replaceAll: boolean
+  ): number {
+    return queueProposedEdit(editor, id, target ?? {}, replaceHtml, replaceAll);
+  },
   acceptAllPendingEdits() { acceptAllPendingEdits(editor); },
   rejectAllPendingEdits() { rejectAllPendingEdits(editor); },
   acceptPendingEdit(id: string): boolean { return acceptPendingEdit(editor, id); },
@@ -3164,14 +3931,21 @@ registerSwiftCallbacks({
   focusPreviousPendingEdit(): boolean { return focusRelativePendingEdit(editor, -1); },
   getPendingEdits(): string { return pendingEditsSummaryJSON(getPendingEditsState(editor.state)); },
   getPendingEditCount(): number { return getPendingEditsState(editor.state).edits.length; },
+  getEditContextSnapshot(): string { return JSON.stringify(buildEditContextSnapshot(editor)); },
   addComment(commentId: string): boolean { return addComment(editor, commentId); },
+  addCommentAtRange(commentJSON: string): boolean { return addCommentAtRangeFromJSON(editor, commentJSON); },
   updateCommentText(commentId: string, text: string) { updateCommentText(editor, commentId, text); },
+  setCommentStatus(commentId: string, status: string) { setCommentStatus(editor, commentId, status); },
   removeComment(commentId: string) { removeComment(editor, commentId); },
   focusComment(commentId: string) { focusComment(editor, commentId); },
+  pendingReplaceComment(commentId: string, editId: string, html: string): number {
+    return pendingReplaceComment(editor, commentId, editId, html);
+  },
   getComments(): string { return JSON.stringify(collectComments(editor)); },
 });
 
 attachLinkHoverPreview(editor);
+attachCommentActivation(editor);
 attachSelectionChangeFallback(editor);
 attachSmartQuotesNormalizationFallback(editor);
 renderFootnotesPanel(editor);

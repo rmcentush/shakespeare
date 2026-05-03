@@ -12,14 +12,22 @@ final class EditorViewModel {
     var pendingEdits: [PendingEdit] = []
     var pendingEditCount = 0
     var pendingEditCurrentIndex = -1
+    var activePendingEditID: String?
     var comments: [BridgePayload.CommentData] = []
+    var activeCommentID: String?
+    var ambientReviewEnabled = false
+    var isAmbientReviewing = false
+    var ambientReviewStatusText = ""
     var persistenceStatusText = ""
     var persistenceStatusIsError = false
     private var autoSaveTimer: Timer?
     private var recoveryDraftTimer: Timer?
+    private var ambientReviewTimer: Timer?
+    private var ambientReviewTask: Task<Void, Never>?
     private var pendingSnapshot: DocumentFileStore.FileSnapshot?
     private var lastAutoSaveCheckpointByDocumentID: [String: Date] = [:]
     private let autoSaveCheckpointInterval: TimeInterval = 60
+    @ObservationIgnored private let ambientReviewService = ClaudeAPIService()
     /// Incremented each time the editor signals ready (supports detecting web process restarts).
     var editorReadyCount = 0
 
@@ -113,6 +121,72 @@ final class EditorViewModel {
         }
     }
 
+    struct AnchoredCommentRequest {
+        var id: String = UUID().uuidString
+        var rangeStart: Int
+        var rangeEnd: Int
+        var text: String
+        var authorName: String = ""
+        var source: String = "user"
+        var kind: String = ""
+        var severity: String = ""
+        var status: String = "open"
+        var suggestedReplacement: String = ""
+        var agentRunID: String = ""
+        var allowOverlap: Bool = false
+    }
+
+    struct EditContextSnapshot: Decodable, Equatable {
+        struct Selection: Decodable, Equatable {
+            let from: Int
+            let to: Int
+            let text: String
+            let html: String
+            let words: Int
+            let characters: Int
+        }
+
+        struct Block: Decodable, Equatable {
+            let id: String
+            let path: String
+            let type: String
+            let from: Int
+            let to: Int
+            let text: String
+            let textHash: String
+        }
+
+        let revision: Int
+        let documentHash: String
+        let plainText: String
+        let cursorPosition: Int
+        let nearbyText: String
+        let selection: Selection?
+        let blocks: [Block]
+    }
+
+    private struct AmbientReviewSuggestion: Decodable {
+        let blockID: String
+        let exactOriginal: String
+        let comment: String
+        let kind: String?
+        let severity: String?
+        let suggestedReplacement: String?
+
+        enum CodingKeys: String, CodingKey {
+            case blockID = "block_id"
+            case exactOriginal = "exact_original"
+            case comment
+            case kind
+            case severity
+            case suggestedReplacement = "suggested_replacement"
+        }
+    }
+
+    private struct AmbientReviewResponse: Decodable {
+        let comments: [AmbientReviewSuggestion]
+    }
+
     // Called by bridge when JS sends a message
     func handleBridgeMessage(type: String, payload: BridgePayload) {
         switch payload {
@@ -160,9 +234,10 @@ final class EditorViewModel {
         case .pendingEditUpdate(let update):
             pendingEditCount = update.count
             pendingEditCurrentIndex = update.currentIndex
+            activePendingEditID = update.activeEditID
             pendingEdits = update.edits.map(PendingEdit.init)
 
-        case .commentsChanged(let newComments):
+        case .commentsChanged(let newComments, let documentChanged):
             comments = newComments.sorted {
                 if $0.rangeStart != $1.rangeStart {
                     return $0.rangeStart < $1.rangeStart
@@ -172,6 +247,21 @@ final class EditorViewModel {
                 }
                 return $0.id < $1.id
             }
+            if let activeCommentID, !comments.contains(where: { $0.id == activeCommentID }) {
+                self.activeCommentID = nil
+            }
+            if documentChanged {
+                NotificationCenter.default.post(name: .editorDocumentMutated, object: self)
+            }
+
+        case .commentActivated(let commentId):
+            guard !commentId.isEmpty else { break }
+            activeCommentID = commentId
+            NotificationCenter.default.post(
+                name: .editorCommentActivated,
+                object: self,
+                userInfo: ["commentId": commentId]
+            )
 
         case .unknown:
             break
@@ -208,25 +298,23 @@ final class EditorViewModel {
     }
 
     private func loadHTMLContent(_ html: String) {
-        let escaped = escapeForJS(html)
-        evaluateJS("window.editorAPI?.loadContent('\(escaped)')")
+        callEditorAPI("loadContent", arguments: [html])
     }
 
     private func loadJSONContent(_ json: String) {
-        let escaped = escapeForJS(json)
-        evaluateJS("window.editorAPI?.loadJSONContent('\(escaped)')")
+        callEditorAPI("loadJSONContent", arguments: [json])
     }
 
     // MARK: - Snapshot Capture
 
     func getContent(completion: @escaping (String?) -> Void) {
-        evaluateJS("window.editorAPI?.getContent()") { result in
+        callEditorAPI("getContent") { result in
             completion(result as? String)
         }
     }
 
     func getDocumentSnapshot(completion: @escaping (DocumentFileStore.FileSnapshot?) -> Void) {
-        evaluateJS("window.editorAPI?.getDocumentSnapshot()") { [weak self] result in
+        callEditorAPI("getDocumentSnapshot") { [weak self] result in
             guard let jsonString = result as? String else {
                 completion(nil)
                 return
@@ -237,21 +325,35 @@ final class EditorViewModel {
 
     func applyFormat(_ command: String, value: String? = nil) {
         if let value = value {
-            evaluateJS("window.editorAPI?.applyFormat('\(command)', '\(value)')")
+            callEditorAPI("applyFormat", arguments: [command, value])
         } else {
-            evaluateJS("window.editorAPI?.applyFormat('\(command)')")
+            callEditorAPI("applyFormat", arguments: [command])
         }
     }
 
     func getPlainText(completion: @escaping (String) -> Void) {
-        evaluateJS("window.editorAPI?.getPlainText()") { result in
+        callEditorAPI("getPlainText") { result in
             completion(result as? String ?? "")
         }
     }
 
     func getSelectedText(completion: @escaping (String) -> Void) {
-        evaluateJS("window.editorAPI?.getSelectedText()") { result in
+        callEditorAPI("getSelectedText") { result in
             completion(result as? String ?? "")
+        }
+    }
+
+    func getEditContextSnapshot(completion: @escaping (EditContextSnapshot?) -> Void) {
+        callEditorAPI("getEditContextSnapshot") { result in
+            guard let jsonString = result as? String,
+                  let data = jsonString.data(using: .utf8),
+                  let snapshot = try? JSONDecoder().decode(EditContextSnapshot.self, from: data)
+            else {
+                completion(nil)
+                return
+            }
+
+            completion(snapshot)
         }
     }
 
@@ -309,109 +411,442 @@ final class EditorViewModel {
     }
 
     func focusEditor() {
-        evaluateJS("window.editorAPI?.focus()")
+        callEditorAPI("focus")
     }
 
     func setThemeCSS(_ css: String) {
-        let escaped = escapeForJS(css)
-        evaluateJS("window.editorAPI?.setThemeCSS('\(escaped)')")
+        callEditorAPI("setThemeCSS", arguments: [css])
     }
 
     // MARK: - Document Editing (for Claude tool use)
 
     func replaceSelectionHTML(_ html: String) {
-        let escaped = escapeForJS(html)
-        evaluateJS("window.editorAPI?.replaceSelectionHTML('\(escaped)')")
+        callEditorAPI("replaceSelectionHTML", arguments: [html])
     }
 
     func insertHTMLAtCursor(_ html: String) {
-        let escaped = escapeForJS(html)
-        evaluateJS("window.editorAPI?.insertHTMLAtCursor('\(escaped)')")
+        callEditorAPI("insertHTMLAtCursor", arguments: [html])
     }
 
     func deleteSelection() {
-        evaluateJS("window.editorAPI?.deleteSelection()")
+        callEditorAPI("deleteSelection")
     }
 
     func findAndReplaceText(find: String, replaceHTML: String, replaceAll: Bool, completion: @escaping (Int) -> Void) {
-        let escapedFind = escapeForJS(find)
-        let escapedReplace = escapeForJS(replaceHTML)
-        evaluateJS("window.editorAPI?.findAndReplaceText('\(escapedFind)', '\(escapedReplace)', \(replaceAll))") { result in
+        callEditorAPI("findAndReplaceText", arguments: [find, replaceHTML, replaceAll]) { result in
             completion(result as? Int ?? 0)
         }
     }
 
     // MARK: - Pending Edits (Cursor-like diff review)
 
-    func pendingReplaceSelection(id: String, html: String, completion: @escaping (Int) -> Void) {
-        let escaped = escapeForJS(html)
-        evaluateJS("window.editorAPI?.pendingReplaceSelection('\(id)', '\(escaped)')") { result in
+    func pendingReplaceSelection(
+        id: String,
+        html: String,
+        target: [String: Any]? = nil,
+        completion: @escaping (Int) -> Void
+    ) {
+        var arguments: [Any] = [id, html]
+        if let target {
+            arguments.append(target)
+        }
+        callEditorAPI("pendingReplaceSelection", arguments: arguments) { result in
             completion(result as? Int ?? 0)
         }
     }
 
-    func pendingInsertAtCursor(id: String, html: String, completion: @escaping (Int) -> Void) {
-        let escaped = escapeForJS(html)
-        evaluateJS("window.editorAPI?.pendingInsertAtCursor('\(id)', '\(escaped)')") { result in
+    func pendingInsertAtCursor(
+        id: String,
+        html: String,
+        target: [String: Any]? = nil,
+        completion: @escaping (Int) -> Void
+    ) {
+        var arguments: [Any] = [id, html]
+        if let target {
+            arguments.append(target)
+        }
+        callEditorAPI("pendingInsertAtCursor", arguments: arguments) { result in
             completion(result as? Int ?? 0)
         }
     }
 
     func pendingFindAndReplace(id: String, find: String, replaceHTML: String, replaceAll: Bool, completion: @escaping (Int) -> Void) {
-        let escapedFind = escapeForJS(find)
-        let escapedReplace = escapeForJS(replaceHTML)
-        evaluateJS("window.editorAPI?.pendingFindAndReplace('\(id)', '\(escapedFind)', '\(escapedReplace)', \(replaceAll))") { result in
+        callEditorAPI("pendingFindAndReplace", arguments: [id, find, replaceHTML, replaceAll]) { result in
+            completion(result as? Int ?? 0)
+        }
+    }
+
+    func pendingProposeEdit(
+        id: String,
+        target: [String: Any],
+        replacementHTML: String,
+        replaceAll: Bool,
+        completion: @escaping (Int) -> Void
+    ) {
+        callEditorAPI("pendingProposeEdit", arguments: [id, target, replacementHTML, replaceAll]) { result in
             completion(result as? Int ?? 0)
         }
     }
 
     func acceptAllPendingEdits() {
-        evaluateJS("window.editorAPI?.acceptAllPendingEdits()")
+        callEditorAPI("acceptAllPendingEdits")
     }
 
     func rejectAllPendingEdits() {
-        evaluateJS("window.editorAPI?.rejectAllPendingEdits()")
+        callEditorAPI("rejectAllPendingEdits")
     }
 
     func focusPendingEdit(_ id: String) {
-        let escaped = escapeForJS(id)
-        evaluateJS("window.editorAPI?.focusPendingEdit('\(escaped)')")
+        callEditorAPI("focusPendingEdit", arguments: [id])
     }
 
     func acceptPendingEdit(_ id: String) {
-        let escaped = escapeForJS(id)
-        evaluateJS("window.editorAPI?.acceptPendingEdit('\(escaped)')")
+        callEditorAPI("acceptPendingEdit", arguments: [id])
     }
 
     func rejectPendingEdit(_ id: String) {
-        let escaped = escapeForJS(id)
-        evaluateJS("window.editorAPI?.rejectPendingEdit('\(escaped)')")
+        callEditorAPI("rejectPendingEdit", arguments: [id])
     }
 
     // MARK: - Comments
 
     func addComment() {
         let id = UUID().uuidString
-        evaluateJS("window.editorAPI?.addComment('\(id)')")
+        callEditorAPI("addComment", arguments: [id])
+    }
+
+    func addAnchoredComment(_ comment: AnchoredCommentRequest, completion: ((Bool) -> Void)? = nil) {
+        let payload: [String: Any] = [
+            "commentId": comment.id,
+            "from": comment.rangeStart,
+            "to": comment.rangeEnd,
+            "text": comment.text,
+            "authorName": comment.authorName,
+            "source": comment.source,
+            "kind": comment.kind,
+            "severity": comment.severity,
+            "status": comment.status,
+            "suggestedReplacement": comment.suggestedReplacement,
+            "agentRunId": comment.agentRunID,
+            "allowOverlap": comment.allowOverlap,
+        ]
+
+        guard let json = jsonString(for: payload) else {
+            completion?(false)
+            return
+        }
+
+        callEditorAPI("addCommentAtRange", arguments: [json]) { result in
+            completion?(result as? Bool ?? false)
+        }
+    }
+
+    func addAgentComment(
+        rangeStart: Int,
+        rangeEnd: Int,
+        text: String,
+        kind: String = "suggestion",
+        severity: String = "medium",
+        suggestedReplacement: String = "",
+        agentRunID: String = "",
+        completion: ((Bool) -> Void)? = nil
+    ) {
+        addAnchoredComment(
+            AnchoredCommentRequest(
+                rangeStart: rangeStart,
+                rangeEnd: rangeEnd,
+                text: text,
+                authorName: "Ambient Editor",
+                source: "agent",
+                kind: kind,
+                severity: severity,
+                suggestedReplacement: suggestedReplacement,
+                agentRunID: agentRunID,
+                allowOverlap: true
+            ),
+            completion: completion
+        )
     }
 
     func updateCommentText(_ commentId: String, text: String) {
-        let escapedId = escapeForJS(commentId)
-        let escapedText = escapeForJS(text)
-        evaluateJS("window.editorAPI?.updateCommentText('\(escapedId)', '\(escapedText)')")
+        callEditorAPI("updateCommentText", arguments: [commentId, text])
+    }
+
+    func setCommentStatus(_ commentId: String, status: String) {
+        callEditorAPI("setCommentStatus", arguments: [commentId, status])
     }
 
     func removeComment(_ commentId: String) {
-        let escaped = escapeForJS(commentId)
-        evaluateJS("window.editorAPI?.removeComment('\(escaped)')")
+        callEditorAPI("removeComment", arguments: [commentId])
     }
 
     func focusComment(_ commentId: String) {
-        let escaped = escapeForJS(commentId)
-        evaluateJS("window.editorAPI?.focusComment('\(escaped)')")
+        activeCommentID = commentId
+        callEditorAPI("focusComment", arguments: [commentId])
+    }
+
+    func pendingReplaceComment(_ comment: BridgePayload.CommentData) {
+        let replacement = comment.suggestedReplacement.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !replacement.isEmpty else { return }
+
+        callEditorAPI(
+            "pendingReplaceComment",
+            arguments: [comment.id, "comment_edit_\(UUID().uuidString)", replacement]
+        )
+    }
+
+    // MARK: - Ambient Review
+
+    func setAmbientReviewEnabled(_ enabled: Bool) {
+        ambientReviewEnabled = enabled
+        ambientReviewTimer?.invalidate()
+        ambientReviewTimer = nil
+
+        if enabled {
+            ambientReviewStatusText = "Ambient review will run after you pause."
+            scheduleAmbientReview()
+        } else {
+            ambientReviewTask?.cancel()
+            ambientReviewTask = nil
+            isAmbientReviewing = false
+            ambientReviewStatusText = ""
+        }
+    }
+
+    func scheduleAmbientReview() {
+        ambientReviewTimer?.invalidate()
+        guard ambientReviewEnabled, !isAmbientReviewing else { return }
+
+        ambientReviewTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.startAmbientReview()
+            }
+        }
+    }
+
+    private func startAmbientReview() {
+        guard ambientReviewEnabled, !isAmbientReviewing else { return }
+
+        ambientReviewTask?.cancel()
+        ambientReviewTask = Task { [weak self] in
+            await self?.runAmbientReview()
+        }
+    }
+
+    private func runAmbientReview() async {
+        guard ambientReviewEnabled else { return }
+        guard let context = await currentEditContextSnapshot(), !context.blocks.isEmpty else { return }
+
+        isAmbientReviewing = true
+        ambientReviewStatusText = "Reviewing..."
+        defer {
+            isAmbientReviewing = false
+            ambientReviewTask = nil
+        }
+
+        do {
+            let responseText = try await collectAmbientReviewResponse(context: context)
+            let suggestions = parseAmbientReviewSuggestions(from: responseText)
+            let addedCount = await addAmbientReviewComments(suggestions, context: context)
+
+            if addedCount > 0 {
+                ambientReviewStatusText = "Added \(addedCount) suggestion\(addedCount == 1 ? "" : "s")."
+            } else {
+                ambientReviewStatusText = "No new suggestions."
+            }
+        } catch is CancellationError {
+            ambientReviewStatusText = ""
+        } catch {
+            ambientReviewStatusText = "Ambient review failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func currentEditContextSnapshot() async -> EditContextSnapshot? {
+        await withCheckedContinuation { continuation in
+            getEditContextSnapshot { snapshot in
+                continuation.resume(returning: snapshot)
+            }
+        }
+    }
+
+    private func collectAmbientReviewResponse(context: EditContextSnapshot) async throws -> String {
+        let systemPrompt: [[String: Any]] = [
+            [
+                "type": "text",
+                "text": """
+                You are an ambient editor inside a word processor. The user has explicitly enabled background review.
+                Return only compact JSON. Do not use Markdown.
+                Find at most 4 high-signal opportunities to improve clarity, structure, accuracy, tone, or concision.
+                Only comment on text you can anchor to a block in the supplied edit context.
+                Schema:
+                {"comments":[{"block_id":"...","exact_original":"exact current text span","comment":"short rationale","kind":"clarity|structure|tone|concision|grammar|accuracy","severity":"low|medium|high","suggested_replacement":"optional replacement HTML or plain text"}]}
+                If there is nothing worth saying, return {"comments":[]}.
+                """
+            ]
+        ]
+
+        let messages: [[String: Any]] = [
+            [
+                "role": "user",
+                "content": ambientReviewPrompt(context)
+            ]
+        ]
+
+        var text = ""
+        for try await chunk in ambientReviewService.streamMessage(
+            messages: messages,
+            systemPrompt: systemPrompt,
+            tools: nil,
+            cacheControl: nil
+        ) {
+            if case .text(let delta) = chunk {
+                text += delta
+            }
+        }
+        return text
+    }
+
+    private func ambientReviewPrompt(_ context: EditContextSnapshot) -> String {
+        let blockLines = context.blocks.map { block in
+            """
+            <block id="\(xmlEscaped(block.id))" type="\(xmlEscaped(block.type))" from="\(block.from)" to="\(block.to)" text_hash="\(xmlEscaped(block.textHash))">
+            \(xmlEscaped(block.text))
+            </block>
+            """
+        }.joined(separator: "\n")
+
+        return """
+        Review the current document using these anchorable blocks. Return JSON only.
+        <edit_context revision="\(context.revision)" document_hash="\(xmlEscaped(context.documentHash))">
+        <block_index>
+        \(blockLines)
+        </block_index>
+        </edit_context>
+        """
+    }
+
+    private func parseAmbientReviewSuggestions(from responseText: String) -> [AmbientReviewSuggestion] {
+        let trimmed = responseText
+            .replacingOccurrences(of: "```json", with: "")
+            .replacingOccurrences(of: "```", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let candidateStrings = [
+            jsonSubstring(in: trimmed, opening: "{", closing: "}"),
+            jsonSubstring(in: trimmed, opening: "[", closing: "]"),
+            trimmed,
+        ].compactMap { $0 }
+
+        for candidate in candidateStrings {
+            guard let data = candidate.data(using: .utf8) else { continue }
+            if let response = try? JSONDecoder().decode(AmbientReviewResponse.self, from: data) {
+                return response.comments
+            }
+            if let comments = try? JSONDecoder().decode([AmbientReviewSuggestion].self, from: data) {
+                return comments
+            }
+        }
+
+        return []
+    }
+
+    private func addAmbientReviewComments(
+        _ suggestions: [AmbientReviewSuggestion],
+        context: EditContextSnapshot
+    ) async -> Int {
+        var addedCount = 0
+        var existingFingerprints = Set(comments
+            .filter { $0.source == "agent" }
+            .map { ambientCommentFingerprint(selectedText: $0.selectedText, comment: $0.text) })
+
+        for suggestion in suggestions.prefix(4) {
+            guard let range = resolveAmbientSuggestion(suggestion, context: context) else { continue }
+
+            let fingerprint = ambientCommentFingerprint(
+                selectedText: suggestion.exactOriginal,
+                comment: suggestion.comment
+            )
+            guard !existingFingerprints.contains(fingerprint) else { continue }
+
+            let added = await addAgentCommentAsync(
+                rangeStart: range.start,
+                rangeEnd: range.end,
+                text: suggestion.comment,
+                kind: suggestion.kind ?? "suggestion",
+                severity: suggestion.severity ?? "medium",
+                suggestedReplacement: suggestion.suggestedReplacement ?? ""
+            )
+            if added {
+                addedCount += 1
+                existingFingerprints.insert(fingerprint)
+            }
+        }
+
+        return addedCount
+    }
+
+    private func addAgentCommentAsync(
+        rangeStart: Int,
+        rangeEnd: Int,
+        text: String,
+        kind: String,
+        severity: String,
+        suggestedReplacement: String
+    ) async -> Bool {
+        await withCheckedContinuation { continuation in
+            addAgentComment(
+                rangeStart: rangeStart,
+                rangeEnd: rangeEnd,
+                text: text,
+                kind: kind,
+                severity: severity,
+                suggestedReplacement: suggestedReplacement,
+                agentRunID: UUID().uuidString
+            ) { added in
+                continuation.resume(returning: added)
+            }
+        }
+    }
+
+    private func resolveAmbientSuggestion(
+        _ suggestion: AmbientReviewSuggestion,
+        context: EditContextSnapshot
+    ) -> (start: Int, end: Int)? {
+        guard let block = context.blocks.first(where: { $0.id == suggestion.blockID }) else {
+            return nil
+        }
+
+        let original = suggestion.exactOriginal.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !original.isEmpty,
+              let range = block.text.range(of: original)
+        else {
+            return nil
+        }
+
+        let remaining = block.text[range.upperBound...]
+        guard remaining.range(of: original) == nil else {
+            return nil
+        }
+
+        guard let utf16LowerBound = range.lowerBound.samePosition(in: block.text.utf16) else {
+            return nil
+        }
+
+        let offset = block.text.utf16.distance(from: block.text.utf16.startIndex, to: utf16LowerBound)
+        let length = original.utf16.count
+        return (block.from + offset, block.from + offset + length)
+    }
+
+    private func ambientCommentFingerprint(selectedText: String, comment: String) -> String {
+        "\(selectedText.trimmingCharacters(in: .whitespacesAndNewlines))|\(comment.trimmingCharacters(in: .whitespacesAndNewlines))"
     }
 
     var activePendingEdit: PendingEdit? {
+        if let activePendingEditID,
+           let active = pendingEdits.first(where: { $0.id == activePendingEditID }) {
+            return active
+        }
+
         if let active = pendingEdits.first(where: \.isActive) {
             return active
         }
@@ -424,11 +859,11 @@ final class EditorViewModel {
     }
 
     func focusNextPendingEdit() {
-        evaluateJS("window.editorAPI?.focusNextPendingEdit()")
+        callEditorAPI("focusNextPendingEdit")
     }
 
     func focusPreviousPendingEdit() {
-        evaluateJS("window.editorAPI?.focusPreviousPendingEdit()")
+        callEditorAPI("focusPreviousPendingEdit")
     }
 
     func acceptActivePendingEdit() {
@@ -444,14 +879,13 @@ final class EditorViewModel {
     // MARK: - Find & Replace
 
     func findInDocument(_ query: String, completion: @escaping (Int) -> Void) {
-        let escaped = escapeForJS(query)
-        evaluateJS("window.editorAPI?.findInDocument('\(escaped)')") { result in
+        callEditorAPI("findInDocument", arguments: [query]) { result in
             completion(result as? Int ?? 0)
         }
     }
 
     func findNext(completion: @escaping (Int, Int) -> Void) {
-        evaluateJS("window.editorAPI?.findNext()") { result in
+        callEditorAPI("findNext") { result in
             if let json = result as? String,
                let data = json.data(using: .utf8),
                let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -465,7 +899,7 @@ final class EditorViewModel {
     }
 
     func findPrevious(completion: @escaping (Int, Int) -> Void) {
-        evaluateJS("window.editorAPI?.findPrevious()") { result in
+        callEditorAPI("findPrevious") { result in
             if let json = result as? String,
                let data = json.data(using: .utf8),
                let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -479,8 +913,7 @@ final class EditorViewModel {
     }
 
     func replaceOne(_ replacement: String, completion: @escaping (Int, Int) -> Void) {
-        let escaped = escapeForJS(replacement)
-        evaluateJS("window.editorAPI?.replaceOne('\(escaped)')") { result in
+        callEditorAPI("replaceOne", arguments: [replacement]) { result in
             if let json = result as? String,
                let data = json.data(using: .utf8),
                let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -494,14 +927,13 @@ final class EditorViewModel {
     }
 
     func replaceAll(_ replacement: String, completion: @escaping (Int) -> Void) {
-        let escaped = escapeForJS(replacement)
-        evaluateJS("window.editorAPI?.replaceAll('\(escaped)')") { result in
+        callEditorAPI("replaceAll", arguments: [replacement]) { result in
             completion(result as? Int ?? 0)
         }
     }
 
     func clearFind() {
-        evaluateJS("window.editorAPI?.clearFind()")
+        callEditorAPI("clearFind")
     }
 
     func latestSnapshot(for document: DocumentModel, preferEditorState: Bool = true) async -> DocumentFileStore.FileSnapshot {
@@ -565,6 +997,10 @@ final class EditorViewModel {
         autoSaveTimer = nil
         recoveryDraftTimer?.invalidate()
         recoveryDraftTimer = nil
+        ambientReviewTimer?.invalidate()
+        ambientReviewTimer = nil
+        ambientReviewTask?.cancel()
+        ambientReviewTask = nil
 
         guard document.isDirty else { return }
         await saveRecoveryDraft(document: document)
@@ -837,7 +1273,7 @@ final class EditorViewModel {
 
     private func getSelectionClipboardPayload() async -> SelectionClipboardPayload? {
         await withCheckedContinuation { continuation in
-            evaluateJS("window.editorAPI?.getSelectionClipboardData()") { result in
+            callEditorAPI("getSelectionClipboardData") { result in
                 guard let jsonString = result as? String,
                       let data = jsonString.data(using: .utf8),
                       let payload = try? JSONDecoder().decode(SelectionClipboardPayload.self, from: data)
@@ -860,26 +1296,54 @@ final class EditorViewModel {
         DateFormatter.localizedString(from: date, dateStyle: .none, timeStyle: .short)
     }
 
+    private func jsonString(for object: [String: Any]) -> String? {
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object),
+              let string = String(data: data, encoding: .utf8)
+        else {
+            return nil
+        }
+        return string
+    }
+
+    private func jsonSubstring(in text: String, opening: Character, closing: Character) -> String? {
+        guard let start = text.firstIndex(of: opening),
+              let end = text.lastIndex(of: closing),
+              start <= end
+        else {
+            return nil
+        }
+        return String(text[start...end])
+    }
+
+    private func xmlEscaped(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&apos;")
+    }
+
     // MARK: - JS Evaluation
 
-    private func escapeForJS(_ s: String) -> String {
-        var result = ""
-        result.reserveCapacity(s.count)
-        for char in s {
-            switch char {
-            case "\\":
-                result += "\\\\"
-            case "'":
-                result += "\\'"
-            case "\n":
-                result += "\\n"
-            case "\r":
-                result += "\\r"
-            default:
-                result.append(char)
-            }
+    private func callEditorAPI(_ functionName: String, arguments: [Any] = [], completion: ((Any?) -> Void)? = nil) {
+        let encodedArguments = Self.javascriptArgumentsLiteral(arguments)
+        evaluateJS("window.editorAPI?.\(functionName)(\(encodedArguments))", completion: completion)
+    }
+
+    private static func javascriptArgumentsLiteral(_ arguments: [Any]) -> String {
+        guard !arguments.isEmpty else { return "" }
+        guard JSONSerialization.isValidJSONObject(arguments),
+              let data = try? JSONSerialization.data(withJSONObject: arguments),
+              let arrayLiteral = String(data: data, encoding: .utf8),
+              arrayLiteral.first == "[",
+              arrayLiteral.last == "]"
+        else {
+            return ""
         }
-        return result
+
+        return String(arrayLiteral.dropFirst().dropLast())
     }
 
     private func evaluateJS(_ js: String, completion: ((Any?) -> Void)? = nil) {

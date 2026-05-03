@@ -423,25 +423,29 @@ body {
 }
 
 .pending-edit-active.pending-edit-delete {
-  background: rgba(220, 53, 69, 0.14);
-  outline: 2px solid rgba(220, 53, 69, 0.35);
+  background: rgba(220, 53, 69, 0.18);
+  outline: 2px solid rgba(220, 53, 69, 0.48);
   outline-offset: 1px;
   border-radius: 2px;
+  box-shadow: 0 0 0 4px rgba(220, 53, 69, 0.08);
 }
 
 .pending-edit-active.pending-edit-conflict {
-  outline: 2px solid rgba(245, 158, 11, 0.3);
+  outline: 2px solid rgba(245, 158, 11, 0.5);
   outline-offset: 1px;
   border-radius: 2px;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.09);
 }
 
 .pending-edit-widget.pending-edit-active {
-  outline: 2px solid rgba(40, 167, 69, 0.3);
+  background: rgba(40, 167, 69, 0.18);
+  outline: 2px solid rgba(40, 167, 69, 0.48);
   outline-offset: 1px;
+  box-shadow: 0 0 0 4px rgba(40, 167, 69, 0.08);
 }
 
 .pending-edit-widget.pending-edit-conflicted.pending-edit-active {
-  outline-color: rgba(245, 158, 11, 0.34);
+  outline-color: rgba(245, 158, 11, 0.5);
 }
 
 /* Selection */
@@ -569,20 +573,24 @@ body {
   }
 
   .pending-edit-active.pending-edit-delete {
-    background: rgba(255, 107, 107, 0.2);
-    outline-color: rgba(255, 107, 107, 0.4);
+    background: rgba(255, 107, 107, 0.24);
+    outline-color: rgba(255, 107, 107, 0.56);
+    box-shadow: 0 0 0 4px rgba(255, 107, 107, 0.12);
   }
 
   .pending-edit-active.pending-edit-conflict {
-    outline-color: rgba(245, 158, 11, 0.46);
+    outline-color: rgba(245, 158, 11, 0.58);
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.12);
   }
 
   .pending-edit-widget.pending-edit-active {
-    outline-color: rgba(81, 207, 102, 0.4);
+    background: rgba(81, 207, 102, 0.18);
+    outline-color: rgba(81, 207, 102, 0.54);
+    box-shadow: 0 0 0 4px rgba(81, 207, 102, 0.1);
   }
 
   .pending-edit-widget.pending-edit-conflicted.pending-edit-active {
-    outline-color: rgba(245, 158, 11, 0.46);
+    outline-color: rgba(245, 158, 11, 0.58);
   }
 
   #link-preview {

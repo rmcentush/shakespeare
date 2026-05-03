@@ -12,7 +12,8 @@ enum BridgePayload: Codable {
     case selectionChanged(SelectionState)
     case wordCount(words: Int, characters: Int)
     case pendingEditUpdate(PendingEditUpdateData)
-    case commentsChanged([CommentData])
+    case commentsChanged([CommentData], documentChanged: Bool)
+    case commentActivated(commentId: String)
     case unknown
 
     struct SelectionState: Codable {
@@ -45,10 +46,19 @@ enum BridgePayload: Codable {
         var text: String
         let selectedText: String
         let createdAt: Double
+        let updatedAt: Double
         let rangeStart: Int
         let rangeEnd: Int
+        let authorName: String
+        let source: String
+        let kind: String
+        let severity: String
+        let status: String
+        let suggestedReplacement: String
+        let agentRunID: String
 
         var commentId: String { id }
+        var isAgentAuthored: Bool { source == "agent" }
     }
 
     struct PendingEditUpdateData: Codable {
@@ -156,17 +166,28 @@ enum BridgePayload: Codable {
             )
         case "commentsChanged":
             let rawComments = payload["comments"] as? [[String: Any]] ?? []
+            let documentChanged = payload["documentChanged"] as? Bool ?? false
             let comments = rawComments.map { item in
                 CommentData(
                     id: item["commentId"] as? String ?? UUID().uuidString,
                     text: item["text"] as? String ?? "",
                     selectedText: item["selectedText"] as? String ?? "",
                     createdAt: item["createdAt"] as? Double ?? 0,
+                    updatedAt: item["updatedAt"] as? Double ?? item["createdAt"] as? Double ?? 0,
                     rangeStart: item["rangeStart"] as? Int ?? 0,
-                    rangeEnd: item["rangeEnd"] as? Int ?? 0
+                    rangeEnd: item["rangeEnd"] as? Int ?? 0,
+                    authorName: item["authorName"] as? String ?? "",
+                    source: item["source"] as? String ?? "user",
+                    kind: item["kind"] as? String ?? "",
+                    severity: item["severity"] as? String ?? "",
+                    status: item["status"] as? String ?? "open",
+                    suggestedReplacement: item["suggestedReplacement"] as? String ?? "",
+                    agentRunID: item["agentRunId"] as? String ?? ""
                 )
             }
-            return .commentsChanged(comments)
+            return .commentsChanged(comments, documentChanged: documentChanged)
+        case "commentActivated":
+            return .commentActivated(commentId: payload["commentId"] as? String ?? "")
         default:
             return .unknown
         }

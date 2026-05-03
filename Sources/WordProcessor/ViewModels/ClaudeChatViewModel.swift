@@ -29,10 +29,11 @@ final class ClaudeChatViewModel {
 
     You have tools to directly edit the document. When the user asks you to change, rewrite, fill in, or edit text, \
     use the appropriate tool. If the user has text selected, use replace_selection. \
-    If you need to find and change specific text, use find_and_replace. \
+    If you need to change existing text that is not the active selection, use propose_edit with target metadata from <edit_context>. \
     To add new content, use insert_at_cursor. \
     Keep edit targets as small as possible. If only one sentence or one bracketed section changes, target only that span instead of replacing a whole paragraph.
-    For sentence-level find_and_replace edits, pass an inline HTML fragment or plain text as the replacement; do not wrap it in <p> unless replacing multiple whole paragraphs.
+    For sentence-level edits, pass an inline HTML fragment or plain text as the replacement; do not wrap it in <p> unless replacing multiple whole paragraphs.
+    Never guess between repeated occurrences. If the target is ambiguous, include block_id, prefix/suffix, and document_revision/document_hash from <edit_context>, or ask the user to select the text.
 
     When outputting HTML for the tools, you can use formatting tags like <b>, <i>, <u>, \
     <span style="color: #e53e3e"> (red), <span style="color: green">, etc.
@@ -55,14 +56,24 @@ final class ClaudeChatViewModel {
         requestTask?.cancel()
     }
 
-    func sendMessage(_ text: String, documentContent: String = "", editorViewModel: EditorViewModel? = nil) {
+    func sendMessage(
+        _ text: String,
+        documentContent: String = "",
+        editContext: EditorViewModel.EditContextSnapshot? = nil,
+        editorViewModel: EditorViewModel? = nil
+    ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
         cancelStreaming(markCancelledMessage: false)
 
         requestTask = Task { [weak self] in
-            await self?.runSendMessage(trimmed, documentContent: documentContent, editorViewModel: editorViewModel)
+            await self?.runSendMessage(
+                trimmed,
+                documentContent: documentContent,
+                editContext: editContext,
+                editorViewModel: editorViewModel
+            )
         }
     }
 
@@ -81,7 +92,12 @@ final class ClaudeChatViewModel {
         streamingContentLength = messages[lastIndex].content.count
     }
 
-    private func runSendMessage(_ text: String, documentContent: String, editorViewModel: EditorViewModel?) async {
+    private func runSendMessage(
+        _ text: String,
+        documentContent: String,
+        editContext: EditorViewModel.EditContextSnapshot?,
+        editorViewModel: EditorViewModel?
+    ) async {
         let userMessage = ChatMessage(role: .user, content: text)
         messages.append(userMessage)
         apiMessages.append(["role": "user", "content": text])
@@ -94,7 +110,7 @@ final class ClaudeChatViewModel {
             trimVisibleMessages()
         }
 
-        let systemPrompt = await buildSystemPrompt(documentContent: documentContent)
+        let systemPrompt = await buildSystemPrompt(documentContent: documentContent, editContext: editContext)
 
         // Tool use loop: keep calling API until Claude stops using tools
         var loopCount = 0
@@ -209,6 +225,7 @@ final class ClaudeChatViewModel {
                 let result = await executeTool(
                     name: tc.name,
                     inputJSON: tc.inputJSON,
+                    editContext: editContext,
                     editorViewModel: editorViewModel
                 )
                 toolResultBlocks.append([
@@ -233,7 +250,12 @@ final class ClaudeChatViewModel {
 
     // MARK: - Tool Execution
 
-    private func executeTool(name: String, inputJSON: String, editorViewModel: EditorViewModel?) async -> String {
+    private func executeTool(
+        name: String,
+        inputJSON: String,
+        editContext: EditorViewModel.EditContextSnapshot?,
+        editorViewModel: EditorViewModel?
+    ) async -> String {
         guard let editor = editorViewModel else {
             return "Error: editor not available"
         }
@@ -255,13 +277,21 @@ final class ClaudeChatViewModel {
                 return "Suggested replacement is too large to preview safely. Narrow the request."
             }
             return await withCheckedContinuation { cont in
-                editor.pendingReplaceSelection(id: editId, html: html) { count in
+                editor.pendingReplaceSelection(
+                    id: editId,
+                    html: html,
+                    target: selectionTarget(from: editContext)
+                ) { count in
                     if count > 0 {
                         cont.resume(returning: "Edit suggested for selected text. User will review before applying.")
                     } else if count == ToolExecutionResult.tooManyPendingEdits.rawValue {
                         cont.resume(returning: "Too many pending edits are already queued. Review or reject them before asking for more changes.")
+                    } else if count == ToolExecutionResult.staleTarget.rawValue {
+                        cont.resume(returning: "The selected text changed before the edit could be queued. Ask again or reselect the text.")
+                    } else if count == ToolExecutionResult.invalidTarget.rawValue {
+                        cont.resume(returning: "The selected range is no longer valid. Ask again or reselect the text.")
                     } else {
-                        cont.resume(returning: "No text is currently selected. Use find_and_replace to target specific text.")
+                        cont.resume(returning: "No text is currently selected. Use propose_edit to target specific text.")
                     }
                 }
             }
@@ -275,14 +305,48 @@ final class ClaudeChatViewModel {
                 return "Suggested insertion is too large to preview safely. Narrow the request."
             }
             return await withCheckedContinuation { cont in
-                editor.pendingInsertAtCursor(id: editId, html: html) { count in
+                editor.pendingInsertAtCursor(
+                    id: editId,
+                    html: html,
+                    target: insertionTarget(from: editContext)
+                ) { count in
                     if count > 0 {
                         cont.resume(returning: "Edit suggested at cursor position. User will review before applying.")
+                    } else if count == ToolExecutionResult.staleTarget.rawValue {
+                        cont.resume(returning: "The document changed before the insertion could be queued. Ask again.")
+                    } else if count == ToolExecutionResult.invalidTarget.rawValue {
+                        cont.resume(returning: "The insertion position is no longer valid. Ask again.")
                     } else {
                         cont.resume(returning: "Too many pending edits are already queued. Review or reject them before asking for more changes.")
                     }
                 }
             }
+
+        case "propose_edit":
+            let target = input["target"] as? [String: Any] ?? [:]
+            let replacementHTML = input["replacement_html"] as? String ?? ""
+            let replaceAll = input["replace_all"] as? Bool ?? false
+            guard !target.isEmpty else {
+                return "No target metadata was provided for propose_edit."
+            }
+            guard !(target["exact_original"] as? String ?? "").isEmpty else {
+                return "No exact original text was provided for propose_edit."
+            }
+            guard !replacementHTML.isEmpty else {
+                return "No replacement content was provided."
+            }
+            guard replacementHTML.count <= Self.maxToolHTMLCharacters else {
+                return "Suggested replacement is too large to preview safely. Narrow the request."
+            }
+
+            let count = await pendingProposeEditCount(
+                editor: editor,
+                id: editId,
+                target: normalizedProposedTarget(target, editContext: editContext),
+                replacementHTML: replacementHTML,
+                replaceAll: replaceAll
+            )
+            return editToolResult(count: count, scopeDetail: nil)
 
         case "find_and_replace":
             let find = input["find"] as? String ?? ""
@@ -337,10 +401,10 @@ final class ClaudeChatViewModel {
                     replaceHTML: replace,
                     replaceAll: replaceAll
                 )
-                return findReplaceToolResult(count: fallbackCount, scopeDetail: nil)
+                return editToolResult(count: fallbackCount, scopeDetail: nil)
             }
 
-            return findReplaceToolResult(count: count, scopeDetail: scopeDetail)
+            return editToolResult(count: count, scopeDetail: scopeDetail)
 
         default:
             return "Unknown tool: \(name)"
@@ -369,7 +433,10 @@ final class ClaudeChatViewModel {
         messages.remove(at: index)
     }
 
-    private func buildSystemPrompt(documentContent: String) async -> [[String: Any]] {
+    private func buildSystemPrompt(
+        documentContent: String,
+        editContext: EditorViewModel.EditContextSnapshot?
+    ) async -> [[String: Any]] {
         let preparedDocument = await Task.detached(priority: .utility) {
             Self.prepareDocumentContext(documentContent)
         }.value
@@ -422,7 +489,49 @@ final class ClaudeChatViewModel {
             )
         }
 
+        if let editContext {
+            blocks.append(Self.uncachedSystemBlock(Self.editContextPrompt(editContext)))
+        }
+
         return blocks
+    }
+
+    private nonisolated static func editContextPrompt(_ context: EditorViewModel.EditContextSnapshot) -> String {
+        let selectionText: String
+        if let selection = context.selection {
+            selectionText = """
+            <selection from="\(selection.from)" to="\(selection.to)" words="\(selection.words)" characters="\(selection.characters)">
+            <text>\(selection.text)</text>
+            <html>\(selection.html)</html>
+            </selection>
+            """
+        } else {
+            selectionText = "<selection />"
+        }
+
+        let blockLines = context.blocks.map { block in
+            """
+            <block id="\(block.id)" path="\(block.path)" type="\(block.type)" from="\(block.from)" to="\(block.to)" text_hash="\(block.textHash)">
+            \(block.text)
+            </block>
+            """
+        }.joined(separator: "\n")
+
+        return """
+        <edit_context revision="\(context.revision)" document_hash="\(context.documentHash)" cursor_position="\(context.cursorPosition)">
+        Use this context for edit tools. For propose_edit, copy document_revision/document_hash exactly, use block_id when available, and include exact_original plus short prefix/suffix if repeated text could be ambiguous.
+
+        \(selectionText)
+
+        <nearby_text>
+        \(context.nearbyText)
+        </nearby_text>
+
+        <block_index>
+        \(blockLines)
+        </block_index>
+        </edit_context>
+        """
     }
 
     private static func cachedSystemBlock(_ text: String) -> [String: Any] {
@@ -509,6 +618,12 @@ final class ClaudeChatViewModel {
             return "Suggested edit for selection"
         case "insert_at_cursor":
             return "Suggested insertion at cursor"
+        case "propose_edit":
+            let input = parseJSON(inputJSON)
+            let target = input["target"] as? [String: Any] ?? [:]
+            let original = target["exact_original"] as? String ?? ""
+            let truncated = original.count > 30 ? String(original.prefix(30)) + "…" : original
+            return truncated.isEmpty ? "Suggested document edit" : "Suggested edit for \"\(truncated)\""
         case "find_and_replace":
             let input = parseJSON(inputJSON)
             let find = input["find"] as? String ?? ""
@@ -534,6 +649,43 @@ final class ClaudeChatViewModel {
         }
     }
 
+    private func selectionTarget(from context: EditorViewModel.EditContextSnapshot?) -> [String: Any]? {
+        guard let context, let selection = context.selection else { return nil }
+        return [
+            "from": selection.from,
+            "to": selection.to,
+            "text": selection.text,
+            "document_revision": context.revision,
+            "document_hash": context.documentHash,
+        ]
+    }
+
+    private func insertionTarget(from context: EditorViewModel.EditContextSnapshot?) -> [String: Any]? {
+        guard let context else { return nil }
+        return [
+            "position": context.cursorPosition,
+            "document_revision": context.revision,
+            "document_hash": context.documentHash,
+        ]
+    }
+
+    private func normalizedProposedTarget(
+        _ target: [String: Any],
+        editContext: EditorViewModel.EditContextSnapshot?
+    ) -> [String: Any] {
+        var normalized = target
+
+        if normalized["document_revision"] == nil, let editContext {
+            normalized["document_revision"] = editContext.revision
+        }
+
+        if normalized["document_hash"] == nil, let editContext {
+            normalized["document_hash"] = editContext.documentHash
+        }
+
+        return normalized
+    }
+
     private func pendingFindAndReplaceCount(
         editor: EditorViewModel,
         id: String,
@@ -553,7 +705,26 @@ final class ClaudeChatViewModel {
         }
     }
 
-    private func findReplaceToolResult(count: Int, scopeDetail: String?) -> String {
+    private func pendingProposeEditCount(
+        editor: EditorViewModel,
+        id: String,
+        target: [String: Any],
+        replacementHTML: String,
+        replaceAll: Bool
+    ) async -> Int {
+        await withCheckedContinuation { continuation in
+            editor.pendingProposeEdit(
+                id: id,
+                target: target,
+                replacementHTML: replacementHTML,
+                replaceAll: replaceAll
+            ) { count in
+                continuation.resume(returning: count)
+            }
+        }
+    }
+
+    private func editToolResult(count: Int, scopeDetail: String?) -> String {
         if count > 0 {
             let scopeSuffix = scopeDetail.map { " \($0)" } ?? ""
             return "Suggested \(count) edit\(count == 1 ? "" : "s"). User will review before applying.\(scopeSuffix)"
@@ -567,6 +738,18 @@ final class ClaudeChatViewModel {
             return "Too many pending edits are already queued. Review or reject them before asking for more changes."
         }
 
+        if count == ToolExecutionResult.ambiguousTarget.rawValue {
+            return "That edit target is ambiguous. Use a block_id plus prefix/suffix from the edit context, or ask the user to select the text."
+        }
+
+        if count == ToolExecutionResult.staleTarget.rawValue {
+            return "The document changed before the edit could be queued. Ask again using the latest edit context."
+        }
+
+        if count == ToolExecutionResult.invalidTarget.rawValue {
+            return "The edit target was invalid. Use a smaller exact_original span from the edit context."
+        }
+
         return "Text not found in document."
     }
 }
@@ -574,4 +757,7 @@ final class ClaudeChatViewModel {
 private enum ToolExecutionResult: Int {
     case tooManyMatches = -1
     case tooManyPendingEdits = -2
+    case ambiguousTarget = -3
+    case staleTarget = -4
+    case invalidTarget = -5
 }

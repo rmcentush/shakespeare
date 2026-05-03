@@ -23,6 +23,7 @@ struct CommentsSidebarView: View {
                         ForEach(editorViewModel.comments) { comment in
                             CommentCard(
                                 comment: comment,
+                                isActive: editorViewModel.activeCommentID == comment.id,
                                 isEditing: editingCommentId == comment.id,
                                 editingText: editingCommentId == comment.id ? $editingText : .constant(""),
                                 onTap: {
@@ -39,6 +40,12 @@ struct CommentsSidebarView: View {
                                 },
                                 onDelete: {
                                     deleteComment(comment)
+                                },
+                                onSetStatus: { status in
+                                    editorViewModel.setCommentStatus(comment.id, status: status)
+                                },
+                                onApplySuggestion: {
+                                    editorViewModel.pendingReplaceComment(comment)
                                 }
                             )
                         }
@@ -67,6 +74,20 @@ struct CommentsSidebarView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                if editorViewModel.isAmbientReviewing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.7)
+                }
+                Toggle(isOn: Binding(
+                    get: { editorViewModel.ambientReviewEnabled },
+                    set: { editorViewModel.setAmbientReviewEnabled($0) }
+                )) {
+                    Image(systemName: "sparkles")
+                }
+                .toggleStyle(.button)
+                .controlSize(.small)
+                .help("Ambient Review")
                 Button {
                     editorViewModel.addComment()
                 } label: {
@@ -76,6 +97,12 @@ struct CommentsSidebarView: View {
                 .buttonStyle(.plain)
                 .help("Add Comment (Cmd+Shift+M)")
                 .disabled(!editorViewModel.selectionState.hasSelection)
+            }
+            if !editorViewModel.ambientReviewStatusText.isEmpty {
+                Text(editorViewModel.ambientReviewStatusText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         }
         .padding(.horizontal, 16)
@@ -137,6 +164,7 @@ struct CommentsSidebarView: View {
 
 private struct CommentCard: View {
     let comment: BridgePayload.CommentData
+    let isActive: Bool
     let isEditing: Bool
     @Binding var editingText: String
     let onTap: () -> Void
@@ -144,15 +172,31 @@ private struct CommentCard: View {
     let onSave: () -> Void
     let onCancel: () -> Void
     let onDelete: () -> Void
+    let onSetStatus: (String) -> Void
+    let onApplySuggestion: () -> Void
 
     @FocusState private var isTextFieldFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if !metadataBadges.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(metadataBadges, id: \.self) { badge in
+                        Text(badge)
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(badgeBackground, in: Capsule())
+                            .foregroundStyle(badgeForeground)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+
             // Highlighted text excerpt
             HStack(spacing: 6) {
                 RoundedRectangle(cornerRadius: 1.5)
-                    .fill(Color.yellow.opacity(0.6))
+                    .fill(accentColor.opacity(0.7))
                     .frame(width: 3)
 
                 Text(comment.selectedText)
@@ -193,6 +237,16 @@ private struct CommentCard: View {
                     .foregroundStyle(.primary)
             }
 
+            if !isEditing, !comment.suggestedReplacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(comment.suggestedReplacement)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 6))
+            }
+
             // Timestamp
             if !isEditing {
                 HStack {
@@ -200,6 +254,20 @@ private struct CommentCard: View {
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                     Spacer()
+                    if !comment.suggestedReplacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Button("Apply") {
+                            onApplySuggestion()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .foregroundColor(.accentColor)
+                    }
+                    Button(statusActionTitle) {
+                        onSetStatus(nextStatus)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                     Button {
                         onStartEdit()
                     } label: {
@@ -220,9 +288,71 @@ private struct CommentCard: View {
             }
         }
         .padding(12)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+        .background(cardBackground, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isActive ? Color.accentColor.opacity(0.55) : Color.clear, lineWidth: 1)
+        }
         .contentShape(Rectangle())
         .onTapGesture { onTap() }
+    }
+
+    private var metadataBadges: [String] {
+        var badges: [String] = []
+        if comment.source == "agent" {
+            badges.append(comment.authorName.isEmpty ? "Agent" : comment.authorName)
+        }
+        if !comment.kind.isEmpty {
+            badges.append(comment.kind.capitalized)
+        }
+        if !comment.severity.isEmpty {
+            badges.append(comment.severity.capitalized)
+        }
+        if comment.status != "open" {
+            badges.append(comment.status.capitalized)
+        }
+        return badges
+    }
+
+    private var accentColor: Color {
+        if comment.source == "agent" {
+            switch comment.severity {
+            case "high": return .red
+            case "medium": return .orange
+            case "low": return .blue
+            default: return .purple
+            }
+        }
+        return .yellow
+    }
+
+    private var badgeBackground: Color {
+        accentColor.opacity(0.14)
+    }
+
+    private var badgeForeground: Color {
+        comment.source == "agent" ? accentColor : .secondary
+    }
+
+    private var cardBackground: Color {
+        if isActive {
+            return Color.accentColor.opacity(0.08)
+        }
+        if comment.status == "resolved" || comment.status == "dismissed" {
+            return Color.primary.opacity(0.025)
+        }
+        return Color.primary.opacity(0.04)
+    }
+
+    private var statusActionTitle: String {
+        comment.status == "open" ? (comment.source == "agent" ? "Dismiss" : "Resolve") : "Reopen"
+    }
+
+    private var nextStatus: String {
+        if comment.status != "open" {
+            return "open"
+        }
+        return comment.source == "agent" ? "dismissed" : "resolved"
     }
 
     private var formattedDate: String {

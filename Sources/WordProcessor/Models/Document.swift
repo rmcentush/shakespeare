@@ -76,6 +76,12 @@ final class DocumentModel: @unchecked Sendable {
         modifiedAt = Date()
     }
 
+    func markEditorMutation() {
+        contentRevision &+= 1
+        modifiedAt = Date()
+        isDirty = true
+    }
+
     @discardableResult
     func syncFromEditor(snapshot: DocumentFileStore.FileSnapshot) -> Bool {
         let changed =

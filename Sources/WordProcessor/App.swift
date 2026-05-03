@@ -100,22 +100,19 @@ private struct WordProcessorCommands: Commands {
 
         CommandGroup(replacing: .pasteboard) {
             Button("Cut") {
-                windowCommandContext?.cut()
+                performPasteboardAction(editorAction: { $0.cut() }, fallbackSelectorName: "cut:")
             }
             .keyboardShortcut("x")
-            .disabled(windowCommandContext == nil)
 
             Button("Copy") {
-                windowCommandContext?.copy()
+                performPasteboardAction(editorAction: { $0.copy() }, fallbackSelectorName: "copy:")
             }
             .keyboardShortcut("c")
-            .disabled(windowCommandContext == nil)
 
             Button("Paste") {
-                windowCommandContext?.paste()
+                performPasteboardAction(editorAction: { $0.paste() }, fallbackSelectorName: "paste:")
             }
             .keyboardShortcut("v")
-            .disabled(windowCommandContext == nil)
         }
 
         CommandGroup(after: .textEditing) {
@@ -178,6 +175,17 @@ private struct WordProcessorCommands: Commands {
                 NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
             }
             .keyboardShortcut(",")
+        }
+    }
+
+    private func performPasteboardAction(
+        editorAction: (WindowCommandContext) -> Void,
+        fallbackSelectorName: String
+    ) {
+        if let windowCommandContext {
+            editorAction(windowCommandContext)
+        } else {
+            NSApp.sendAction(Selector(fallbackSelectorName), to: nil, from: nil)
         }
     }
 }

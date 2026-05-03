@@ -60,25 +60,56 @@ final class ClaudeAPIService: Sendable {
             ] as [String: Any]
         ] as [String: Any],
         [
-            "name": "find_and_replace",
-            "description": "Find specific text in the document and replace it with new HTML content. Useful for targeted edits without needing the user to select text first. Target the smallest exact span that changes, preferably a single sentence or bracketed section. Do not replace an entire paragraph unless the whole paragraph is being rewritten. For sentence-level edits, return an inline HTML fragment or plain text instead of wrapping it in <p>.",
+            "name": "propose_edit",
+            "description": "Queue a precise, reviewable edit to existing document text. Use this instead of a loose find/replace when the user asks to revise text that is not the active selection. Target the smallest exact span that changes. Prefer a block_id from <edit_context>, the exact original text, nearby prefix/suffix, and the document revision/hash from that context so the app can resolve the target deterministically.",
             "input_schema": [
                 "type": "object",
                 "properties": [
-                    "find": [
-                        "type": "string",
-                        "description": "The exact text to find in the document (case-insensitive). Keep this as narrow as possible."
+                    "target": [
+                        "type": "object",
+                        "description": "Deterministic location metadata from <edit_context>.",
+                        "properties": [
+                            "block_id": [
+                                "type": "string",
+                                "description": "The id of the block containing the exact original text, copied from <edit_context> when available."
+                            ],
+                            "exact_original": [
+                                "type": "string",
+                                "description": "The exact current text span to replace. Keep this as small as possible."
+                            ],
+                            "prefix": [
+                                "type": "string",
+                                "description": "Short text immediately before exact_original, used only to disambiguate repeated text."
+                            ],
+                            "suffix": [
+                                "type": "string",
+                                "description": "Short text immediately after exact_original, used only to disambiguate repeated text."
+                            ],
+                            "occurrence_index": [
+                                "type": "integer",
+                                "description": "Zero-based occurrence among matches after block/prefix/suffix filtering. Omit unless needed."
+                            ],
+                            "document_revision": [
+                                "type": "integer",
+                                "description": "The document revision from <edit_context>."
+                            ],
+                            "document_hash": [
+                                "type": "string",
+                                "description": "The document hash from <edit_context>."
+                            ]
+                        ],
+                        "required": ["exact_original"]
                     ],
-                    "replace": [
+                    "replacement_html": [
                         "type": "string",
-                        "description": "The HTML content to replace it with. For replacements inside an existing paragraph, use plain text or inline tags, not a full <p> wrapper."
+                        "description": "The HTML content to replace the target with. For replacements inside an existing paragraph, use plain text or inline tags, not a full <p> wrapper."
                     ],
                     "replace_all": [
                         "type": "boolean",
-                        "description": "Whether to replace all occurrences or just the first one. Defaults to false."
+                        "description": "Only true when the user explicitly asks to replace every matching occurrence. Defaults to false."
                     ]
                 ],
-                "required": ["find", "replace"]
+                "required": ["target", "replacement_html"]
             ] as [String: Any]
         ] as [String: Any]
     ]

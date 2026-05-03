@@ -19,7 +19,8 @@ export type BridgeMessageType =
   | 'selectionChanged'
   | 'wordCount'
   | 'pendingEditUpdate'
-  | 'commentsChanged';
+  | 'commentsChanged'
+  | 'commentActivated';
 
 export interface BridgeMessage {
   type: BridgeMessageType;
@@ -57,9 +58,10 @@ export function registerSwiftCallbacks(callbacks: {
   replaceSelectionHTML: (html: string) => void;
   insertHTMLAtCursor: (html: string) => void;
   findAndReplaceText: (find: string, replaceHtml: string, replaceAllOccurrences: boolean) => number;
-  pendingReplaceSelection: (id: string, html: string) => number;
-  pendingInsertAtCursor: (id: string, html: string) => number;
+  pendingReplaceSelection: (id: string, html: string, target?: any) => number;
+  pendingInsertAtCursor: (id: string, html: string, target?: any) => number;
   pendingFindAndReplace: (id: string, find: string, replaceHtml: string, replaceAll: boolean) => number;
+  pendingProposeEdit: (id: string, target: any, replaceHtml: string, replaceAll: boolean) => number;
   acceptAllPendingEdits: () => void;
   rejectAllPendingEdits: () => void;
   acceptPendingEdit: (id: string) => boolean;
@@ -69,10 +71,14 @@ export function registerSwiftCallbacks(callbacks: {
   focusPreviousPendingEdit: () => boolean;
   getPendingEdits: () => string;
   getPendingEditCount: () => number;
+  getEditContextSnapshot: () => string;
   addComment: (commentId: string) => boolean;
+  addCommentAtRange: (commentJSON: string) => boolean;
   updateCommentText: (commentId: string, text: string) => void;
+  setCommentStatus: (commentId: string, status: string) => void;
   removeComment: (commentId: string) => void;
   focusComment: (commentId: string) => void;
+  pendingReplaceComment: (commentId: string, editId: string, html: string) => number;
   getComments: () => string;
 }): void {
   (window as any).editorAPI = callbacks;

@@ -62,11 +62,18 @@ struct ContentView: View {
                     }
                     ToolbarItem(placement: .automatic) {
                         Button {
-                            toggleSidebar(.comments)
+                            if editorViewModel.selectionState.hasSelection {
+                                editorViewModel.addComment()
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    activeSidebar = .comments
+                                }
+                            } else {
+                                toggleSidebar(.comments)
+                            }
                         } label: {
                             Image(systemName: activeSidebar == .comments ? "quote.bubble.fill" : "quote.bubble")
                         }
-                        .help("Toggle Comments (Cmd+Shift+M)")
+                        .help(editorViewModel.selectionState.hasSelection ? "Add Comment (Cmd+Shift+M)" : "Toggle Comments")
                     }
                     if editorViewModel.pendingEditCount > 0 {
                         ToolbarItem(placement: .automatic) {
@@ -97,6 +104,17 @@ struct ContentView: View {
                 if contentChanged {
                     editorViewModel.scheduleRecoveryDraft(document: document)
                     editorViewModel.scheduleAutoSave(document: document)
+                    editorViewModel.scheduleAmbientReview()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .editorDocumentMutated, object: editorViewModel)) { _ in
+                document.markEditorMutation()
+                editorViewModel.scheduleRecoveryDraft(document: document)
+                editorViewModel.scheduleAutoSave(document: document)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .editorCommentActivated, object: editorViewModel)) { _ in
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    activeSidebar = .comments
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .editorBecameReady, object: editorViewModel)) { _ in
@@ -227,14 +245,12 @@ struct ContentView: View {
                         PendingEditsBar(
                             count: editorViewModel.pendingEditCount,
                             currentIndex: editorViewModel.pendingEditCurrentIndex,
-                            canAcceptCurrent: editorViewModel.activePendingEdit?.canAccept ?? false,
+                            activeEdit: editorViewModel.activePendingEdit,
                             onFocusPrevious: { editorViewModel.focusPreviousPendingEdit() },
                             onFocusNext: { editorViewModel.focusNextPendingEdit() },
                             onAcceptCurrent: { editorViewModel.acceptActivePendingEdit() },
                             onRejectCurrent: { editorViewModel.rejectActivePendingEdit() },
-                            onReview: { toggleSidebar(.suggestions) },
-                            onAcceptAll: { editorViewModel.acceptAllPendingEdits() },
-                            onRejectAll: { editorViewModel.rejectAllPendingEdits() }
+                            onReview: { toggleSidebar(.suggestions) }
                         )
                         .padding(.bottom, 12)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -310,7 +326,7 @@ struct ContentView: View {
             .keyboardShortcut("f", modifiers: [.command, .shift])
             .hidden()
 
-        // ESC exits find bar or focus mode
+        // ESC closes transient UI first, otherwise rejects only the current suggestion.
         Button("") {
             if showFindBar {
                 editorViewModel.clearFind()
@@ -319,6 +335,8 @@ struct ContentView: View {
                     showReplace = false
                 }
                 editorViewModel.focusEditor()
+            } else if editorViewModel.pendingEditCount > 0 {
+                editorViewModel.rejectActivePendingEdit()
             } else if isDistractionFree {
                 toggleFocusMode()
             }
@@ -422,24 +440,43 @@ extension ContentView {
 
 extension Notification.Name {
     static let toggleFocusMode = Notification.Name("toggleFocusMode")
+    static let editorDocumentMutated = Notification.Name("editorDocumentMutated")
+    static let editorCommentActivated = Notification.Name("editorCommentActivated")
 }
 
 struct PendingEditsBar: View {
     let count: Int
     let currentIndex: Int
-    let canAcceptCurrent: Bool
+    let activeEdit: EditorViewModel.PendingEdit?
     let onFocusPrevious: () -> Void
     let onFocusNext: () -> Void
     let onAcceptCurrent: () -> Void
     let onRejectCurrent: () -> Void
     let onReview: () -> Void
-    let onAcceptAll: () -> Void
-    let onRejectAll: () -> Void
 
     private var editLabel: String {
-        if count == 1 { return "1 edit" }
+        if count == 1 { return "Edit 1 of 1" }
+        if let activeEdit { return "Edit \(activeEdit.index + 1) of \(count)" }
         if currentIndex >= 0 { return "Edit \(currentIndex + 1) of \(count)" }
         return "\(count) edits"
+    }
+
+    private var detailLabel: String {
+        guard let activeEdit else { return "No active suggestion" }
+        return "\(activeEdit.status == .pending ? "Pending" : "Conflict") - \(activeEdit.source)"
+    }
+
+    private var changePreview: String {
+        guard let activeEdit else { return "" }
+        let original = compactPreview(
+            activeEdit.originalText.isEmpty ? "Insert at cursor" : activeEdit.originalText
+        )
+        let replacement = compactPreview(
+            activeEdit.replacementText.isEmpty
+                ? (activeEdit.status == .conflicted ? "Cannot apply safely" : "Delete")
+                : activeEdit.replacementText
+        )
+        return "\(original) -> \(replacement)"
     }
 
     var body: some View {
@@ -448,8 +485,25 @@ struct PendingEditsBar: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.orange)
 
-            Text(editLabel)
-                .font(.system(size: 13, weight: .medium))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(editLabel)
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(detailLabel)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+
+                if !changePreview.isEmpty {
+                    Text(changePreview)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .frame(maxWidth: 360, alignment: .leading)
+            .layoutPriority(1)
 
             Divider()
                 .frame(height: 14)
@@ -461,6 +515,7 @@ struct PendingEditsBar: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .disabled(count <= 1)
 
                 Button(action: onFocusNext) {
                     Text("Next")
@@ -468,6 +523,7 @@ struct PendingEditsBar: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .disabled(count <= 1)
 
                 Button(action: onReview) {
                     Text("Review")
@@ -488,7 +544,7 @@ struct PendingEditsBar: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
                 .controlSize(.small)
-                .disabled(!canAcceptCurrent)
+                .disabled(!(activeEdit?.canAccept ?? false))
 
                 Button(action: onRejectCurrent) {
                     Text("Reject")
@@ -496,6 +552,7 @@ struct PendingEditsBar: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .disabled(!(activeEdit?.canReject ?? false))
             }
 
             Divider()
@@ -509,39 +566,30 @@ struct PendingEditsBar: View {
             }
             HStack(spacing: 4) {
                 KeyHint("Shift+Tab")
-                Text("reject")
+                Text("reject current")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
             HStack(spacing: 4) {
                 KeyHint("Esc")
-                Text("reject all")
+                Text("reject current")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
-
-            Divider()
-                .frame(height: 14)
-
-            Button(action: onRejectAll) {
-                Text("Reject All")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-
-            Button(action: onAcceptAll) {
-                Text("Accept All")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.green)
-            .controlSize(.small)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
         .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
+    }
+
+    private func compactPreview(_ text: String) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.count > 80 else { return normalized }
+        let end = normalized.index(normalized.startIndex, offsetBy: 80)
+        return "\(normalized[..<end])..."
     }
 }
 

@@ -101,8 +101,20 @@ struct ClaudeChatView: View {
         let editor = editorViewModel
 
         if editor.isEditorReady {
-            editor.getPlainText { content in
-                chatViewModel.sendMessage(text, documentContent: content, editorViewModel: editor)
+            editor.getEditContextSnapshot { context in
+                if let context {
+                    chatViewModel.sendMessage(
+                        text,
+                        documentContent: context.plainText,
+                        editContext: context,
+                        editorViewModel: editor
+                    )
+                    return
+                }
+
+                editor.getPlainText { content in
+                    chatViewModel.sendMessage(text, documentContent: content, editorViewModel: editor)
+                }
             }
             return
         }

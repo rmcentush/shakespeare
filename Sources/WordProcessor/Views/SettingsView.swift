@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -24,19 +25,22 @@ struct SettingsView: View {
                                 .textFieldStyle(.roundedBorder)
                         }
                         Button {
+                            pasteAnthropicKeyFromClipboard()
+                        } label: {
+                            Image(systemName: "doc.on.clipboard")
+                        }
+                        .help("Paste from Clipboard")
+                        Button {
                             showKey.toggle()
                         } label: {
                             Image(systemName: showKey ? "eye.slash" : "eye")
                         }
+                        .help(showKey ? "Hide API Key" : "Show API Key")
                     }
 
                     HStack {
                         Button("Save") {
-                            KeychainService.shared.setAPIKey(anthropicKey, service: "anthropic")
-                            saved = true
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                saved = false
-                            }
+                            saveAnthropicKey()
                         }
                         if saved {
                             Text("Saved!")
@@ -185,6 +189,31 @@ struct SettingsView: View {
             }
             blogVoiceLibrary.refreshInBackgroundIfNeeded()
         }
+    }
+
+    private func pasteAnthropicKeyFromClipboard() {
+        guard let clipboardString = NSPasteboard.general.string(forType: .string) else { return }
+        anthropicKey = normalizedAnthropicKey(from: clipboardString)
+    }
+
+    private func saveAnthropicKey() {
+        anthropicKey = normalizedAnthropicKey(from: anthropicKey)
+        KeychainService.shared.setAPIKey(anthropicKey, service: "anthropic")
+        saved = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            saved = false
+        }
+    }
+
+    private func normalizedAnthropicKey(from rawValue: String) -> String {
+        let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let keyPattern = #"sk-ant-[A-Za-z0-9_\-]+"#
+
+        if let match = trimmedValue.range(of: keyPattern, options: .regularExpression) {
+            return String(trimmedValue[match])
+        }
+
+        return trimmedValue
     }
 }
 

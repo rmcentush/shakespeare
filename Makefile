@@ -1,4 +1,4 @@
-.PHONY: all build run clean editor swift install
+.PHONY: all build run clean editor swift install llm-edit-evals
 
 all: build
 
@@ -14,6 +14,10 @@ copy-assets: editor
 # Build Swift executable
 swift: copy-assets
 	swift build
+
+llm-edit-evals:
+	swiftc Sources/WordProcessor/Services/EditTargetResolver.swift scripts/llm-edit-evals.swift -o /tmp/llm-edit-evals
+	/tmp/llm-edit-evals
 
 # Build release
 build: copy-assets
