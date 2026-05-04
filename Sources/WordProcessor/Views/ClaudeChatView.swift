@@ -6,6 +6,7 @@ struct ClaudeChatView: View {
     @Environment(EditorViewModel.self) private var editorViewModel
     @Environment(DocumentModel.self) private var document
     @State private var inputText = ""
+    @State private var shouldFollowLatestMessage = true
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -30,12 +31,18 @@ struct ClaudeChatView: View {
                             .id("bottom")
                     }
                     .padding()
+                    .background {
+                        ChatScrollObserver { isNearBottom in
+                            shouldFollowLatestMessage = isNearBottom
+                        }
+                        .frame(width: 0, height: 0)
+                    }
                 }
                 .onChange(of: chatViewModel.messages.count) {
-                    scrollToBottom(proxy, animated: true)
+                    scrollToBottomIfFollowing(proxy, animated: true)
                 }
                 .onChange(of: chatViewModel.streamingContentLength) {
-                    scrollToBottom(proxy)
+                    scrollToBottomIfFollowing(proxy)
                 }
             }
 
@@ -98,6 +105,7 @@ struct ClaudeChatView: View {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         inputText = ""
+        shouldFollowLatestMessage = true
         let editor = editorViewModel
 
         if editor.isEditorReady {
@@ -122,8 +130,14 @@ struct ClaudeChatView: View {
         chatViewModel.sendMessage(text, documentContent: document.plainTextContent, editorViewModel: editor)
     }
 
-    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = false) {
+    private func scrollToBottomIfFollowing(
+        _ proxy: ScrollViewProxy,
+        animated: Bool = false
+    ) {
+        guard shouldFollowLatestMessage else { return }
         DispatchQueue.main.async {
+            guard shouldFollowLatestMessage else { return }
+
             if animated {
                 withAnimation(.easeOut(duration: 0.15)) {
                     proxy.scrollTo("bottom", anchor: .bottom)
@@ -161,6 +175,124 @@ struct ClaudeChatView: View {
 
         editorViewModel.insertHTMLAtCursor(html)
         editorViewModel.focusEditor()
+    }
+}
+
+private struct ChatScrollObserver: NSViewRepresentable {
+    var onNearBottomChanged: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onNearBottomChanged: onNearBottomChanged)
+    }
+
+    func makeNSView(context: Context) -> TrackingView {
+        let view = TrackingView()
+        view.onAttachedToHierarchy = { [weak coordinator = context.coordinator] view in
+            DispatchQueue.main.async { [weak view, weak coordinator] in
+                coordinator?.attach(to: view?.enclosingScrollView)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: TrackingView, context: Context) {
+        context.coordinator.onNearBottomChanged = onNearBottomChanged
+
+        DispatchQueue.main.async { [weak nsView, weak coordinator = context.coordinator] in
+            coordinator?.attach(to: nsView?.enclosingScrollView)
+        }
+    }
+
+    final class TrackingView: NSView {
+        var onAttachedToHierarchy: ((TrackingView) -> Void)?
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            onAttachedToHierarchy?(self)
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            onAttachedToHierarchy?(self)
+        }
+    }
+
+    final class Coordinator {
+        private static let bottomThreshold: CGFloat = 32
+
+        var onNearBottomChanged: (Bool) -> Void
+
+        private weak var scrollView: NSScrollView?
+        private var boundsObserver: NSObjectProtocol?
+        private var lastReportedNearBottom: Bool?
+
+        init(onNearBottomChanged: @escaping (Bool) -> Void) {
+            self.onNearBottomChanged = onNearBottomChanged
+        }
+
+        deinit {
+            detach()
+        }
+
+        func attach(to scrollView: NSScrollView?) {
+            guard self.scrollView !== scrollView else { return }
+
+            detach()
+
+            guard let scrollView else { return }
+            self.scrollView = scrollView
+
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            boundsObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.reportNearBottomIfNeeded()
+            }
+
+            reportNearBottomIfNeeded(force: true)
+        }
+
+        private func detach() {
+            if let boundsObserver {
+                NotificationCenter.default.removeObserver(boundsObserver)
+            }
+
+            boundsObserver = nil
+            scrollView = nil
+            lastReportedNearBottom = nil
+        }
+
+        private func reportNearBottomIfNeeded(
+            force: Bool = false
+        ) {
+            let isNearBottom = self.isNearBottom()
+            guard force || lastReportedNearBottom != isNearBottom else { return }
+
+            lastReportedNearBottom = isNearBottom
+            onNearBottomChanged(isNearBottom)
+        }
+
+        private func isNearBottom() -> Bool {
+            guard let scrollView,
+                  let documentView = scrollView.documentView
+            else { return true }
+
+            let visibleRect = scrollView.contentView.documentVisibleRect
+            let documentBounds = documentView.bounds
+
+            guard documentBounds.height > visibleRect.height else { return true }
+
+            let distanceToBottom: CGFloat
+            if documentView.isFlipped {
+                distanceToBottom = documentBounds.maxY - visibleRect.maxY
+            } else {
+                distanceToBottom = visibleRect.minY - documentBounds.minY
+            }
+
+            return distanceToBottom <= Self.bottomThreshold
+        }
     }
 }
 
