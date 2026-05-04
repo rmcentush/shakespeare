@@ -182,7 +182,7 @@ const smartQuotesPluginKey = new PluginKey('smartQuotes');
 const SMART_QUOTES_TRANSACTION_META = 'smartQuotesNormalized';
 
 // --- Pending Edits (Cursor-like diff review) ---
-type PendingEditKind = 'selection' | 'insert' | 'findReplace';
+type PendingEditKind = 'selection' | 'insert' | 'findReplace' | 'delete';
 type PendingEditStatus = 'pending' | 'conflicted';
 
 interface PendingEdit {
@@ -262,6 +262,8 @@ function buildPendingEditLabel(source: string, kind: PendingEditKind): string {
       return `${source} insertion`;
     case 'findReplace':
       return `${source} suggestion`;
+    case 'delete':
+      return `${source} cut`;
   }
 }
 
@@ -285,12 +287,15 @@ function createPendingEdit(
       options.to,
       options.newHtml
     );
+  const kind: PendingEditKind = options.kind !== 'insert' && newHtml.trim().length === 0
+    ? 'delete'
+    : options.kind;
   return {
     id: options.id,
     groupId: options.groupId,
-    kind: options.kind,
+    kind,
     source,
-    label: buildPendingEditLabel(source, options.kind),
+    label: buildPendingEditLabel(source, kind),
     from: options.from,
     to: options.to,
     newHtml,
@@ -944,6 +949,10 @@ function htmlForAcceptedEdit(edit: PendingEdit): string {
     : edit.newHtml;
 }
 
+function isPendingEditDeletion(edit: PendingEdit): boolean {
+  return edit.from < edit.to && edit.newHtml.trim().length === 0;
+}
+
 function acceptPendingEdit(ed: Editor, id: string): boolean {
   const state = getPendingEditsState(ed.state);
   const edit = getPendingEditById(state, id);
@@ -953,13 +962,20 @@ function acceptPendingEdit(ed: Editor, id: string): boolean {
     return false;
   }
 
-  const result = ed.chain()
+  let chain = ed.chain()
     .command(({ tr }) => {
       tr.setMeta(pendingEditPluginKey, { type: 'accept', id } satisfies PendingEditAction);
+      if (isPendingEditDeletion(edit)) {
+        tr.delete(edit.from, edit.to);
+      }
       return true;
-    })
-    .insertContentAt({ from: edit.from, to: edit.to }, htmlForAcceptedEdit(edit))
-    .run();
+    });
+
+  if (!isPendingEditDeletion(edit)) {
+    chain = chain.insertContentAt({ from: edit.from, to: edit.to }, htmlForAcceptedEdit(edit));
+  }
+
+  const result = chain.run();
 
   if (result) {
     scheduleSmartQuotesNormalization(ed);
@@ -1010,7 +1026,14 @@ function acceptAllPendingEdits(ed: Editor): boolean {
   });
 
   for (const edit of sorted) {
-    chain = chain.insertContentAt({ from: edit.from, to: edit.to }, htmlForAcceptedEdit(edit));
+    if (isPendingEditDeletion(edit)) {
+      chain = chain.command(({ tr }) => {
+        tr.delete(edit.from, edit.to);
+        return true;
+      });
+    } else {
+      chain = chain.insertContentAt({ from: edit.from, to: edit.to }, htmlForAcceptedEdit(edit));
+    }
   }
 
   const result = chain.run();

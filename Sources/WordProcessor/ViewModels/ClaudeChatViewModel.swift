@@ -31,6 +31,7 @@ final class ClaudeChatViewModel {
     use the appropriate tool. If the user has text selected, use replace_selection. \
     If you need to change existing text that is not the active selection, use propose_edit with target metadata from <edit_context>. \
     To add new content, use insert_at_cursor. \
+    To suggest a cut/deletion, use replace_selection or propose_edit with an empty replacement string. \
     Keep edit targets as small as possible. If only one sentence or one bracketed section changes, target only that span instead of replacing a whole paragraph.
     For sentence-level edits, pass an inline HTML fragment or plain text as the replacement; do not wrap it in <p> unless replacing multiple whole paragraphs.
     Never guess between repeated occurrences. If the target is ambiguous, include block_id, prefix/suffix, and document_revision/document_hash from <edit_context>, or ask the user to select the text.
@@ -270,9 +271,6 @@ final class ClaudeChatViewModel {
         switch name {
         case "replace_selection":
             let html = input["html"] as? String ?? ""
-            guard !html.isEmpty else {
-                return "No replacement content was provided."
-            }
             guard html.count <= Self.maxToolHTMLCharacters else {
                 return "Suggested replacement is too large to preview safely. Narrow the request."
             }
@@ -283,7 +281,7 @@ final class ClaudeChatViewModel {
                     target: selectionTarget(from: editContext)
                 ) { count in
                     if count > 0 {
-                        cont.resume(returning: "Edit suggested for selected text. User will review before applying.")
+                        cont.resume(returning: "\(Self.suggestionNoun(for: html).capitalized) suggested for selected text. User will review before applying.")
                     } else if count == ToolExecutionResult.tooManyPendingEdits.rawValue {
                         cont.resume(returning: "Too many pending edits are already queued. Review or reject them before asking for more changes.")
                     } else if count == ToolExecutionResult.staleTarget.rawValue {
@@ -332,9 +330,6 @@ final class ClaudeChatViewModel {
             guard !(target["exact_original"] as? String ?? "").isEmpty else {
                 return "No exact original text was provided for propose_edit."
             }
-            guard !replacementHTML.isEmpty else {
-                return "No replacement content was provided."
-            }
             guard replacementHTML.count <= Self.maxToolHTMLCharacters else {
                 return "Suggested replacement is too large to preview safely. Narrow the request."
             }
@@ -346,7 +341,7 @@ final class ClaudeChatViewModel {
                 replacementHTML: replacementHTML,
                 replaceAll: replaceAll
             )
-            return editToolResult(count: count, scopeDetail: nil)
+            return editToolResult(count: count, scopeDetail: nil, isDeletion: Self.isDeletionReplacement(replacementHTML))
 
         case "find_and_replace":
             let find = input["find"] as? String ?? ""
@@ -401,10 +396,10 @@ final class ClaudeChatViewModel {
                     replaceHTML: replace,
                     replaceAll: replaceAll
                 )
-                return editToolResult(count: fallbackCount, scopeDetail: nil)
+                return editToolResult(count: fallbackCount, scopeDetail: nil, isDeletion: Self.isDeletionReplacement(replace))
             }
 
-            return editToolResult(count: count, scopeDetail: scopeDetail)
+            return editToolResult(count: count, scopeDetail: scopeDetail, isDeletion: Self.isDeletionReplacement(effectiveReplace))
 
         default:
             return "Unknown tool: \(name)"
@@ -615,23 +610,37 @@ final class ClaudeChatViewModel {
     private func toolActionLabel(name: String, inputJSON: String) -> String {
         switch name {
         case "replace_selection":
-            return "Suggested edit for selection"
+            let input = parseJSON(inputJSON)
+            let html = input["html"] as? String ?? ""
+            return Self.isDeletionReplacement(html) ? "Suggested cut for selection" : "Suggested edit for selection"
         case "insert_at_cursor":
             return "Suggested insertion at cursor"
         case "propose_edit":
             let input = parseJSON(inputJSON)
             let target = input["target"] as? [String: Any] ?? [:]
             let original = target["exact_original"] as? String ?? ""
+            let replacementHTML = input["replacement_html"] as? String ?? ""
+            let action = Self.isDeletionReplacement(replacementHTML) ? "cut" : "edit"
             let truncated = original.count > 30 ? String(original.prefix(30)) + "…" : original
-            return truncated.isEmpty ? "Suggested document edit" : "Suggested edit for \"\(truncated)\""
+            return truncated.isEmpty ? "Suggested document \(action)" : "Suggested \(action) for \"\(truncated)\""
         case "find_and_replace":
             let input = parseJSON(inputJSON)
             let find = input["find"] as? String ?? ""
+            let replace = input["replace"] as? String ?? ""
+            let action = Self.isDeletionReplacement(replace) ? "cut" : "edit"
             let truncated = find.count > 30 ? String(find.prefix(30)) + "…" : find
-            return "Suggested edit for \"\(truncated)\""
+            return "Suggested \(action) for \"\(truncated)\""
         default:
             return name
         }
+    }
+
+    private static func isDeletionReplacement(_ html: String) -> Bool {
+        html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private static func suggestionNoun(for html: String) -> String {
+        isDeletionReplacement(html) ? "cut" : "edit"
     }
 
     private func parseJSON(_ json: String) -> [String: Any] {
@@ -724,10 +733,11 @@ final class ClaudeChatViewModel {
         }
     }
 
-    private func editToolResult(count: Int, scopeDetail: String?) -> String {
+    private func editToolResult(count: Int, scopeDetail: String?, isDeletion: Bool = false) -> String {
         if count > 0 {
             let scopeSuffix = scopeDetail.map { " \($0)" } ?? ""
-            return "Suggested \(count) edit\(count == 1 ? "" : "s"). User will review before applying.\(scopeSuffix)"
+            let noun = isDeletion ? "cut" : "edit"
+            return "Suggested \(count) \(noun)\(count == 1 ? "" : "s"). User will review before applying.\(scopeSuffix)"
         }
 
         if count == ToolExecutionResult.tooManyMatches.rawValue {

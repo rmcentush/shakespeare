@@ -33,13 +33,13 @@ final class ClaudeAPIService: Sendable {
     static let documentTools: [[String: Any]] = [
         [
             "name": "replace_selection",
-            "description": "Replace the currently selected text in the document with new HTML content. Use when the user asks to modify, rewrite, edit, or change specific selected text. Keep the replacement scoped to only the selected text.",
+            "description": "Replace the currently selected text in the document with new HTML content. Use when the user asks to modify, rewrite, edit, change, cut, or delete specific selected text. Keep the replacement scoped to only the selected text. For cuts/deletions, set html to an empty string.",
             "input_schema": [
                 "type": "object",
                 "properties": [
                     "html": [
                         "type": "string",
-                        "description": "The HTML content to replace the selection with. Can include formatting like <b>, <i>, <u>, <span style='color: ...'>, etc."
+                        "description": "The HTML content to replace the selection with. Can include formatting like <b>, <i>, <u>, <span style='color: ...'>, etc. Use an empty string to suggest deleting the selection."
                     ]
                 ],
                 "required": ["html"]
@@ -61,7 +61,7 @@ final class ClaudeAPIService: Sendable {
         ] as [String: Any],
         [
             "name": "propose_edit",
-            "description": "Queue a precise, reviewable edit to existing document text. Use this instead of a loose find/replace when the user asks to revise text that is not the active selection. Target the smallest exact span that changes. Prefer a block_id from <edit_context>, the exact original text, nearby prefix/suffix, and the document revision/hash from that context so the app can resolve the target deterministically.",
+            "description": "Queue a precise, reviewable edit to existing document text. Use this instead of a loose find/replace when the user asks to revise, cut, delete, or trim text that is not the active selection. Target the smallest exact span that changes. Prefer a block_id from <edit_context>, the exact original text, nearby prefix/suffix, and the document revision/hash from that context so the app can resolve the target deterministically. For cuts/deletions, set replacement_html to an empty string.",
             "input_schema": [
                 "type": "object",
                 "properties": [
@@ -102,7 +102,7 @@ final class ClaudeAPIService: Sendable {
                     ],
                     "replacement_html": [
                         "type": "string",
-                        "description": "The HTML content to replace the target with. For replacements inside an existing paragraph, use plain text or inline tags, not a full <p> wrapper."
+                        "description": "The HTML content to replace the target with. For replacements inside an existing paragraph, use plain text or inline tags, not a full <p> wrapper. Use an empty string to suggest cutting/deleting the target text."
                     ],
                     "replace_all": [
                         "type": "boolean",
