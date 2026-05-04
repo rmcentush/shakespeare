@@ -2066,7 +2066,7 @@ const HoverableLink = Link.extend({
 });
 
 function normalizeFootnoteNote(note: string): string {
-  return smartifyQuotes(note.replace(/\r\n?/g, '\n')).trim();
+  return smartifyQuotes(note.replace(/\r\n?/g, '\n'));
 }
 
 function createFootnoteID(): string {
@@ -2351,9 +2351,124 @@ function serializeSelectionClipboardData(editor: Editor): SelectionClipboardData
   return serializeClipboardDataForRange(editor, from, to);
 }
 
-function autoResizeFootnoteEditor(textarea: HTMLTextAreaElement) {
-  textarea.style.height = 'auto';
-  textarea.style.height = `${textarea.scrollHeight}px`;
+function footnoteEditorSelector(id: string): string {
+  const escapedID = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(id)
+    : id.replace(/["\\]/g, '\\$&');
+  return `.editor-footnote-editor[data-footnote-id="${escapedID}"]`;
+}
+
+function getFootnoteEditorElement(container: HTMLElement, id: string): HTMLElement | null {
+  const editorElement = container.querySelector(footnoteEditorSelector(id));
+  return editorElement instanceof HTMLElement ? editorElement : null;
+}
+
+function appendEditablePlainText(node: Node, parts: string[]) {
+  if (node.nodeType === Node.TEXT_NODE) {
+    parts.push(node.textContent || '');
+    return;
+  }
+
+  if (node instanceof HTMLBRElement) {
+    parts.push('\n');
+    return;
+  }
+
+  if (!(node instanceof HTMLElement)) return;
+
+  const tagName = node.tagName.toLowerCase();
+  const isBlock = tagName === 'div' || tagName === 'p';
+  if (isBlock && parts.length > 0 && parts[parts.length - 1] !== '\n') {
+    parts.push('\n');
+  }
+
+  node.childNodes.forEach((child) => appendEditablePlainText(child, parts));
+
+  if (isBlock && parts[parts.length - 1] !== '\n') {
+    parts.push('\n');
+  }
+}
+
+function footnoteEditorPlainText(element: HTMLElement): string {
+  const parts: string[] = [];
+  element.childNodes.forEach((child) => appendEditablePlainText(child, parts));
+  return parts.join('').replace(/\u00a0/g, ' ').replace(/\n$/, '');
+}
+
+function setFootnoteEditorPlainText(element: HTMLElement, text: string) {
+  element.textContent = text;
+}
+
+function contentEditableSelectionOffsets(element: HTMLElement): { start: number; end: number } | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return null;
+
+  const range = selection.getRangeAt(0);
+  if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) {
+    return null;
+  }
+
+  const startRange = range.cloneRange();
+  startRange.selectNodeContents(element);
+  startRange.setEnd(range.startContainer, range.startOffset);
+
+  const endRange = range.cloneRange();
+  endRange.selectNodeContents(element);
+  endRange.setEnd(range.endContainer, range.endOffset);
+
+  return {
+    start: startRange.toString().length,
+    end: endRange.toString().length,
+  };
+}
+
+function clampTextOffset(offset: number, length: number): number {
+  return Math.max(0, Math.min(offset, length));
+}
+
+function contentEditablePointAtOffset(
+  element: HTMLElement,
+  offset: number
+): { node: Node; offset: number } {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  let remaining = Math.max(0, offset);
+  let lastTextNode: Text | null = null;
+
+  while (walker.nextNode()) {
+    const textNode = walker.currentNode as Text;
+    lastTextNode = textNode;
+    const length = textNode.data.length;
+    if (remaining <= length) {
+      return { node: textNode, offset: remaining };
+    }
+    remaining -= length;
+  }
+
+  if (lastTextNode) {
+    return { node: lastTextNode, offset: lastTextNode.data.length };
+  }
+
+  return { node: element, offset: element.childNodes.length };
+}
+
+function restoreContentEditableSelection(
+  element: HTMLElement,
+  selectionState: { start: number; end: number }
+) {
+  const selection = window.getSelection();
+  if (!selection) return;
+
+  const textLength = footnoteEditorPlainText(element).length;
+  const start = clampTextOffset(selectionState.start, textLength);
+  const end = clampTextOffset(selectionState.end, textLength);
+  const startPoint = contentEditablePointAtOffset(element, start);
+  const endPoint = contentEditablePointAtOffset(element, end);
+
+  const range = document.createRange();
+  range.setStart(startPoint.node, startPoint.offset);
+  range.setEnd(endPoint.node, endPoint.offset);
+  selection.removeAllRanges();
+  selection.addRange(range);
 }
 
 function getFootnoteByID(editor: Editor, id: string): FootnoteDetails | null {
@@ -2395,20 +2510,15 @@ function focusFootnoteEditor(id: string, placeCaretAtEnd = true): boolean {
   const container = document.getElementById('footnotes');
   if (!container) return false;
 
-  const editorElement = container.querySelector(
-    `.editor-footnote-editor[data-footnote-id="${id}"]`
-  );
-
-  if (!(editorElement instanceof HTMLTextAreaElement)) {
-    return false;
-  }
+  const editorElement = getFootnoteEditorElement(container, id);
+  if (!editorElement) return false;
 
   editorElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
   editorElement.focus();
 
   if (placeCaretAtEnd) {
-    const end = editorElement.value.length;
-    editorElement.setSelectionRange(end, end);
+    const end = footnoteEditorPlainText(editorElement).length;
+    restoreContentEditableSelection(editorElement, { start: end, end });
   }
 
   return true;
@@ -2421,25 +2531,33 @@ function updateFootnoteNote(editor: Editor, id: string, note: string) {
   const currentNode = editor.state.doc.nodeAt(footnote.pos);
   if (!currentNode) return;
 
+  const normalizedNote = normalizeFootnoteNote(note);
+  if ((currentNode.attrs.note as string || '') === normalizedNote) return;
+
   editor.view.dispatch(
     editor.state.tr.setNodeMarkup(footnote.pos, undefined, {
       ...currentNode.attrs,
-      note,
+      note: normalizedNote,
     })
   );
 }
 
 function captureFocusedFootnoteEditorState(container: HTMLElement): FocusedFootnoteEditorState | null {
   const activeElement = document.activeElement;
-  if (!(activeElement instanceof HTMLTextAreaElement)) return null;
+  if (!(activeElement instanceof HTMLElement)) return null;
 
   const id = activeElement.dataset.footnoteId;
-  if (!id || !container.contains(activeElement)) return null;
+  if (!id || !activeElement.classList.contains('editor-footnote-editor') || !container.contains(activeElement)) {
+    return null;
+  }
+
+  const selectionState = contentEditableSelectionOffsets(activeElement);
+  if (!selectionState) return null;
 
   return {
     id,
-    selectionStart: activeElement.selectionStart ?? activeElement.value.length,
-    selectionEnd: activeElement.selectionEnd ?? activeElement.value.length,
+    selectionStart: selectionState.start,
+    selectionEnd: selectionState.end,
     scrollTop: activeElement.scrollTop,
   };
 }
@@ -2450,23 +2568,21 @@ function restoreFocusedFootnoteEditorState(
 ) {
   if (!state) return;
 
-  const editorElement = container.querySelector(
-    `.editor-footnote-editor[data-footnote-id="${state.id}"]`
-  );
-
-  if (!(editorElement instanceof HTMLTextAreaElement)) {
-    return;
-  }
+  const editorElement = getFootnoteEditorElement(container, state.id);
+  if (!editorElement) return;
 
   editorElement.focus();
-  editorElement.setSelectionRange(state.selectionStart, state.selectionEnd);
+  restoreContentEditableSelection(editorElement, {
+    start: state.selectionStart,
+    end: state.selectionEnd,
+  });
   editorElement.scrollTop = state.scrollTop;
 }
 
 function syncFootnotePanelValues(container: HTMLElement, footnotes: FootnoteDetails[]) {
-  const editors = new Map<string, HTMLTextAreaElement>();
+  const editors = new Map<string, HTMLElement>();
   container.querySelectorAll('.editor-footnote-editor').forEach((element) => {
-    if (element instanceof HTMLTextAreaElement && element.dataset.footnoteId) {
+    if (element instanceof HTMLElement && element.dataset.footnoteId) {
       editors.set(element.dataset.footnoteId, element);
     }
   });
@@ -2476,9 +2592,8 @@ function syncFootnotePanelValues(container: HTMLElement, footnotes: FootnoteDeta
     if (!editorElement) return;
     if (document.activeElement === editorElement) return;
 
-    if (editorElement.value !== footnote.note) {
-      editorElement.value = footnote.note;
-      autoResizeFootnoteEditor(editorElement);
+    if (footnoteEditorPlainText(editorElement) !== footnote.note) {
+      setFootnoteEditorPlainText(editorElement, footnote.note);
     }
   });
 }
@@ -2517,19 +2632,36 @@ function renderFootnotesPanel(editor: Editor, force = false) {
     const item = document.createElement('li');
     item.id = `editor-footnote-${footnote.id}`;
 
-    const note = document.createElement('textarea');
+    const note = document.createElement('div');
     note.className = 'editor-footnote-editor';
     note.dataset.footnoteId = footnote.id;
-    note.value = footnote.note;
-    note.rows = 1;
+    note.contentEditable = 'true';
+    note.setAttribute('role', 'textbox');
+    note.setAttribute('aria-multiline', 'true');
+    note.setAttribute('data-placeholder', 'Footnote text');
     note.spellcheck = true;
-    note.placeholder = 'Footnote text';
+    setFootnoteEditorPlainText(note, footnote.note);
     note.addEventListener('focus', () => {
       selectFootnoteReference(editor, footnote.id);
     });
+    note.addEventListener('paste', (event) => {
+      event.preventDefault();
+      const pastedText = event.clipboardData?.getData('text/plain') || '';
+      document.execCommand('insertText', false, normalizeFootnoteNote(pastedText));
+    });
     note.addEventListener('input', () => {
-      autoResizeFootnoteEditor(note);
-      updateFootnoteNote(editor, footnote.id, note.value);
+      const selectionState = contentEditableSelectionOffsets(note);
+      const draftText = footnoteEditorPlainText(note);
+      const normalizedText = normalizeFootnoteNote(draftText);
+      if (
+        normalizedText !== draftText ||
+        note.querySelector('*') !== null ||
+        (normalizedText.length === 0 && note.childNodes.length > 0)
+      ) {
+        setFootnoteEditorPlainText(note, normalizedText);
+        if (selectionState) restoreContentEditableSelection(note, selectionState);
+      }
+      updateFootnoteNote(editor, footnote.id, normalizedText);
     });
     note.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
@@ -2540,7 +2672,6 @@ function renderFootnotesPanel(editor: Editor, force = false) {
         });
       }
     });
-    autoResizeFootnoteEditor(note);
     item.appendChild(note);
 
     list.appendChild(item);
@@ -2798,7 +2929,7 @@ function getSelectedFootnote(editor: Editor): { node: any; pos: number } | null 
 }
 
 function upsertFootnote(editor: Editor, note: string) {
-  const normalizedNote = normalizeFootnoteNote(note);
+  const normalizedNote = normalizeFootnoteNote(note).trim();
   if (!normalizedNote) return;
 
   const selectedFootnote = getSelectedFootnote(editor);

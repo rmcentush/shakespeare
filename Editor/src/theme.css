@@ -409,14 +409,24 @@ body {
   box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.18);
 }
 
+.footnote-reference a {
+  color: inherit;
+  text-decoration: none;
+}
+
 .editor-footnotes[hidden] {
   display: none !important;
 }
 
-.editor-footnotes {
+.editor-footnotes,
+.generated-footnotes {
   margin-top: 48px;
   padding-top: 20px;
   border-top: 1px solid #e0e0e0;
+}
+
+.generated-footnotes hr {
+  display: none;
 }
 
 .editor-footnotes-title {
@@ -428,13 +438,16 @@ body {
   color: #6a6a6a;
 }
 
-.editor-footnotes-list {
+.editor-footnotes-list,
+.generated-footnotes ol {
   padding-left: 1.4em;
 }
 
-.editor-footnotes-list li {
+.editor-footnotes-list li,
+.generated-footnotes li {
   margin-bottom: 0.8em;
   color: #3f3f3f;
+  white-space: pre-wrap;
 }
 
 .editor-footnote-editor {
@@ -443,7 +456,6 @@ body {
   min-height: 1.8em;
   padding: 0;
   border: 0;
-  resize: none;
   overflow: hidden;
   background: transparent;
   color: inherit;
@@ -451,6 +463,16 @@ body {
   line-height: inherit;
   white-space: pre-wrap;
   outline: none;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+  overflow-wrap: anywhere;
+}
+
+.editor-footnote-editor:empty::before {
+  content: attr(data-placeholder);
+  color: #8a8a8a;
+  pointer-events: none;
 }
 
 .editor-footnote-editor:focus {
@@ -662,7 +684,8 @@ body {
     box-shadow: 0 0 0 2px rgba(90, 200, 250, 0.22);
   }
 
-  .editor-footnotes {
+  .editor-footnotes,
+  .generated-footnotes {
     border-top-color: #444;
   }
 
@@ -670,8 +693,13 @@ body {
     color: #9d9d9d;
   }
 
-  .editor-footnotes-list li {
+  .editor-footnotes-list li,
+  .generated-footnotes li {
     color: #d0d0d0;
+  }
+
+  .editor-footnote-editor:empty::before {
+    color: #858585;
   }
 
   .editor-footnote-editor:focus {
