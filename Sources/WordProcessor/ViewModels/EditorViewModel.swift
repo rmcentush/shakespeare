@@ -690,22 +690,39 @@ final class EditorViewModel {
     }
 
     private func collectAmbientReviewResponse(context: EditContextSnapshot) async throws -> String {
-        let systemPrompt: [[String: Any]] = [
+        var systemPrompt: [[String: Any]] = [
             [
                 "type": "text",
                 "text": """
                 You are an ambient editor inside a word processor. The user has explicitly enabled background review.
                 Return only compact JSON. Do not use Markdown.
-                Find at most 4 high-signal opportunities to improve clarity, structure, accuracy, tone, or concision.
+                Find at most 4 high-signal opportunities to improve clarity, structure, accuracy, tone, concision, or adherence to the user's author voice.
                 Only comment on text you can anchor to a block in the supplied edit context.
+                For voice suggestions, use the author voice reference to identify concrete sentence- or paragraph-level departures: rhetorical-question pivots, throat-clearing, vague abstraction, filler, generic internet-essay phrasing, weak paragraph endings, or places where a flatter declarative, sharper catalogue, more precise noun, or tighter rhythm would better fit the user's voice.
+                Voice comments must be specific and actionable. Prefer a small suggested_replacement when the fix is local. Do not ask the user to rewrite a whole section in the abstract.
                 You will receive existing comments. Treat them as already-covered feedback, even if resolved or dismissed.
                 Do not repeat, paraphrase, or add a nearby overlapping version of an existing comment. If the only useful feedback is already covered, return {"comments":[]}.
                 Schema:
-                {"comments":[{"block_id":"...","exact_original":"exact current text span","comment":"short rationale","kind":"clarity|structure|tone|concision|grammar|accuracy","severity":"low|medium|high","suggested_replacement":"optional replacement HTML or plain text"}]}
+                {"comments":[{"block_id":"...","exact_original":"exact current text span","comment":"short rationale","kind":"clarity|structure|tone|voice|concision|grammar|accuracy","severity":"low|medium|high","suggested_replacement":"optional replacement HTML or plain text"}]}
                 If there is nothing worth saying, return {"comments":[]}.
-                """
+                """,
+                "cache_control": ClaudeAPIService.oneHourPromptCacheControl
             ]
         ]
+
+        if !AuthorStyleReference.content.isEmpty {
+            systemPrompt.append([
+                "type": "text",
+                "text": """
+                <author_voice_reference>
+                Use this fixed style reference when deciding whether to add ambient voice suggestions. Follow the guidance without copying examples verbatim.
+
+                \(AuthorStyleReference.content)
+                </author_voice_reference>
+                """,
+                "cache_control": ClaudeAPIService.oneHourPromptCacheControl
+            ])
+        }
 
         let messages: [[String: Any]] = [
             [

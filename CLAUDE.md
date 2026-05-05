@@ -17,16 +17,15 @@ make clean        # Remove .build, node_modules, dist, copied assets
 
 The build pipeline: `Editor/src/*.ts` → esbuild IIFE → `Editor/dist/` → copied to `Sources/WordProcessor/Resources/` → bundled via SPM `.copy("Resources")`.
 
-## Blog Voice Corpus
+## LLM Style Context
 
-The app now maintains a local writing corpus for `https://davidoks.blog` so Claude can draft in David's published voice.
+The Claude sidebar uses a bundled style reference instead of a synced corpus of David's published posts.
 
-- Runtime cache directory: `~/Library/Application Support/Shakespeare/BlogVoice/`
-- Full corpus JSON: `~/Library/Application Support/Shakespeare/BlogVoice/blog-voice-corpus.json`
-- Prompt-ready reference file: `~/Library/Application Support/Shakespeare/BlogVoice/blog-voice-context.md`
-- Sync sources: `https://davidoks.blog/feed` plus yearly sitemap pages such as `https://davidoks.blog/sitemap/2026`
+- Prompt reference resource: `Sources/WordProcessor/Resources/david_oks_style_guide.md`
+- Resource copy entry: `Package.swift`
+- Prompt injection points: `Sources/WordProcessor/ViewModels/ClaudeChatViewModel.swift` and ambient review in `Sources/WordProcessor/ViewModels/EditorViewModel.swift`
 
-When working on prose features or prompting, assume the app can refresh this cache from **Settings → Blog Voice** and that Claude's system prompt may include the synced reference material.
+When working on prose features or prompting, treat `david_oks_style_guide.md` as the high-priority voice reference for both sidebar drafting and ambient voice suggestions. The current document is still sent to Claude for topic, continuity, and edit targeting, but not as the primary voice corpus.
 
 ## Architecture
 

@@ -37,15 +37,14 @@ The editor works on its own, but to use the Claude sidebar (Cmd+\\):
 
 Your key is stored locally in `~/Library/Application Support/Shakespeare/` with restricted file permissions.
 
-### Blog voice sync
+### Style context
 
-Shakespeare can also sync a local voice corpus from `davidoks.blog` and feed that into Claude so drafts better match David Oks's published style.
+Shakespeare includes a bundled David Oks sentence and paragraph style guide and feeds it into Claude as the sidebar's voice reference. Ambient Review also uses the guide when making voice suggestions. The current document is still sent for topic, continuity, and edit targeting.
 
 1. Open **Settings** (Cmd+,)
-2. Go to **Blog Voice**
-3. Click **Sync Now**
+2. Go to **Style Context**
 
-The synced corpus is cached locally in `~/Library/Application Support/Shakespeare/BlogVoice/`.
+The bundled reference lives at `Sources/WordProcessor/Resources/david_oks_style_guide.md`.
 
 ## Build commands
 

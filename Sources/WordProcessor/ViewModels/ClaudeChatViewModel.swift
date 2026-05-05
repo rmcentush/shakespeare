@@ -435,21 +435,20 @@ final class ClaudeChatViewModel {
         let preparedDocument = await Task.detached(priority: .utility) {
             Self.prepareDocumentContext(documentContent)
         }.value
-        let blogVoiceContext = await BlogVoiceLibrary.shared.ensureCorpusAvailable()
 
         var blocks: [[String: Any]] = [
             Self.cachedSystemBlock(Self.baseSystemPrompt)
         ]
 
-        if let blogVoiceContext, !blogVoiceContext.isEmpty {
+        if !AuthorStyleReference.content.isEmpty {
             blocks.append(
                 Self.cachedSystemBlock(
                     """
                     <author_voice_reference>
-                    The user has a synced corpus of published writing from their blog. Use it as a high-priority reference for voice, cadence, pacing, and rhetorical habits when you draft or rewrite prose.
-                    Match the style without copying distinctive phrasing, examples, or structure too closely.
+                    Use this fixed style reference as the high-priority guide for voice, cadence, pacing, sentence shape, paragraph movement, diction, and rhetorical habits when you draft or rewrite prose for the user.
+                    This reference replaces the previous broad corpus context of the user's published writing. Follow the guidance without copying examples verbatim.
 
-                    \(blogVoiceContext)
+                    \(AuthorStyleReference.content)
                     </author_voice_reference>
                     """
                 )
@@ -474,7 +473,7 @@ final class ClaudeChatViewModel {
             blocks.append(
                 Self.uncachedSystemBlock(
                     """
-                    The user is currently working on the document below. Use it to understand their writing style, voice, topic, and context when responding.
+                    The user is currently working on the document below. Use it for topic, facts, continuity, and edit context when responding. Do not treat it as the primary voice reference; use <author_voice_reference> for style.
 
                     <current_document>
                     \(preparedDocument)

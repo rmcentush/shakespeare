@@ -5,7 +5,6 @@ struct SettingsView: View {
     @State private var anthropicKey = ""
     @State private var showKey = false
     @State private var saved = false
-    @State private var blogVoiceLibrary = BlogVoiceLibrary.shared
 
     // Font settings
     @State private var fontManager = FontManager.shared
@@ -59,54 +58,19 @@ struct SettingsView: View {
             .tabItem { Label("API Keys", systemImage: "key") }
 
             Form {
-                Section("Blog Voice") {
-                    LabeledContent("Source") {
-                        Text(blogVoiceLibrary.sourceURLString)
-                            .textSelection(.enabled)
-                    }
-
-                    HStack {
-                        Button(blogVoiceLibrary.isSyncing ? "Syncing..." : "Sync Now") {
-                            Task {
-                                await blogVoiceLibrary.syncNow()
-                            }
-                        }
-                        .disabled(blogVoiceLibrary.isSyncing)
-
-                        if let errorMessage = blogVoiceLibrary.lastErrorMessage {
-                            Text(errorMessage)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                        } else {
-                            Text(blogVoiceLibrary.statusSummary)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                Section("What Claude Uses") {
-                    Text("Claude gets a local cache of your published posts from davidoks.blog so it can mirror your voice when drafting or rewriting.")
+                Section("Style Reference") {
+                    Text("Claude uses a fixed David Oks sentence and paragraph style guide as its voice reference when drafting or rewriting. The current document is still sent for topic, continuity, and edit targeting.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
                     LabeledContent("Reference File") {
-                        Text(blogVoiceLibrary.contextFilePath)
+                        Text(styleReferencePath)
                             .font(.caption2)
                             .textSelection(.enabled)
                     }
                 }
-
-                if !blogVoiceLibrary.recentPostTitles.isEmpty {
-                    Section("Recent Synced Posts") {
-                        ForEach(blogVoiceLibrary.recentPostTitles, id: \.self) { title in
-                            Text(title)
-                                .font(.caption)
-                        }
-                    }
-                }
             }
-            .tabItem { Label("Blog Voice", systemImage: "text.book.closed") }
+            .tabItem { Label("Style Context", systemImage: "text.book.closed") }
 
             // Typography tab
             Form {
@@ -187,8 +151,12 @@ struct SettingsView: View {
             if let key = KeychainService.shared.getAPIKey(service: "anthropic") {
                 anthropicKey = key
             }
-            blogVoiceLibrary.refreshInBackgroundIfNeeded()
         }
+    }
+
+    private var styleReferencePath: String {
+        Bundle.module.url(forResource: "david_oks_style_guide", withExtension: "md")?.path
+            ?? "Bundled resource: david_oks_style_guide.md"
     }
 
     private func pasteAnthropicKeyFromClipboard() {

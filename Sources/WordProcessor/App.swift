@@ -199,9 +199,6 @@ private struct EditorWindowRootView: View {
             .environment(document)
             .environment(editorViewModel)
             .focusedSceneValue(\.windowCommandContext, windowCommandContext)
-            .task {
-                BlogVoiceLibrary.shared.refreshInBackgroundIfNeeded()
-            }
             .onOpenURL { url in
                 editorViewModel.openFile(url: url, document: document)
             }

@@ -11,6 +11,7 @@ let package = Package(
             resources: [
                 .copy("Resources/Fonts"),
                 .copy("Resources/ai_tropes.md"),
+                .copy("Resources/david_oks_style_guide.md"),
                 .copy("Resources/editor.css"),
                 .copy("Resources/editor.html"),
                 .copy("Resources/editor.js")
