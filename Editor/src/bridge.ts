@@ -20,7 +20,8 @@ export type BridgeMessageType =
   | 'wordCount'
   | 'pendingEditUpdate'
   | 'commentsChanged'
-  | 'commentActivated';
+  | 'commentActivated'
+  | 'openURL';
 
 export interface BridgeMessage {
   type: BridgeMessageType;

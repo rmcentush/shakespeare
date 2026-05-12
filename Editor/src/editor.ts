@@ -3164,11 +3164,51 @@ const Footnote = TiptapNode.create({
 });
 
 const linkPreviewElement = document.getElementById('link-preview');
+let linkPreviewHref = '';
+let linkPreviewIsHovered = false;
+let linkAnchorIsHovered = false;
+let linkPreviewHideTimer: number | null = null;
+
+function clearLinkPreviewHideTimer() {
+  if (linkPreviewHideTimer !== null) {
+    window.clearTimeout(linkPreviewHideTimer);
+    linkPreviewHideTimer = null;
+  }
+}
 
 function hideLinkPreview() {
+  clearLinkPreviewHideTimer();
+  linkPreviewHref = '';
+  linkPreviewIsHovered = false;
+  linkAnchorIsHovered = false;
   if (!linkPreviewElement) return;
   linkPreviewElement.classList.remove('is-visible');
   linkPreviewElement.setAttribute('aria-hidden', 'true');
+}
+
+function scheduleHideLinkPreview() {
+  clearLinkPreviewHideTimer();
+  linkPreviewHideTimer = window.setTimeout(() => {
+    linkPreviewHideTimer = null;
+    if (!linkPreviewIsHovered && !linkAnchorIsHovered) {
+      hideLinkPreview();
+    }
+  }, 180);
+}
+
+function isLinkOpenable(href: string): boolean {
+  if (!href) return false;
+  try {
+    const url = new URL(href, document.baseURI);
+    return url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'mailto:';
+  } catch {
+    return false;
+  }
+}
+
+function openLinkInExternalApp(href: string) {
+  if (!isLinkOpenable(href)) return;
+  sendToSwift('openURL', { url: href });
 }
 
 function positionLinkPreview(event: MouseEvent) {
@@ -3197,15 +3237,20 @@ function positionLinkPreview(event: MouseEvent) {
 function showLinkPreview(anchor: HTMLAnchorElement, event: MouseEvent) {
   if (!linkPreviewElement) return;
 
-  const href = anchor.getAttribute('href')?.trim();
+  const href = anchor.getAttribute('href')?.trim() ?? '';
   if (!href) {
     hideLinkPreview();
     return;
   }
 
+  linkAnchorIsHovered = true;
+  clearLinkPreviewHideTimer();
+  linkPreviewHref = href;
   linkPreviewElement.textContent = href;
   linkPreviewElement.classList.add('is-visible');
   linkPreviewElement.setAttribute('aria-hidden', 'false');
+  linkPreviewElement.setAttribute('role', 'link');
+  linkPreviewElement.setAttribute('title', 'Click to open · ⌘-click on link to open');
   positionLinkPreview(event);
 }
 
@@ -3215,7 +3260,8 @@ function attachLinkHoverPreview(editor: Editor) {
   root.addEventListener('mousemove', (event) => {
     const target = event.target;
     if (!(target instanceof Element)) {
-      hideLinkPreview();
+      linkAnchorIsHovered = false;
+      scheduleHideLinkPreview();
       return;
     }
 
@@ -3225,13 +3271,65 @@ function attachLinkHoverPreview(editor: Editor) {
       return;
     }
 
+    linkAnchorIsHovered = false;
+    scheduleHideLinkPreview();
+  });
+
+  root.addEventListener('mouseleave', () => {
+    linkAnchorIsHovered = false;
+    scheduleHideLinkPreview();
+  });
+
+  root.addEventListener('mousedown', (event) => {
+    if (event.target instanceof Element) {
+      const anchor = event.target.closest('a[href]');
+      if (anchor instanceof HTMLAnchorElement && root.contains(anchor) && event.metaKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+    }
     hideLinkPreview();
   });
 
-  root.addEventListener('mouseleave', hideLinkPreview);
-  root.addEventListener('mousedown', hideLinkPreview);
+  root.addEventListener('click', (event) => {
+    if (!event.metaKey || event.button !== 0) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const anchor = target.closest('a[href]');
+    if (!(anchor instanceof HTMLAnchorElement) || !root.contains(anchor)) return;
+    const href = anchor.getAttribute('href')?.trim() ?? '';
+    if (!href || !isLinkOpenable(href)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openLinkInExternalApp(href);
+    hideLinkPreview();
+  });
+
   root.addEventListener('dragstart', hideLinkPreview);
   document.addEventListener('scroll', hideLinkPreview, true);
+
+  if (linkPreviewElement) {
+    linkPreviewElement.addEventListener('mouseenter', () => {
+      linkPreviewIsHovered = true;
+      clearLinkPreviewHideTimer();
+    });
+    linkPreviewElement.addEventListener('mouseleave', () => {
+      linkPreviewIsHovered = false;
+      scheduleHideLinkPreview();
+    });
+    linkPreviewElement.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    linkPreviewElement.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const href = linkPreviewHref;
+      hideLinkPreview();
+      openLinkInExternalApp(href);
+    });
+  }
 }
 
 const MIN_IMAGE_WIDTH = 80;
@@ -4273,33 +4371,52 @@ const SmartQuotes = Extension.create({
   },
 });
 
-const PASTE_STYLE_PROPERTIES = [
-  'font-family',
-  'background',
-  'background-color',
-  '-webkit-text-fill-color',
-];
+const PASTE_STRIP_ATTRIBUTES = new Set([
+  'style',
+  'class',
+  'id',
+  'color',
+  'bgcolor',
+  'face',
+  'size',
+  'align',
+  'lang',
+  'dir',
+  'width',
+  'height',
+  'cellpadding',
+  'cellspacing',
+  'border',
+]);
+
+const PASTE_PRESERVE_ATTRIBUTES_BY_TAG: Record<string, Set<string>> = {
+  a: new Set(['href', 'title', 'target', 'rel']),
+  img: new Set(['src', 'alt', 'title', 'width', 'height']),
+  ol: new Set(['start', 'type']),
+};
+
+function shouldStripPastedAttribute(tagName: string, attrName: string): boolean {
+  const lowered = attrName.toLowerCase();
+  if (lowered.startsWith('on')) return true;
+  if (lowered.startsWith('data-')) return false;
+  const preserve = PASTE_PRESERVE_ATTRIBUTES_BY_TAG[tagName];
+  if (preserve?.has(lowered)) return false;
+  return PASTE_STRIP_ATTRIBUTES.has(lowered);
+}
 
 function sanitizePastedHTML(html: string, contextBefore = ''): string {
   const parsed = new DOMParser().parseFromString(stripGeneratedFootnotesSection(html), 'text/html');
 
   parsed.querySelectorAll(GENERATED_FOOTNOTES_SELECTOR).forEach((element) => element.remove());
-  parsed.querySelectorAll('style, meta, link').forEach((element) => element.remove());
+  parsed.querySelectorAll('style, meta, link, script, noscript, title').forEach((element) => element.remove());
 
   parsed.body.querySelectorAll('*').forEach((element) => {
-    if (element instanceof HTMLElement) {
-      PASTE_STYLE_PROPERTIES.forEach((property) => {
-        element.style.removeProperty(property);
-      });
-    }
-
-    ['color', 'bgcolor', 'face'].forEach((attribute) => {
-      element.removeAttribute(attribute);
+    const tagName = element.tagName.toLowerCase();
+    Array.from(element.attributes).forEach((attribute) => {
+      if (shouldStripPastedAttribute(tagName, attribute.name)) {
+        element.removeAttribute(attribute.name);
+      }
     });
-
-    if (!element.getAttribute('style')?.trim()) {
-      element.removeAttribute('style');
-    }
   });
 
   smartifyDOMTextNodes(parsed.body, contextBefore);

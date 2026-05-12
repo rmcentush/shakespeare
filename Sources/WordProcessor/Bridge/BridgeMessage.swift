@@ -14,6 +14,7 @@ enum BridgePayload: Codable {
     case pendingEditUpdate(PendingEditUpdateData)
     case commentsChanged([CommentData], documentChanged: Bool)
     case commentActivated(commentId: String)
+    case openURL(url: String)
     case unknown
 
     struct SelectionState: Codable {
@@ -198,6 +199,8 @@ enum BridgePayload: Codable {
             return .commentsChanged(comments, documentChanged: documentChanged)
         case "commentActivated":
             return .commentActivated(commentId: payload["commentId"] as? String ?? "")
+        case "openURL":
+            return .openURL(url: payload["url"] as? String ?? "")
         default:
             return .unknown
         }

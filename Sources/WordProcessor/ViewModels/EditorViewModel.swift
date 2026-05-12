@@ -274,6 +274,13 @@ final class EditorViewModel {
                 userInfo: ["commentId": commentId]
             )
 
+        case .openURL(let urlString):
+            guard let url = URL(string: urlString),
+                  let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https" || scheme == "mailto"
+            else { break }
+            NSWorkspace.shared.open(url)
+
         case .unknown:
             break
         }
