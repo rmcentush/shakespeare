@@ -20,10 +20,14 @@ mkdir -p "$MACOS" "$RESOURCES"
 # Copy executable
 cp "$BUILD_DIR/$APP_NAME" "$MACOS/$APP_NAME"
 
-# Copy resources
-if [ -d "$BUILD_DIR/${APP_NAME}_${APP_NAME}.bundle" ]; then
-    cp -R "$BUILD_DIR/${APP_NAME}_${APP_NAME}.bundle/" "$RESOURCES/"
+# Copy the SwiftPM resource bundle. The synthesized Bundle.module accessor looks for
+# this bundle next to Bundle.main.bundleURL, which is the .app root for this app.
+RESOURCE_BUNDLE="${APP_NAME}_${APP_NAME}.bundle"
+if [ ! -d "$BUILD_DIR/$RESOURCE_BUNDLE" ]; then
+    echo "Missing resource bundle: $BUILD_DIR/$RESOURCE_BUNDLE" >&2
+    exit 1
 fi
+cp -R "$BUILD_DIR/$RESOURCE_BUNDLE" "$APP_BUNDLE/"
 
 # Copy app icon
 if [ -f "AppIcon.icns" ]; then
