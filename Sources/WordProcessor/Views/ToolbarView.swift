@@ -160,6 +160,12 @@ struct ToolbarView: View {
 
             Spacer()
 
+            ZoomControls()
+
+            Divider()
+                .frame(height: 20)
+                .padding(.horizontal, 4)
+
             // Focus mode
             FocusModeButton()
 
@@ -238,6 +244,44 @@ struct AppearanceToggle: View {
             NSApp.appearance = nil
             viewModel.setThemeCSS(FontManager.shared.themedCSS(for: mode))
         }
+    }
+}
+
+struct ZoomControls: View {
+    @Environment(EditorViewModel.self) private var viewModel
+    @State private var isResetHovered = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            FormatButton(icon: "minus.magnifyingglass", isActive: false) {
+                viewModel.zoomOut()
+            }
+            .disabled(!viewModel.canZoomOut)
+            .help("Zoom Out (Cmd+-)")
+
+            Button {
+                viewModel.resetZoom()
+            } label: {
+                Text("\(viewModel.zoomPercent)%")
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundColor(viewModel.zoomPercent == 100 ? .secondary : .primary)
+                    .frame(width: 50, height: 28)
+                    .background(isResetHovered ? Color.primary.opacity(0.08) : Color.clear)
+                    .cornerRadius(4)
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                isResetHovered = hovering
+            }
+            .help("Actual Size (Cmd+0)")
+
+            FormatButton(icon: "plus.magnifyingglass", isActive: false) {
+                viewModel.zoomIn()
+            }
+            .disabled(!viewModel.canZoomIn)
+            .help("Zoom In (Cmd++)")
+        }
+        .accessibilityLabel("Zoom")
     }
 }
 

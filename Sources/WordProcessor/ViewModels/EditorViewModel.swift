@@ -5,10 +5,15 @@ import WebKit
 @Observable
 @MainActor
 final class EditorViewModel {
-    var webView: WKWebView?
+    var webView: WKWebView? {
+        didSet {
+            applyCurrentZoomToWebView()
+        }
+    }
     var isEditorReady = false
     var assetBaseURL: URL?
     var selectionState = SelectionState()
+    var zoomScale = EditorViewModel.storedZoomScale()
     var pendingEdits: [PendingEdit] = []
     var pendingEditCount = 0
     var pendingEditCurrentIndex = -1
@@ -31,6 +36,11 @@ final class EditorViewModel {
     @ObservationIgnored private let ambientReviewService = ClaudeAPIService()
     /// Incremented each time the editor signals ready (supports detecting web process restarts).
     var editorReadyCount = 0
+    private static let zoomDefaultsKey = "editorZoomScale"
+    private static let minimumZoomScale = 0.5
+    private static let maximumZoomScale = 2.0
+    private static let defaultZoomScale = 1.0
+    private static let zoomStep = 0.1
 
     struct SelectionState: Equatable {
         var isBold = false
@@ -389,6 +399,41 @@ final class EditorViewModel {
         }
 
         return false
+    }
+
+    var zoomPercent: Int {
+        Int((zoomScale * 100).rounded())
+    }
+
+    var canZoomIn: Bool {
+        zoomScale < Self.maximumZoomScale
+    }
+
+    var canZoomOut: Bool {
+        zoomScale > Self.minimumZoomScale
+    }
+
+    func zoomIn() {
+        setZoomScale(zoomScale + Self.zoomStep)
+    }
+
+    func zoomOut() {
+        setZoomScale(zoomScale - Self.zoomStep)
+    }
+
+    func resetZoom() {
+        setZoomScale(Self.defaultZoomScale)
+    }
+
+    func setZoomScale(_ scale: Double) {
+        let normalizedScale = Self.normalizedZoomScale(scale)
+        zoomScale = normalizedScale
+        UserDefaults.standard.set(normalizedScale, forKey: Self.zoomDefaultsKey)
+        applyCurrentZoomToWebView()
+    }
+
+    func applyCurrentZoomToWebView() {
+        webView?.pageZoom = CGFloat(zoomScale)
     }
 
     func copySelectionWithImagesToPasteboard(cutAfterCopy: Bool) async -> Bool {
@@ -1461,6 +1506,17 @@ final class EditorViewModel {
         }
 
         return String(arrayLiteral.dropFirst().dropLast())
+    }
+
+    private static func storedZoomScale() -> Double {
+        let storedScale = UserDefaults.standard.double(forKey: zoomDefaultsKey)
+        guard storedScale > 0 else { return defaultZoomScale }
+        return normalizedZoomScale(storedScale)
+    }
+
+    private static func normalizedZoomScale(_ scale: Double) -> Double {
+        let clampedScale = min(max(scale, minimumZoomScale), maximumZoomScale)
+        return (clampedScale / zoomStep).rounded() * zoomStep
     }
 
     private func evaluateJS(_ js: String, completion: ((Any?) -> Void)? = nil) {

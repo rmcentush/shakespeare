@@ -330,6 +330,23 @@ struct ContentView: View {
         .keyboardShortcut("v", modifiers: [.command, .shift])
         .hidden()
 
+        // Standard editor zoom shortcuts
+        Button("") { editorViewModel.zoomIn() }
+            .keyboardShortcut("+", modifiers: .command)
+            .hidden()
+
+        Button("") { editorViewModel.zoomIn() }
+            .keyboardShortcut("=", modifiers: .command)
+            .hidden()
+
+        Button("") { editorViewModel.zoomOut() }
+            .keyboardShortcut("-", modifiers: .command)
+            .hidden()
+
+        Button("") { editorViewModel.resetZoom() }
+            .keyboardShortcut("0", modifiers: .command)
+            .hidden()
+
         // Cmd+F to open find bar
         Button("") {
             withAnimation(.easeInOut(duration: 0.15)) {
