@@ -99,7 +99,7 @@ struct SettingsView: View {
 
                     HStack {
                         Text("Line Height: \(String(format: "%.1f", fontManager.currentLineHeight))")
-                        Slider(value: $fontManager.currentLineHeight, in: 1.2...2.5, step: 0.1)
+                        Slider(value: $fontManager.currentLineHeight, in: 1.0...2.5, step: 0.1)
                     }
                 }
 

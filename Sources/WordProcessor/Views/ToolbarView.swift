@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 struct ToolbarView: View {
     @Environment(EditorViewModel.self) private var viewModel
     @State private var fontManager = FontManager.shared
-    private let lineHeightOptions: [Double] = Array(stride(from: 1.2, through: 2.4, by: 0.1)).map {
+    private let lineHeightOptions: [Double] = Array(stride(from: 1.0, through: 2.4, by: 0.1)).map {
         Double(round($0 * 10) / 10)
     }
 

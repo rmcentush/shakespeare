@@ -23,6 +23,107 @@ private struct WindowCommandContextKey: FocusedValueKey {
     typealias Value = WindowCommandContext
 }
 
+@MainActor
+private final class RecentDocumentRouter {
+    static let shared = RecentDocumentRouter()
+
+    private var openHandlers: [UUID: (URL) -> Void] = [:]
+    private var handlerOrder: [UUID] = []
+    private var activeHandlerID: UUID?
+
+    func register(id: UUID, openHandler: @escaping (URL) -> Void) {
+        openHandlers[id] = openHandler
+        if !handlerOrder.contains(id) {
+            handlerOrder.append(id)
+        }
+        if activeHandlerID == nil {
+            activeHandlerID = id
+        }
+    }
+
+    func unregister(id: UUID) {
+        openHandlers[id] = nil
+        handlerOrder.removeAll { $0 == id }
+        if activeHandlerID == id {
+            activeHandlerID = handlerOrder.last
+        }
+    }
+
+    func markActive(id: UUID) {
+        guard openHandlers[id] != nil else { return }
+        activeHandlerID = id
+    }
+
+    @discardableResult
+    func open(_ url: URL) -> Bool {
+        if let activeHandlerID, let openHandler = openHandlers[activeHandlerID] {
+            openHandler(url)
+            return true
+        }
+
+        for id in handlerOrder.reversed() {
+            if let openHandler = openHandlers[id] {
+                activeHandlerID = id
+                openHandler(url)
+                return true
+            }
+        }
+
+        return false
+    }
+}
+
+private final class WordProcessorAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let menu = NSMenu()
+        let recentFiles = DocumentModel.recentFiles()
+
+        if recentFiles.isEmpty {
+            let item = NSMenuItem(title: "No Recent Documents", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+            return menu
+        }
+
+        for recentFile in recentFiles {
+            let item = NSMenuItem(
+                title: recentFile.name,
+                action: #selector(openRecentDocument(_:)),
+                keyEquivalent: ""
+            )
+            item.representedObject = recentFile.url
+            item.toolTip = recentFile.url.path
+            item.target = self
+            menu.addItem(item)
+        }
+
+        menu.addItem(.separator())
+
+        let clearItem = NSMenuItem(
+            title: "Clear Recent Documents",
+            action: #selector(clearRecentDocuments(_:)),
+            keyEquivalent: ""
+        )
+        clearItem.target = self
+        menu.addItem(clearItem)
+
+        return menu
+    }
+
+    @MainActor
+    @objc private func openRecentDocument(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+
+        NSApp.activate(ignoringOtherApps: true)
+        _ = RecentDocumentRouter.shared.open(url)
+    }
+
+    @MainActor
+    @objc private func clearRecentDocuments(_ sender: NSMenuItem) {
+        DocumentModel.clearRecentFiles()
+    }
+}
+
 extension FocusedValues {
     fileprivate var windowCommandContext: WindowCommandContext? {
         get { self[WindowCommandContextKey.self] }
@@ -193,13 +294,31 @@ private struct WordProcessorCommands: Commands {
 private struct EditorWindowRootView: View {
     @State private var document = DocumentModel()
     @State private var editorViewModel = EditorViewModel()
+    @State private var recentDocumentHandlerID = UUID()
 
     var body: some View {
         ContentView()
             .environment(document)
             .environment(editorViewModel)
             .focusedSceneValue(\.windowCommandContext, windowCommandContext)
+            .onAppear {
+                RecentDocumentRouter.shared.register(id: recentDocumentHandlerID) { url in
+                    editorViewModel.openFile(url: url, document: document)
+                }
+            }
+            .onDisappear {
+                RecentDocumentRouter.shared.unregister(id: recentDocumentHandlerID)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+                guard let window = notification.object as? NSWindow,
+                      editorViewModel.webView?.window === window
+                else {
+                    return
+                }
+                RecentDocumentRouter.shared.markActive(id: recentDocumentHandlerID)
+            }
             .onOpenURL { url in
+                RecentDocumentRouter.shared.markActive(id: recentDocumentHandlerID)
                 editorViewModel.openFile(url: url, document: document)
             }
     }
@@ -264,6 +383,8 @@ private struct EditorWindowRootView: View {
 
 @main
 struct WordProcessorApp: App {
+    @NSApplicationDelegateAdaptor(WordProcessorAppDelegate.self) private var appDelegate
+
     init() {
         // Prevent multiple instances: if another WordProcessor is already running, activate it and quit
         let myPID = ProcessInfo.processInfo.processIdentifier

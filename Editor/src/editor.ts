@@ -4564,6 +4564,11 @@ function setEditorAutocorrectEnabled(enabled: boolean) {
   dom.setAttribute('autocorrect', enabled ? 'on' : 'off');
 }
 
+function setEditorZoomScale(scale: number) {
+  const normalizedScale = Number.isFinite(scale) ? Math.min(Math.max(scale, 0.5), 2) : 1;
+  document.documentElement.style.setProperty('--editor-zoom-scale', normalizedScale.toString());
+}
+
 // Register callbacks for Swift to call into JS
 registerSwiftCallbacks({
   loadContent(html: string) {
@@ -4719,6 +4724,9 @@ registerSwiftCallbacks({
   },
   setAutocorrectEnabled(enabled: boolean) {
     setEditorAutocorrectEnabled(enabled);
+  },
+  setZoomScale(scale: number) {
+    setEditorZoomScale(scale);
   },
   setEditable(editable: boolean) {
     editor.setEditable(editable);

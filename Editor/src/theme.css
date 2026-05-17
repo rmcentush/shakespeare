@@ -7,7 +7,7 @@
 }
 
 html, body {
-  height: 100%;
+  min-height: 100%;
   background: #ffffff;
   color: #1a1a1a;
   -webkit-font-smoothing: auto;
@@ -25,6 +25,7 @@ body {
   margin: 0 auto;
   min-height: 100vh;
   padding: 60px 40px 80px;
+  zoom: var(--editor-zoom-scale, 1);
 }
 
 #editor {

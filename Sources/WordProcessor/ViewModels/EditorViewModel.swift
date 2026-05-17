@@ -433,7 +433,8 @@ final class EditorViewModel {
     }
 
     func applyCurrentZoomToWebView() {
-        webView?.pageZoom = CGFloat(zoomScale)
+        webView?.pageZoom = 1
+        callEditorAPI("setZoomScale", arguments: [zoomScale])
     }
 
     func copySelectionWithImagesToPasteboard(cutAfterCopy: Bool) async -> Bool {
