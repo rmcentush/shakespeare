@@ -135,6 +135,8 @@ final class FontManager {
                 family = "Signifier"
             } else if nameLower.contains("edgar") {
                 family = "Edgar"
+            } else if nameLower.contains("quadraat") {
+                family = "Quadraat"
             } else {
                 // Fallback: use filename as family name
                 family = filename
@@ -143,7 +145,11 @@ final class FontManager {
             // Determine weight and style from filename
             let isBlack = nameLower.contains("black")
             let isBold = nameLower.contains("bold") || nameLower.contains("medium")
-            let isItalic = nameLower.contains("italic") || nameLower.hasSuffix("-it") || nameLower.hasSuffix("it")
+            let isItalic = nameLower.contains("italic") ||
+                nameLower.hasSuffix("-it") ||
+                nameLower.hasSuffix("it") ||
+                nameLower.hasSuffix("ita") ||
+                nameLower.contains("boldita")
 
             let weight = isBlack ? "900" : isBold ? "700" : "400"
             let style = isItalic ? "italic" : "normal"

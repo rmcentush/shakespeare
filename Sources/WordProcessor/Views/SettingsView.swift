@@ -83,6 +83,7 @@ struct SettingsView: View {
                         Text("Charter").tag("Charter")
                         Text("Signifier").tag("Signifier")
                         Text("Edgar").tag("Edgar")
+                        Text("Quadraat").tag("Quadraat")
                         Text("EBGaramond").tag("EBGaramond")
                         Text("Times New Roman").tag("Times New Roman")
                         Text("Georgia").tag("Georgia")
