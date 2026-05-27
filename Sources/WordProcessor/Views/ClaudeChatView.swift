@@ -66,6 +66,7 @@ struct ClaudeChatView: View {
 
                 TextField("Ask Claude...", text: $inputText, axis: .vertical)
                     .textFieldStyle(.plain)
+                    .font(ClaudeChatFont.input)
                     .lineLimit(1...5)
                     .focused($isInputFocused)
                     .onSubmit {
@@ -175,6 +176,17 @@ struct ClaudeChatView: View {
 
         editorViewModel.insertHTMLAtCursor(html)
         editorViewModel.focusEditor()
+    }
+}
+
+private enum ClaudeChatFont {
+    static let familyName = "Anthropic Serif Web Text"
+
+    static let input = text(size: 13.5)
+    static let message = text(size: 13.5)
+
+    static func text(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .custom(familyName, size: size).weight(weight)
     }
 }
 
@@ -360,7 +372,7 @@ struct MessageBubble: View {
             AssistantMessageContent(content: message.content)
         } else {
             Text(verbatim: message.content)
-                .font(.body)
+                .font(ClaudeChatFont.message)
                 .foregroundStyle(.primary)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -402,13 +414,13 @@ private struct SystemMessageRow: View {
                         .font(.system(size: 11, weight: .semibold))
 
                     Text(message.content)
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(ClaudeChatFont.text(size: 12.5, weight: .semibold))
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if let detail = message.detail, !detail.isEmpty {
                     Text(detail)
-                        .font(.system(size: 11.5))
+                        .font(ClaudeChatFont.text(size: 11.5))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -506,6 +518,7 @@ private struct MarkdownText: View {
         }
         .foregroundStyle(.primary)
         .fixedSize(horizontal: false, vertical: true)
+        .font(ClaudeChatFont.message)
         .lineSpacing(3)
     }
 
@@ -526,7 +539,7 @@ private struct MarkdownText: View {
                 ForEach(Array(items.enumerated()), id: \.offset) { entry in
                     HStack(alignment: .firstTextBaseline, spacing: 7) {
                         Text("•")
-                            .font(.body.weight(.semibold))
+                            .font(ClaudeChatFont.text(size: 13.5, weight: .semibold))
                         InlineMarkdownText(content: entry.element)
                     }
                 }
@@ -537,7 +550,7 @@ private struct MarkdownText: View {
                 ForEach(Array(items.enumerated()), id: \.offset) { entry in
                     HStack(alignment: .firstTextBaseline, spacing: 7) {
                         Text("\(entry.offset + 1).")
-                            .font(.body.weight(.medium))
+                            .font(ClaudeChatFont.text(size: 13.5, weight: .medium))
                             .foregroundStyle(.secondary)
                         InlineMarkdownText(content: entry.element)
                     }
@@ -562,11 +575,11 @@ private struct MarkdownText: View {
     private func headingFont(for level: Int) -> Font {
         switch level {
         case 1:
-            return .headline
+            return ClaudeChatFont.text(size: 15.5, weight: .semibold)
         case 2:
-            return .subheadline.weight(.semibold)
+            return ClaudeChatFont.text(size: 14.5, weight: .semibold)
         default:
-            return .body.weight(.semibold)
+            return ClaudeChatFont.text(size: 13.5, weight: .semibold)
         }
     }
 }
@@ -743,7 +756,7 @@ private struct ToolActionView: View {
                 .font(.system(size: 12, weight: .semibold))
 
             Text(text)
-                .font(.system(size: 12.5, weight: .medium))
+                .font(ClaudeChatFont.text(size: 12.5, weight: .medium))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .foregroundStyle(.secondary)
