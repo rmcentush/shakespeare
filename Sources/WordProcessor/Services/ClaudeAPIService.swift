@@ -12,6 +12,7 @@ final class ClaudeAPIService: Sendable {
     // MARK: - Types
 
     enum StreamChunk: Sendable {
+        case textBlockStart(afterNonText: Bool)
         case text(String)
         case toolUse(id: String, name: String, inputJSON: String)
     }
@@ -179,6 +180,8 @@ final class ClaudeAPIService: Sendable {
                     var currentToolName = ""
                     var currentToolInputJSON = ""
                     var inToolUse = false
+                    var hasStartedContentBlock = false
+                    var previousContentBlockWasText = false
 
                     for try await line in bytes.lines {
                         try Task.checkCancellation()
@@ -195,12 +198,19 @@ final class ClaudeAPIService: Sendable {
                         if eventType == "content_block_start",
                            let contentBlock = event["content_block"] as? [String: Any] {
                             let blockType = contentBlock["type"] as? String
+                            if blockType == "text" {
+                                continuation.yield(.textBlockStart(
+                                    afterNonText: hasStartedContentBlock && !previousContentBlockWasText
+                                ))
+                            }
                             if blockType == "tool_use" {
                                 inToolUse = true
                                 currentToolId = contentBlock["id"] as? String ?? ""
                                 currentToolName = contentBlock["name"] as? String ?? ""
                                 currentToolInputJSON = ""
                             }
+                            hasStartedContentBlock = true
+                            previousContentBlockWasText = blockType == "text"
                         } else if eventType == "content_block_delta",
                                   let delta = event["delta"] as? [String: Any] {
                             let deltaType = delta["type"] as? String

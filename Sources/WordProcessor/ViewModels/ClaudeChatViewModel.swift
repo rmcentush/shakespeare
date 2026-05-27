@@ -144,6 +144,10 @@ final class ClaudeChatViewModel {
                     cacheControl: ClaudeAPIService.ephemeralPromptCacheControl
                 ) {
                     switch chunk {
+                    case .textBlockStart(let afterNonText):
+                        if afterNonText {
+                            fullText = Self.appendingInterBlockBreak(to: fullText)
+                        }
                     case .text(let text):
                         fullText += text
                         flushCount += 1
@@ -410,6 +414,14 @@ final class ClaudeChatViewModel {
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
         messages[index].content = content
         streamingContentLength = content.count
+    }
+
+    private nonisolated static func appendingInterBlockBreak(to text: String) -> String {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
+        if text.hasSuffix("\n\n") { return text }
+        if text.hasSuffix("\n") { return text + "\n" }
+        if text.last?.isWhitespace == true { return text }
+        return text + "\n\n"
     }
 
     @discardableResult
