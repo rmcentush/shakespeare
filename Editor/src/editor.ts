@@ -169,7 +169,7 @@ const TOO_MANY_PENDING_EDITS = -2;
 const AMBIGUOUS_EDIT_TARGET = -3;
 const STALE_EDIT_TARGET = -4;
 const INVALID_EDIT_TARGET = -5;
-const ACCEPTED_LLM_EDIT_COLOR = '#188038';
+const ACCEPTED_LLM_EDIT_COLOR = '#319795';
 const FOOTNOTE_NODE_NAME = 'footnote';
 const GENERATED_FOOTNOTES_SELECTOR = 'section[data-generated-footnotes="true"]';
 const WORD_COUNT_DEBOUNCE_MS = 250;
