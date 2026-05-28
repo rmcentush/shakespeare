@@ -9,17 +9,26 @@ struct ToolbarView: View {
     }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            toolbarContent
+        HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
-                toolbarContent
+                leadingToolbarContent
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.leading, 8)
+                    .padding(.vertical, 4)
             }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+
+            trailingToolbarContent
+                .padding(.leading, 8)
+                .padding(.trailing, 8)
+                .padding(.vertical, 4)
+                .layoutPriority(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.bar)
     }
 
-    private var toolbarContent: some View {
+    private var leadingToolbarContent: some View {
         HStack(spacing: 2) {
             // Font picker
             Picker("", selection: Binding(
@@ -158,9 +167,11 @@ struct ToolbarView: View {
                     viewModel.applyFormat("alignJustify")
                 }
             }
+        }
+    }
 
-            Spacer()
-
+    private var trailingToolbarContent: some View {
+        HStack(spacing: 2) {
             ZoomControls()
 
             Divider()
@@ -177,8 +188,7 @@ struct ToolbarView: View {
             // Light/Dark mode toggle
             AppearanceToggle()
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private func insertImage() {

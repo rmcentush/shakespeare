@@ -14,6 +14,11 @@ struct ContentView: View {
         static let compactSidebarWidth: CGFloat = 260
         static let preferredEditorWidth: CGFloat = 360
         static let dividerWidth: CGFloat = 1
+        static let sidebarAnimation = Animation.interactiveSpring(
+            response: 0.32,
+            dampingFraction: 0.9,
+            blendDuration: 0.08
+        )
     }
 
     private struct MainLayoutWidths {
@@ -61,7 +66,7 @@ struct ContentView: View {
                         Button {
                             if editorViewModel.selectionState.hasSelection {
                                 editorViewModel.addComment()
-                                withAnimation(.easeInOut(duration: 0.15)) {
+                                withAnimation(Layout.sidebarAnimation) {
                                     activeSidebar = .comments
                                 }
                             } else {
@@ -110,7 +115,7 @@ struct ContentView: View {
                 editorViewModel.scheduleAutoSave(document: document)
             }
             .onReceive(NotificationCenter.default.publisher(for: .editorCommentActivated, object: editorViewModel)) { _ in
-                withAnimation(.easeInOut(duration: 0.15)) {
+                withAnimation(Layout.sidebarAnimation) {
                     activeSidebar = .comments
                 }
             }
@@ -139,7 +144,7 @@ struct ContentView: View {
             }
             .onChange(of: editorViewModel.pendingEditCount) {
                 if editorViewModel.pendingEditCount == 0, activeSidebar == .suggestions {
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    withAnimation(Layout.sidebarAnimation) {
                         activeSidebar = nil
                     }
                 }
@@ -174,11 +179,12 @@ struct ContentView: View {
                     Divider()
                     sidebarView(for: activeSidebar)
                         .frame(width: widths.sidebar)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                        .transition(.move(edge: .trailing))
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
             .clipped()
+            .animation(Layout.sidebarAnimation, value: activeSidebar)
         }
     }
 
@@ -373,7 +379,7 @@ struct ContentView: View {
         Button("") {
             if editorViewModel.selectionState.hasSelection {
                 editorViewModel.addComment()
-                withAnimation(.easeInOut(duration: 0.15)) {
+                withAnimation(Layout.sidebarAnimation) {
                     activeSidebar = .comments
                 }
             }
@@ -385,7 +391,7 @@ struct ContentView: View {
 
 extension ContentView {
     private func toggleSidebar(_ panel: SidebarPanel) {
-        withAnimation(.easeInOut(duration: 0.15)) {
+        withAnimation(Layout.sidebarAnimation) {
             activeSidebar = activeSidebar == panel ? nil : panel
         }
     }

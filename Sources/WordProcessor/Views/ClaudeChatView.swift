@@ -54,7 +54,7 @@ struct ClaudeChatView: View {
                 Button {
                     editorViewModel.getSelectedText { text in
                         if !text.isEmpty {
-                            inputText += "\n\n---\nSelected text:\n\(text)"
+                            inputText = SmartQuotes.smarten(inputText + "\n\n---\nSelected text:\n\(text)")
                         }
                     }
                 } label: {
@@ -64,7 +64,7 @@ struct ClaudeChatView: View {
                 .buttonStyle(.plain)
                 .help("Include selected text")
 
-                TextField("Ask Claude...", text: $inputText, axis: .vertical)
+                TextField("Ask Claude...", text: smartQuotedInputText, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(ClaudeChatFont.input)
                     .lineLimit(1...5)
@@ -100,6 +100,13 @@ struct ClaudeChatView: View {
             return .orange
         }
         return inputText.isEmpty ? .secondary : .accentColor
+    }
+
+    private var smartQuotedInputText: Binding<String> {
+        Binding(
+            get: { inputText },
+            set: { inputText = SmartQuotes.smarten($0) }
+        )
     }
 
     private func sendMessage() {
@@ -161,9 +168,9 @@ struct ClaudeChatView: View {
             .joined(separator: "\n")
 
         if inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            inputText = quoted + "\n\n"
+            inputText = SmartQuotes.smarten(quoted + "\n\n")
         } else {
-            inputText += "\n\n" + quoted
+            inputText = SmartQuotes.smarten(inputText + "\n\n" + quoted)
         }
         isInputFocused = true
     }
@@ -371,7 +378,7 @@ struct MessageBubble: View {
         if message.role == .assistant {
             AssistantMessageContent(content: message.content)
         } else {
-            Text(verbatim: message.content)
+            Text(verbatim: SmartQuotes.smarten(message.content))
                 .font(ClaudeChatFont.message)
                 .foregroundStyle(.primary)
                 .textSelection(.enabled)
@@ -413,13 +420,13 @@ private struct SystemMessageRow: View {
                     Image(systemName: "square.and.pencil")
                         .font(.system(size: 11, weight: .semibold))
 
-                    Text(message.content)
+                    Text(verbatim: SmartQuotes.smarten(message.content))
                         .font(ClaudeChatFont.text(size: 12.5, weight: .semibold))
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if let detail = message.detail, !detail.isEmpty {
-                    Text(detail)
+                    Text(verbatim: SmartQuotes.smarten(detail))
                         .font(ClaudeChatFont.text(size: 11.5))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -588,11 +595,13 @@ private struct InlineMarkdownText: View {
     let content: String
 
     var body: some View {
+        let displayContent = SmartQuotes.smarten(content)
+
         Group {
-            if let attributed = try? AttributedString(markdown: content) {
+            if let attributed = try? AttributedString(markdown: displayContent) {
                 Text(attributed)
             } else {
-                Text(verbatim: content)
+                Text(verbatim: displayContent)
             }
         }
         .fixedSize(horizontal: false, vertical: true)
@@ -755,7 +764,7 @@ private struct ToolActionView: View {
             Image(systemName: "square.and.pencil")
                 .font(.system(size: 12, weight: .semibold))
 
-            Text(text)
+            Text(verbatim: SmartQuotes.smarten(text))
                 .font(ClaudeChatFont.text(size: 12.5, weight: .medium))
                 .fixedSize(horizontal: false, vertical: true)
         }
