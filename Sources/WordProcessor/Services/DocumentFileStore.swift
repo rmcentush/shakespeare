@@ -138,6 +138,7 @@ actor DocumentFileStore {
         case missingPackageManifest
         case unsupportedPackageContentFormat
         case invalidDataURL
+        case incompletePackageWrite(String)
 
         var errorDescription: String? {
             switch self {
@@ -147,6 +148,8 @@ actor DocumentFileStore {
                 return "The document package uses an unsupported content format."
             case .invalidDataURL:
                 return "The document contains an invalid embedded asset."
+            case .incompletePackageWrite(let detail):
+                return "The document was not saved completely (\(detail))."
             }
         }
     }
@@ -367,6 +370,25 @@ actor DocumentFileStore {
 
         let originalContentsURL = FileManager.default.fileExists(atPath: url.path) ? url : nil
         try rootWrapper.write(to: url, options: [.atomic, .withNameUpdating], originalContentsURL: originalContentsURL)
+        try validateWrittenPackage(at: url, contentFileName: contentFileName)
+    }
+
+    /// Verifies the package on disk is complete after a write, so a partial or
+    /// corrupted write surfaces as a save error instead of silent data loss.
+    private func validateWrittenPackage(at url: URL, contentFileName: String) throws {
+        let manifestURL = url.appendingPathComponent("manifest.json")
+        guard let manifestData = try? Data(contentsOf: manifestURL), !manifestData.isEmpty else {
+            throw FileStoreError.incompletePackageWrite("manifest.json missing or empty")
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard (try? decoder.decode(PackageManifest.self, from: manifestData)) != nil else {
+            throw FileStoreError.incompletePackageWrite("manifest.json unreadable")
+        }
+        let contentURL = url.appendingPathComponent(contentFileName)
+        guard FileManager.default.fileExists(atPath: contentURL.path) else {
+            throw FileStoreError.incompletePackageWrite("\(contentFileName) missing")
+        }
     }
 
     private func rewriteDocumentJSON(

@@ -866,137 +866,28 @@ private enum ClaudeMessageBlock {
         case .markdown(let text):
             return Self.htmlFromMarkdownText(text)
         case .code(_, let code):
-            return "<pre><code>\(Self.escapeHTML(code))</code></pre>"
+            return "<pre><code>\(code.htmlEscaped)</code></pre>"
         case .toolAction:
             return nil
         }
     }
 
+    /// Renders markdown to an HTML fragment via the same block parser the
+    /// sidebar uses for display, so display and export can't drift apart.
     private static func htmlFromMarkdownText(_ text: String) -> String {
-        let normalized = text
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !normalized.isEmpty else { return "" }
-
-        let lines = normalized.components(separatedBy: "\n")
-        var fragments: [String] = []
-        var index = 0
-
-        while index < lines.count {
-            let line = lines[index].trimmingCharacters(in: .whitespaces)
-            if line.isEmpty {
-                index += 1
-                continue
+        SidebarMarkdownBlock.parse(text).map { block in
+            switch block {
+            case .heading(let level, let headingText):
+                return "<h\(level)>\(headingText.htmlEscaped)</h\(level)>"
+            case .paragraph(let lines):
+                return "<p>\(lines.map(\.htmlEscaped).joined(separator: "<br>"))</p>"
+            case .unorderedList(let items):
+                return "<ul>\(items.map { "<li>\($0.htmlEscaped)</li>" }.joined())</ul>"
+            case .orderedList(let items):
+                return "<ol>\(items.map { "<li>\($0.htmlEscaped)</li>" }.joined())</ol>"
+            case .quote(let lines):
+                return "<blockquote><p>\(lines.map(\.htmlEscaped).joined(separator: "<br>"))</p></blockquote>"
             }
-
-            if let headingLevel = headingLevel(for: line) {
-                let headingText = String(line.dropFirst(headingLevel)).trimmingCharacters(in: .whitespaces)
-                fragments.append("<h\(headingLevel)>\(escapeHTML(headingText))</h\(headingLevel)>")
-                index += 1
-                continue
-            }
-
-            if let firstItem = unorderedListItem(in: line) {
-                var items = ["<li>\(escapeHTML(firstItem))</li>"]
-                index += 1
-                while index < lines.count {
-                    let candidate = lines[index].trimmingCharacters(in: .whitespaces)
-                    guard let item = unorderedListItem(in: candidate) else { break }
-                    items.append("<li>\(escapeHTML(item))</li>")
-                    index += 1
-                }
-                fragments.append("<ul>\(items.joined())</ul>")
-                continue
-            }
-
-            if let firstItem = orderedListItem(in: line) {
-                var items = ["<li>\(escapeHTML(firstItem))</li>"]
-                index += 1
-                while index < lines.count {
-                    let candidate = lines[index].trimmingCharacters(in: .whitespaces)
-                    guard let item = orderedListItem(in: candidate) else { break }
-                    items.append("<li>\(escapeHTML(item))</li>")
-                    index += 1
-                }
-                fragments.append("<ol>\(items.joined())</ol>")
-                continue
-            }
-
-            if line.hasPrefix(">") {
-                var quoteLines: [String] = []
-                while index < lines.count {
-                    let candidate = lines[index].trimmingCharacters(in: .whitespaces)
-                    guard candidate.hasPrefix(">") else { break }
-                    quoteLines.append(String(candidate.dropFirst()).trimmingCharacters(in: .whitespaces))
-                    index += 1
-                }
-                let quoteBody = quoteLines
-                    .map(escapeHTML)
-                    .joined(separator: "<br>")
-                fragments.append("<blockquote><p>\(quoteBody)</p></blockquote>")
-                continue
-            }
-
-            var paragraphLines = [line]
-            index += 1
-            while index < lines.count {
-                let candidate = lines[index].trimmingCharacters(in: .whitespaces)
-                if candidate.isEmpty {
-                    index += 1
-                    break
-                }
-                if headingLevel(for: candidate) != nil ||
-                    unorderedListItem(in: candidate) != nil ||
-                    orderedListItem(in: candidate) != nil ||
-                    candidate.hasPrefix(">") {
-                    break
-                }
-                paragraphLines.append(candidate)
-                index += 1
-            }
-
-            fragments.append(
-                "<p>\(paragraphLines.map(escapeHTML).joined(separator: "<br>"))</p>"
-            )
-        }
-
-        return fragments.joined()
-    }
-
-    private static func headingLevel(for line: String) -> Int? {
-        let hashes = line.prefix { $0 == "#" }.count
-        guard (1...6).contains(hashes) else { return nil }
-        let remainder = line.dropFirst(hashes)
-        guard remainder.first == " " else { return nil }
-        return hashes
-    }
-
-    private static func unorderedListItem(in line: String) -> String? {
-        for marker in ["- ", "* ", "+ "] where line.hasPrefix(marker) {
-            return String(line.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
-        }
-        return nil
-    }
-
-    private static func orderedListItem(in line: String) -> String? {
-        let digits = line.prefix { $0.isNumber }
-        guard !digits.isEmpty else { return nil }
-
-        let remainder = line.dropFirst(digits.count)
-        guard let marker = remainder.first, marker == "." || marker == ")" else { return nil }
-
-        let content = String(remainder.dropFirst()).trimmingCharacters(in: .whitespaces)
-        guard !content.isEmpty else { return nil }
-        return content
-    }
-
-    private static func escapeHTML(_ text: String) -> String {
-        text
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-            .replacingOccurrences(of: "\"", with: "&quot;")
-            .replacingOccurrences(of: "'", with: "&#39;")
+        }.joined()
     }
 }

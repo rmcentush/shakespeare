@@ -227,10 +227,13 @@ final class ClaudeChatViewModel {
                     return
                 }
 
+                // Queued pending edits bump the document revision, so the
+                // send-time context goes stale across multi-tool turns.
+                let contextForTool = await freshEditContext(editor: editorViewModel) ?? editContext
                 let result = await executeTool(
                     name: tc.name,
                     inputJSON: tc.inputJSON,
-                    editContext: editContext,
+                    editContext: contextForTool,
                     editorViewModel: editorViewModel
                 )
                 toolResultBlocks.append([
@@ -659,6 +662,15 @@ final class ClaudeChatViewModel {
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return [:] }
         return dict
+    }
+
+    private func freshEditContext(editor: EditorViewModel?) async -> EditorViewModel.EditContextSnapshot? {
+        guard let editor, editor.isEditorReady else { return nil }
+        return await withCheckedContinuation { continuation in
+            editor.getEditContextSnapshot { snapshot in
+                continuation.resume(returning: snapshot)
+            }
+        }
     }
 
     private func currentDocumentText(from editor: EditorViewModel) async -> String {

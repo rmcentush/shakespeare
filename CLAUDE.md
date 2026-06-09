@@ -60,7 +60,7 @@ The bridge is the core integration point. All communication flows through a sing
 | `Sources/WordProcessor/Views/ContentView.swift` | Main layout: editor + optional sidebars |
 | `Sources/WordProcessor/Services/ClaudeAPIService.swift` | Anthropic Messages API with SSE streaming |
 | `Sources/WordProcessor/Services/FontManager.swift` | Font config, @font-face CSS generation, UserDefaults persistence |
-| `Sources/WordProcessor/Services/KeychainService.swift` | macOS Keychain wrapper (service prefix: `com.wordprocessor.*`) |
+| `Sources/WordProcessor/Services/KeychainService.swift` | API key storage as 0600 files in `~/Library/Application Support/Shakespeare/` (avoids Keychain prompts on unsigned app) |
 
 ### Cross-View Communication
 
@@ -73,4 +73,4 @@ Views communicate via NotificationCenter, not direct bindings: `editorContentCha
 - **Bundle resource paths:** Access bundled files via `Bundle.module.url(forResource: "editor", withExtension: "html")` or `Bundle.module.resourceURL`.
 - **Font injection timing:** EditorWebView injects @font-face CSS after a 500ms delay to ensure the webview is ready.
 - **BridgePayload parsing:** Uses manual JSON parsing (`[String: Any]`), not Codable.
-- **Anthropic API key:** Stored in macOS Keychain with service `"com.wordprocessor.anthropic"`, not in config files.
+- **Anthropic API key:** Despite the `KeychainService` name, the key is stored as an owner-only (0600) file at `~/Library/Application Support/Shakespeare/.anthropic.key`, not in the macOS Keychain (which prompts for passwords on unsigned apps).

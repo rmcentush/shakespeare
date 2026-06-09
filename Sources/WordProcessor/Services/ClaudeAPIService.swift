@@ -2,7 +2,7 @@ import Foundation
 
 final class ClaudeAPIService: Sendable {
     private let baseURL = "https://api.anthropic.com/v1/messages"
-    private let model = "claude-opus-4-6"
+    private let model = "claude-opus-4-8"
     private let session: URLSession
 
     init(session: URLSession = ClaudeAPIService.makeSession()) {
@@ -125,125 +125,159 @@ final class ClaudeAPIService: Sendable {
     ) -> AsyncThrowingStream<StreamChunk, Error> {
         AsyncThrowingStream { continuation in
             let task = Task.detached(priority: .userInitiated) { [baseURL, model, session] in
-                do {
-                    guard let apiKey = KeychainService.shared.getAPIKey(service: "anthropic") else {
-                        continuation.finish(throwing: APIError.noAPIKey)
-                        return
-                    }
+                guard let apiKey = KeychainService.shared.getAPIKey(service: "anthropic") else {
+                    continuation.finish(throwing: APIError.noAPIKey)
+                    return
+                }
 
-                    var request = URLRequest(url: URL(string: baseURL)!)
-                    request.httpMethod = "POST"
-                    request.timeoutInterval = 60
-                    request.setValue("application/json", forHTTPHeaderField: "content-type")
-                    request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-                    request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+                var body: [String: Any] = [
+                    "model": model,
+                    "max_tokens": 64000,
+                    "stream": true,
+                    "thinking": ["type": "adaptive"],
+                    "messages": messages
+                ]
 
-                    var body: [String: Any] = [
-                        "model": model,
-                        "max_tokens": 4096,
-                        "stream": true,
-                        "messages": messages
-                    ]
+                if let tools = tools, !tools.isEmpty {
+                    body["tools"] = tools
+                }
 
-                    if let tools = tools, !tools.isEmpty {
-                        body["tools"] = tools
-                    }
+                if let systemPrompt = systemPrompt {
+                    body["system"] = systemPrompt
+                }
 
-                    if let systemPrompt = systemPrompt {
-                        body["system"] = systemPrompt
-                    }
+                if let cacheControl = cacheControl {
+                    body["cache_control"] = cacheControl
+                }
 
-                    if let cacheControl = cacheControl {
-                        body["cache_control"] = cacheControl
-                    }
+                var attempt = 0
+                let maxRetries = 3
 
-                    request.httpBody = try JSONSerialization.data(withJSONObject: body)
+                while true {
+                    // Once any chunk has been yielded, a retry would duplicate
+                    // already-delivered text, so retries only happen before that.
+                    var hasYieldedChunk = false
+                    do {
+                        var request = URLRequest(url: URL(string: baseURL)!)
+                        request.httpMethod = "POST"
+                        request.timeoutInterval = 60
+                        request.setValue("application/json", forHTTPHeaderField: "content-type")
+                        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+                        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+                        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-                    let (bytes, response) = try await session.bytes(for: request)
+                        let (bytes, response) = try await session.bytes(for: request)
 
-                    guard let httpResponse = response as? HTTPURLResponse else {
-                        continuation.finish(throwing: APIError.invalidResponse)
-                        return
-                    }
-
-                    guard httpResponse.statusCode == 200 else {
-                        var errorBody = ""
-                        for try await line in bytes.lines {
-                            errorBody += line
-                        }
-                        continuation.finish(throwing: APIError.httpError(httpResponse.statusCode, errorBody))
-                        return
-                    }
-
-                    // Track tool use blocks during streaming
-                    var currentToolId = ""
-                    var currentToolName = ""
-                    var currentToolInputJSON = ""
-                    var inToolUse = false
-                    var hasStartedContentBlock = false
-                    var previousContentBlockWasText = false
-
-                    for try await line in bytes.lines {
-                        try Task.checkCancellation()
-                        guard line.hasPrefix("data: ") else { continue }
-                        let jsonString = String(line.dropFirst(6))
-
-                        guard jsonString != "[DONE]",
-                              let data = jsonString.data(using: .utf8),
-                              let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                        else { continue }
-
-                        let eventType = event["type"] as? String
-
-                        if eventType == "content_block_start",
-                           let contentBlock = event["content_block"] as? [String: Any] {
-                            let blockType = contentBlock["type"] as? String
-                            if blockType == "text" {
-                                continuation.yield(.textBlockStart(
-                                    afterNonText: hasStartedContentBlock && !previousContentBlockWasText
-                                ))
-                            }
-                            if blockType == "tool_use" {
-                                inToolUse = true
-                                currentToolId = contentBlock["id"] as? String ?? ""
-                                currentToolName = contentBlock["name"] as? String ?? ""
-                                currentToolInputJSON = ""
-                            }
-                            hasStartedContentBlock = true
-                            previousContentBlockWasText = blockType == "text"
-                        } else if eventType == "content_block_delta",
-                                  let delta = event["delta"] as? [String: Any] {
-                            let deltaType = delta["type"] as? String
-                            if deltaType == "text_delta",
-                               let text = delta["text"] as? String {
-                                continuation.yield(.text(text))
-                            } else if deltaType == "input_json_delta",
-                                      let partial = delta["partial_json"] as? String {
-                                currentToolInputJSON += partial
-                            }
-                        } else if eventType == "content_block_stop" {
-                            if inToolUse {
-                                continuation.yield(.toolUse(
-                                    id: currentToolId,
-                                    name: currentToolName,
-                                    inputJSON: currentToolInputJSON
-                                ))
-                                inToolUse = false
-                            }
-                        } else if eventType == "message_stop" {
-                            break
-                        } else if eventType == "error" {
-                            let errorMsg = (event["error"] as? [String: Any])?["message"] as? String ?? "Unknown error"
-                            continuation.finish(throwing: APIError.streamError(errorMsg))
+                        guard let httpResponse = response as? HTTPURLResponse else {
+                            continuation.finish(throwing: APIError.invalidResponse)
                             return
                         }
-                    }
 
-                    continuation.finish()
-                } catch is CancellationError {
-                    continuation.finish(throwing: CancellationError())
-                } catch {
-                    continuation.finish(throwing: error)
+                        guard httpResponse.statusCode == 200 else {
+                            if Self.isRetryableStatus(httpResponse.statusCode), attempt < maxRetries {
+                                attempt += 1
+                                try await Self.backoff(attempt: attempt, response: httpResponse)
+                                continue
+                            }
+                            var errorBody = ""
+                            for try await line in bytes.lines {
+                                errorBody += line
+                            }
+                            continuation.finish(throwing: APIError.httpError(httpResponse.statusCode, errorBody))
+                            return
+                        }
+
+                        // Track tool use blocks during streaming
+                        var currentToolId = ""
+                        var currentToolName = ""
+                        var currentToolInputJSON = ""
+                        var inToolUse = false
+                        var hasStartedContentBlock = false
+                        var previousContentBlockWasText = false
+
+                        for try await line in bytes.lines {
+                            try Task.checkCancellation()
+                            guard line.hasPrefix("data: ") else { continue }
+                            let jsonString = String(line.dropFirst(6))
+
+                            guard jsonString != "[DONE]",
+                                  let data = jsonString.data(using: .utf8),
+                                  let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                            else { continue }
+
+                            let eventType = event["type"] as? String
+
+                            if eventType == "content_block_start",
+                               let contentBlock = event["content_block"] as? [String: Any] {
+                                let blockType = contentBlock["type"] as? String
+                                if blockType == "thinking" || blockType == "redacted_thinking" {
+                                    // Reasoning blocks never render in the sidebar, so they
+                                    // must not count toward inter-block break detection.
+                                    continue
+                                }
+                                if blockType == "text" {
+                                    continuation.yield(.textBlockStart(
+                                        afterNonText: hasStartedContentBlock && !previousContentBlockWasText
+                                    ))
+                                    hasYieldedChunk = true
+                                }
+                                if blockType == "tool_use" {
+                                    inToolUse = true
+                                    currentToolId = contentBlock["id"] as? String ?? ""
+                                    currentToolName = contentBlock["name"] as? String ?? ""
+                                    currentToolInputJSON = ""
+                                }
+                                hasStartedContentBlock = true
+                                previousContentBlockWasText = blockType == "text"
+                            } else if eventType == "content_block_delta",
+                                      let delta = event["delta"] as? [String: Any] {
+                                let deltaType = delta["type"] as? String
+                                if deltaType == "text_delta",
+                                   let text = delta["text"] as? String {
+                                    continuation.yield(.text(text))
+                                    hasYieldedChunk = true
+                                } else if deltaType == "input_json_delta",
+                                          let partial = delta["partial_json"] as? String {
+                                    currentToolInputJSON += partial
+                                }
+                            } else if eventType == "content_block_stop" {
+                                if inToolUse {
+                                    continuation.yield(.toolUse(
+                                        id: currentToolId,
+                                        name: currentToolName,
+                                        inputJSON: currentToolInputJSON
+                                    ))
+                                    hasYieldedChunk = true
+                                    inToolUse = false
+                                }
+                            } else if eventType == "message_stop" {
+                                break
+                            } else if eventType == "error" {
+                                let errorMsg = (event["error"] as? [String: Any])?["message"] as? String ?? "Unknown error"
+                                continuation.finish(throwing: APIError.streamError(errorMsg))
+                                return
+                            }
+                        }
+
+                        continuation.finish()
+                        return
+                    } catch is CancellationError {
+                        continuation.finish(throwing: CancellationError())
+                        return
+                    } catch {
+                        if !hasYieldedChunk, attempt < maxRetries, Self.isRetryableTransportError(error) {
+                            attempt += 1
+                            do {
+                                try await Self.backoff(attempt: attempt, response: nil)
+                                continue
+                            } catch {
+                                continuation.finish(throwing: CancellationError())
+                                return
+                            }
+                        }
+                        continuation.finish(throwing: error)
+                        return
+                    }
                 }
             }
 
@@ -251,6 +285,32 @@ final class ClaudeAPIService: Sendable {
                 task.cancel()
             }
         }
+    }
+
+    // MARK: - Retry
+
+    private static func isRetryableStatus(_ code: Int) -> Bool {
+        code == 429 || code == 529 || (500...599).contains(code)
+    }
+
+    private static func isRetryableTransportError(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .timedOut, .networkConnectionLost, .notConnectedToInternet,
+             .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func backoff(attempt: Int, response: HTTPURLResponse?) async throws {
+        var seconds = min(pow(2.0, Double(attempt - 1)), 8.0) + Double.random(in: 0...0.5)
+        if let retryAfter = response?.value(forHTTPHeaderField: "retry-after"),
+           let parsed = Double(retryAfter) {
+            seconds = max(seconds, min(parsed, 30))
+        }
+        try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 
     private static func makeSession() -> URLSession {

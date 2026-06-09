@@ -32,6 +32,8 @@ final class EditorViewModel {
     private var lastAmbientReviewedDocumentHash: String?
     private var pendingSnapshot: DocumentFileStore.FileSnapshot?
     private var lastAutoSaveCheckpointByDocumentID: [String: Date] = [:]
+    /// Set when the most recent snapshot capture fell back to last-synced state.
+    private var lastSnapshotCaptureFailed = false
     private let autoSaveCheckpointInterval: TimeInterval = 60
     @ObservationIgnored private let ambientReviewService = ClaudeAPIService()
     /// Incremented each time the editor signals ready (supports detecting web process restarts).
@@ -1100,8 +1102,16 @@ final class EditorViewModel {
     }
 
     func latestSnapshot(for document: DocumentModel, preferEditorState: Bool = true) async -> DocumentFileStore.FileSnapshot {
-        if preferEditorState, let snapshot = await captureEditorSnapshot(document: document) {
-            document.syncFromEditor(snapshot: snapshot)
+        if preferEditorState {
+            if let snapshot = await captureEditorSnapshot(document: document) {
+                document.syncFromEditor(snapshot: snapshot)
+                lastSnapshotCaptureFailed = false
+            } else if isEditorReady {
+                // The editor should have produced a snapshot; falling back to
+                // the last-synced state means live edits may not be captured.
+                print("Editor snapshot capture failed; using last-synced document state")
+                lastSnapshotCaptureFailed = true
+            }
         }
         return document.currentSnapshot()
     }
@@ -1373,7 +1383,14 @@ final class EditorViewModel {
             if !document.isDirty {
                 try? await RecoveryDraftStore.shared.deleteDraft(documentID: persistedSnapshot.documentID)
             }
-            setPersistenceStatus("\(actionName) saved \(formattedStatusTime())", isError: false)
+            if lastSnapshotCaptureFailed {
+                setPersistenceStatus(
+                    "\(actionName) saved last-synced state \(formattedStatusTime()) — latest edits may be missing",
+                    isError: true
+                )
+            } else {
+                setPersistenceStatus("\(actionName) saved \(formattedStatusTime())", isError: false)
+            }
         } catch {
             setPersistenceStatus("\(actionName) failed: \(error.localizedDescription)", isError: true)
         }
@@ -1408,6 +1425,7 @@ final class EditorViewModel {
         guard let data = jsonString.data(using: .utf8),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
+            print("Failed to parse editor snapshot JSON: \(jsonString.prefix(200))")
             return nil
         }
 
@@ -1480,12 +1498,7 @@ final class EditorViewModel {
     }
 
     private func xmlEscaped(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-            .replacingOccurrences(of: "\"", with: "&quot;")
-            .replacingOccurrences(of: "'", with: "&apos;")
+        value.htmlEscaped
     }
 
     // MARK: - JS Evaluation
@@ -1527,12 +1540,13 @@ final class EditorViewModel {
         }
 
         webView.evaluateJavaScript(js) { result, error in
-            if let error = error {
-                let desc = error.localizedDescription
-                if desc.contains("process terminated") || desc.contains("not found") {
-                    print("JS evaluation failed (possible web process crash): \(desc)")
+            if let error {
+                let nsError = error as NSError
+                if nsError.domain == WKError.errorDomain,
+                   nsError.code == WKError.webContentProcessTerminated.rawValue {
+                    print("JS evaluation failed: web content process terminated")
                 } else {
-                    print("JS error: \(desc)")
+                    print("JS error (\(nsError.domain) \(nsError.code)): \(error.localizedDescription)")
                 }
             }
             completion?(result)

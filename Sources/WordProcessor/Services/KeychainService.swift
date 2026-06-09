@@ -24,13 +24,22 @@ final class KeychainService: Sendable {
         return key.isEmpty ? nil : key
     }
 
-    func setAPIKey(_ key: String, service: String) {
+    @discardableResult
+    func setAPIKey(_ key: String, service: String) -> Bool {
         let dir = storageDirectory
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let path = keyFilePath(service: service)
-        try? key.write(to: path, atomically: true, encoding: .utf8)
-        // Owner read/write only
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
+        // createFile applies the owner-only permissions at creation time, so the
+        // key is never momentarily readable with default permissions.
+        let created = FileManager.default.createFile(
+            atPath: path.path,
+            contents: Data(key.utf8),
+            attributes: [.posixPermissions: 0o600]
+        )
+        if !created {
+            print("KeychainService: failed to write API key file for service \(service)")
+        }
+        return created
     }
 
     func deleteAPIKey(service: String) {

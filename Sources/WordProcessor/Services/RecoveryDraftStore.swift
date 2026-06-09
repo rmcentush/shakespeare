@@ -37,6 +37,7 @@ actor RecoveryDraftStore {
         let metadataURL = self.metadataURL(for: id, in: directory)
 
         let existingMetadata = try? readMetadata(from: metadataURL)
+        let packageExistedBefore = FileManager.default.fileExists(atPath: packageURL.path)
         let persistedSnapshot = try await DocumentFileStore.shared.save(
             snapshot,
             to: packageURL,
@@ -62,7 +63,18 @@ actor RecoveryDraftStore {
             characterCount: persistedSnapshot.characterCount
         )
 
-        try writeMetadata(metadata, to: metadataURL)
+        do {
+            try writeMetadata(metadata, to: metadataURL)
+        } catch {
+            // availableDrafts() only surfaces drafts with metadata, so a new
+            // package without metadata would be invisible and never cleaned up.
+            // For pre-existing drafts, keep the (newer) package — the old
+            // metadata still points at it.
+            if !packageExistedBefore, existingMetadata == nil {
+                try? FileManager.default.removeItem(at: packageURL)
+            }
+            throw error
+        }
         return metadata
     }
 

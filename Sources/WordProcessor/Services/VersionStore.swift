@@ -410,9 +410,15 @@ final class VersionStore: @unchecked Sendable {
         }
 
         if !toDelete.isEmpty {
+            // IDs come straight from the versions table (Int64), so interpolation is safe.
             let ids = toDelete.map(String.init).joined(separator: ",")
             let deleteSQL = "DELETE FROM versions WHERE id IN (\(ids))"
-            sqlite3_exec(db, deleteSQL, nil, nil, nil)
+            var errorMessage: UnsafeMutablePointer<CChar>?
+            if sqlite3_exec(db, deleteSQL, nil, nil, &errorMessage) != SQLITE_OK {
+                let message = errorMessage.map { String(cString: $0) } ?? "unknown error"
+                print("VersionStore prune failed (\(toDelete.count) versions): \(message)")
+            }
+            sqlite3_free(errorMessage)
         }
     }
 

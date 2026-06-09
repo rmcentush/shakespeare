@@ -167,7 +167,7 @@ struct SettingsView: View {
 
     private func saveAnthropicKey() {
         anthropicKey = normalizedAnthropicKey(from: anthropicKey)
-        KeychainService.shared.setAPIKey(anthropicKey, service: "anthropic")
+        guard KeychainService.shared.setAPIKey(anthropicKey, service: "anthropic") else { return }
         saved = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             saved = false

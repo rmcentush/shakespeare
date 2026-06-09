@@ -1,0 +1,396 @@
+import { Editor } from '@tiptap/core';
+import { TextSelection } from '@tiptap/pm/state';
+import { sendToSwift } from './bridge';
+import {
+  CONTENT_SYNC_DEBOUNCE_MS,
+  DocumentTextSnapshot,
+  EditorSelectionState,
+  FootnoteDetails,
+  PreservedTextSelection,
+  SELECTION_SYNC_DEBOUNCE_MS,
+  SelectionClipboardData,
+  WORD_COUNT_DEBOUNCE_MS,
+} from './types';
+import { countWords } from './utils';
+import {
+  buildGeneratedFootnotesHTML,
+  collectFootnotes,
+  footnotesSignature,
+  footnotesStructureSignature,
+  getSelectedFootnote,
+} from './footnotes';
+import { normalizeImageAlign, normalizeImageLayout, selectedImageNode } from './images';
+import { scheduleSmartQuotesNormalization } from './smartQuotes';
+
+let documentRevision = 0;
+let cachedDocumentTextSnapshot: DocumentTextSnapshot | null = null;
+let cachedSerializedHTMLRevision = -1;
+let cachedSerializedHTML = '';
+let lastSentContentUpdate: { html: string; text: string } | null = null;
+let lastSentSelectionState: EditorSelectionState | null = null;
+let preservedTextSelection: PreservedTextSelection | null = null;
+
+let wordCountDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let contentSyncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let selectionDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function getDocumentRevision(): number {
+  return documentRevision;
+}
+
+export function setPreservedTextSelection(selection: PreservedTextSelection | null): void {
+  preservedTextSelection = selection;
+}
+
+export function resetDocSyncState(): void {
+  if (wordCountDebounceTimer) clearTimeout(wordCountDebounceTimer);
+  if (contentSyncDebounceTimer) clearTimeout(contentSyncDebounceTimer);
+  if (selectionDebounceTimer) clearTimeout(selectionDebounceTimer);
+
+  invalidateDerivedDocumentState();
+  lastSentContentUpdate = null;
+  lastSentSelectionState = null;
+  preservedTextSelection = null;
+}
+
+function buildPlainTextSnapshot(editor: Editor, footnotes: FootnoteDetails[]): DocumentTextSnapshot {
+  const text = editor.getText();
+
+  if (footnotes.length === 0) {
+    return {
+      revision: documentRevision,
+      footnotes,
+      footnotesSignature: '',
+      footnotesStructureSignature: '',
+      plainText: text,
+      words: countWords(text),
+      characters: text.length,
+    };
+  }
+
+  const footnotesText = footnotes
+    .map((footnote) => `[${footnote.index}] ${footnote.note}`)
+    .join('\n');
+
+  const plainText = text.trim().length > 0
+    ? `${text}\n\nFootnotes\n${footnotesText}`
+    : `Footnotes\n${footnotesText}`;
+
+  return {
+    revision: documentRevision,
+    footnotes,
+    footnotesSignature: footnotesSignature(footnotes),
+    footnotesStructureSignature: footnotesStructureSignature(footnotes),
+    plainText,
+    words: countWords(plainText),
+    characters: plainText.length,
+  };
+}
+
+export function invalidateDerivedDocumentState() {
+  documentRevision += 1;
+  cachedDocumentTextSnapshot = null;
+  cachedSerializedHTMLRevision = -1;
+  cachedSerializedHTML = '';
+}
+
+export function getDocumentTextSnapshot(editor: Editor): DocumentTextSnapshot {
+  if (cachedDocumentTextSnapshot?.revision === documentRevision) {
+    return cachedDocumentTextSnapshot;
+  }
+
+  const snapshot = buildPlainTextSnapshot(editor, collectFootnotes(editor.state.doc));
+  cachedDocumentTextSnapshot = snapshot;
+  return snapshot;
+}
+
+export function serializeDocumentPlainText(editor: Editor): string {
+  return getDocumentTextSnapshot(editor).plainText;
+}
+
+export function serializeDocumentHTML(editor: Editor): string {
+  if (cachedSerializedHTMLRevision === documentRevision) {
+    return cachedSerializedHTML;
+  }
+
+  const content = editor.getHTML();
+  const footnotesHTML = buildGeneratedFootnotesHTML(getDocumentTextSnapshot(editor).footnotes);
+  cachedSerializedHTML = footnotesHTML ? `${content}${footnotesHTML}` : content;
+  cachedSerializedHTMLRevision = documentRevision;
+  return cachedSerializedHTML;
+}
+
+export function serializeClipboardDataForRange(
+  editor: Editor,
+  from: number,
+  to: number
+): SelectionClipboardData {
+  const emptySelection: SelectionClipboardData = {
+    html: '',
+    text: '',
+    imageSources: [],
+    singleImageSource: null,
+  };
+
+  if (from >= to) {
+    return emptySelection;
+  }
+
+  let selection: TextSelection;
+  try {
+    selection = TextSelection.create(editor.state.doc, from, to);
+  } catch (_) {
+    return emptySelection;
+  }
+
+  const { dom, text } = editor.view.serializeForClipboard(selection.content());
+  Array.from(dom.querySelectorAll('*')).forEach((element) => {
+    Array.from(element.attributes).forEach((attribute) => {
+      if (attribute.name.startsWith('data-pm-')) {
+        element.removeAttribute(attribute.name);
+      }
+    });
+  });
+
+  const html = dom.innerHTML;
+  const imageSources = Array.from(dom.querySelectorAll('img'))
+    .map((img) => img.getAttribute('src')?.trim() || '')
+    .filter(Boolean);
+  const normalizedText = text.replace(/\u00a0/g, ' ').replace(/\uFFFC/g, '');
+  const singleImageSource =
+    imageSources.length === 1 && !normalizedText.trim() ? imageSources[0] : null;
+
+  return {
+    html,
+    text: normalizedText,
+    imageSources,
+    singleImageSource,
+  };
+}
+
+export function serializeSelectionClipboardData(editor: Editor): SelectionClipboardData {
+  const { from, to } = editor.state.selection;
+  return serializeClipboardDataForRange(editor, from, to);
+}
+
+function editorHasFocus(editor: Editor): boolean {
+  const root = editor.view.dom as HTMLElement;
+  const activeElement = document.activeElement;
+  return activeElement === root || !!(activeElement && root.contains(activeElement));
+}
+
+function currentTextSelection(editor: Editor): PreservedTextSelection | null {
+  const { from, to } = editor.state.selection;
+  if (from === to) return null;
+
+  const text = editor.state.doc.textBetween(from, to, '\n', '\n');
+  return {
+    from,
+    to,
+    text,
+    words: countWords(text),
+    characters: text.length,
+    revision: documentRevision,
+  };
+}
+
+export function updatePreservedTextSelection(editor: Editor) {
+  const selection = currentTextSelection(editor);
+  if (selection) {
+    preservedTextSelection = selection;
+    return;
+  }
+
+  if (editorHasFocus(editor)) {
+    preservedTextSelection = null;
+  }
+}
+
+export function effectiveTextSelection(editor: Editor): PreservedTextSelection | null {
+  const selection = currentTextSelection(editor);
+  if (selection) {
+    preservedTextSelection = selection;
+    return selection;
+  }
+
+  if (
+    preservedTextSelection &&
+    preservedTextSelection.revision === documentRevision &&
+    !editorHasFocus(editor)
+  ) {
+    return preservedTextSelection;
+  }
+
+  return null;
+}
+
+function buildSelectionState(editor: Editor): EditorSelectionState {
+  const activeSelection = effectiveTextSelection(editor);
+  const selectedFootnote = getSelectedFootnote(editor);
+  const selectedImage = selectedImageNode(editor);
+  const selectedImageAttrs = (selectedImage?.node.attrs || {}) as Record<string, unknown>;
+
+  return {
+    hasSelection: activeSelection !== null,
+    selectedWords: activeSelection?.words || 0,
+    selectedCharacters: activeSelection?.characters || 0,
+    isBold: editor.isActive('bold'),
+    isItalic: editor.isActive('italic'),
+    isUnderline: editor.isActive('underline'),
+    heading: editor.isActive('heading', { level: 1 })
+      ? 1
+      : editor.isActive('heading', { level: 2 })
+        ? 2
+        : editor.isActive('heading', { level: 3 })
+          ? 3
+          : 0,
+    textAlign: editor.isActive({ textAlign: 'center' })
+      ? 'center'
+      : editor.isActive({ textAlign: 'right' })
+        ? 'right'
+        : editor.isActive({ textAlign: 'justify' })
+          ? 'justify'
+          : 'left',
+    isLink: editor.isActive('link'),
+    linkHref: editor.getAttributes('link').href || '',
+    textColor: editor.getAttributes('textStyle').color || '',
+    isFootnote: selectedFootnote !== null,
+    footnoteText: (selectedFootnote?.node.attrs.note as string) || '',
+    isImage: selectedImage !== null,
+    imageLayout: normalizeImageLayout(selectedImageAttrs.layout),
+    imageAlign: normalizeImageAlign(selectedImageAttrs.align),
+    imageWidth: (selectedImageAttrs.width as string) || '',
+    imageHeight: (selectedImageAttrs.height as string) || '',
+  };
+}
+
+function selectionStatesEqual(
+  a: EditorSelectionState | null,
+  b: EditorSelectionState
+): boolean {
+  if (!a) return false;
+
+  return a.hasSelection === b.hasSelection &&
+    a.selectedWords === b.selectedWords &&
+    a.selectedCharacters === b.selectedCharacters &&
+    a.isBold === b.isBold &&
+    a.isItalic === b.isItalic &&
+    a.isUnderline === b.isUnderline &&
+    a.heading === b.heading &&
+    a.textAlign === b.textAlign &&
+    a.isLink === b.isLink &&
+    a.linkHref === b.linkHref &&
+    a.textColor === b.textColor &&
+    a.isFootnote === b.isFootnote &&
+    a.footnoteText === b.footnoteText &&
+    a.isImage === b.isImage &&
+    a.imageLayout === b.imageLayout &&
+    a.imageAlign === b.imageAlign &&
+    a.imageWidth === b.imageWidth &&
+    a.imageHeight === b.imageHeight;
+}
+
+export function emitWordCountUpdate(editor: Editor) {
+  const snapshot = getDocumentTextSnapshot(editor);
+  sendToSwift('wordCount', {
+    words: snapshot.words,
+    characters: snapshot.characters,
+  });
+}
+
+export function emitContentUpdate(editor: Editor) {
+  const snapshot = getDocumentTextSnapshot(editor);
+  const html = serializeDocumentHTML(editor);
+
+  if (
+    lastSentContentUpdate &&
+    lastSentContentUpdate.html === html &&
+    lastSentContentUpdate.text === snapshot.plainText
+  ) {
+    return;
+  }
+
+  lastSentContentUpdate = {
+    html,
+    text: snapshot.plainText,
+  };
+
+  sendToSwift('contentUpdate', {
+    html,
+    text: snapshot.plainText,
+    words: snapshot.words,
+    characters: snapshot.characters,
+  });
+}
+
+export function emitSelectionUpdate(editor: Editor) {
+  const selectionState = buildSelectionState(editor);
+  if (selectionStatesEqual(lastSentSelectionState, selectionState)) {
+    return;
+  }
+
+  lastSentSelectionState = selectionState;
+  sendToSwift('selectionChanged', selectionState);
+}
+
+export function scheduleSelectionUpdate(editor: Editor) {
+  if (selectionDebounceTimer) clearTimeout(selectionDebounceTimer);
+  selectionDebounceTimer = setTimeout(() => {
+    emitSelectionUpdate(editor);
+  }, SELECTION_SYNC_DEBOUNCE_MS);
+}
+
+export function scheduleWordCountUpdate(editor: Editor) {
+  if (wordCountDebounceTimer) clearTimeout(wordCountDebounceTimer);
+  wordCountDebounceTimer = setTimeout(() => {
+    emitWordCountUpdate(editor);
+  }, WORD_COUNT_DEBOUNCE_MS);
+}
+
+export function scheduleContentUpdate(editor: Editor) {
+  if (contentSyncDebounceTimer) clearTimeout(contentSyncDebounceTimer);
+  contentSyncDebounceTimer = setTimeout(() => {
+    emitContentUpdate(editor);
+  }, CONTENT_SYNC_DEBOUNCE_MS);
+}
+
+export function attachSelectionChangeFallback(editor: Editor) {
+  const root = editor.view.dom as HTMLElement;
+  const scheduleFromNativeSelection = () => {
+    window.requestAnimationFrame(() => {
+      updatePreservedTextSelection(editor);
+      scheduleSelectionUpdate(editor);
+    });
+  };
+
+  const syncIfSelectionTouchesEditor = () => {
+    const selection = document.getSelection();
+    if (!selection) return;
+
+    const anchorNode = selection.anchorNode;
+    const focusNode = selection.focusNode;
+    if (
+      (anchorNode && root.contains(anchorNode)) ||
+      (focusNode && root.contains(focusNode)) ||
+      root.contains(document.activeElement)
+    ) {
+      scheduleFromNativeSelection();
+    }
+  };
+
+  root.addEventListener('mouseup', syncIfSelectionTouchesEditor);
+  root.addEventListener('keyup', syncIfSelectionTouchesEditor);
+  root.addEventListener('dragend', syncIfSelectionTouchesEditor);
+  root.addEventListener('focusin', syncIfSelectionTouchesEditor);
+  document.addEventListener('selectionchange', syncIfSelectionTouchesEditor);
+}
+
+export function attachSmartQuotesNormalizationFallback(editor: Editor) {
+  const root = editor.view.dom as HTMLElement;
+  const normalizeSoon = () => {
+    scheduleSmartQuotesNormalization(editor);
+  };
+
+  root.addEventListener('paste', normalizeSoon);
+  root.addEventListener('drop', normalizeSoon);
+}
