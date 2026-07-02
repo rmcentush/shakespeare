@@ -44,7 +44,7 @@ import {
   emitSelectionUpdate,
   emitWordCountUpdate,
   getDocumentTextSnapshot,
-  invalidateDerivedDocumentState,
+  noteDocumentChanged,
   resetDocSyncState,
   scheduleContentUpdate,
   scheduleSelectionUpdate,
@@ -223,8 +223,8 @@ const editor = new Editor({
       return smartifyQuotesWithContext(text, contextCharacterBefore(view.state.doc, view.state.selection.from));
     },
   },
-  onUpdate({ editor }) {
-    invalidateDerivedDocumentState();
+  onUpdate({ editor, transaction }) {
+    noteDocumentChanged(transaction);
     updatePreservedTextSelection(editor);
     scheduleSelectionUpdate(editor);
     scheduleWordCountUpdate(editor);

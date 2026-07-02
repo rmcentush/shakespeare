@@ -59,6 +59,7 @@ final class ClaudeChatViewModel {
 
     func sendMessage(
         _ text: String,
+        quotedSelection: String? = nil,
         documentContent: String = "",
         editContext: EditorViewModel.EditContextSnapshot? = nil,
         editorViewModel: EditorViewModel? = nil
@@ -68,9 +69,12 @@ final class ClaudeChatViewModel {
 
         cancelStreaming(markCancelledMessage: false)
 
+        let selection = quotedSelection?.trimmingCharacters(in: .whitespacesAndNewlines)
+
         requestTask = Task { [weak self] in
             await self?.runSendMessage(
                 trimmed,
+                quotedSelection: (selection?.isEmpty ?? true) ? nil : selection,
                 documentContent: documentContent,
                 editContext: editContext,
                 editorViewModel: editorViewModel
@@ -95,13 +99,25 @@ final class ClaudeChatViewModel {
 
     private func runSendMessage(
         _ text: String,
+        quotedSelection: String?,
         documentContent: String,
         editContext: EditorViewModel.EditContextSnapshot?,
         editorViewModel: EditorViewModel?
     ) async {
-        let userMessage = ChatMessage(role: .user, content: text)
+        let userMessage = ChatMessage(role: .user, content: text, quotedSelection: quotedSelection)
         messages.append(userMessage)
-        apiMessages.append(["role": "user", "content": text])
+
+        var apiText = text
+        if let quotedSelection {
+            apiText = """
+            <selected_text>
+            \(quotedSelection)
+            </selected_text>
+
+            \(text)
+            """
+        }
+        apiMessages.append(["role": "user", "content": apiText])
         trimAPIHistory()
 
         isStreaming = true

@@ -1,5 +1,6 @@
 import { Editor } from '@tiptap/core';
-import { TextSelection } from '@tiptap/pm/state';
+import { TextSelection, Transaction } from '@tiptap/pm/state';
+import { Mapping } from '@tiptap/pm/transform';
 import { sendToSwift } from './bridge';
 import {
   CONTENT_SYNC_DEBOUNCE_MS,
@@ -8,6 +9,7 @@ import {
   FootnoteDetails,
   PreservedTextSelection,
   SELECTION_SYNC_DEBOUNCE_MS,
+  SearchMatch,
   SelectionClipboardData,
   WORD_COUNT_DEBOUNCE_MS,
 } from './types';
@@ -38,6 +40,63 @@ export function getDocumentRevision(): number {
   return documentRevision;
 }
 
+// Rolling history of transaction mappings, one entry per document revision
+// bump. Lets edit targets captured at an older revision (e.g. while Claude is
+// streaming and the user keeps typing) be mapped forward to current positions
+// instead of being rejected as stale.
+interface RevisionMapping {
+  revision: number;
+  mapping: Mapping;
+}
+
+const revisionMappings: RevisionMapping[] = [];
+const MAX_REVISION_MAPPINGS = 500;
+
+export function noteDocumentChanged(tr: Transaction | null | undefined): void {
+  if (tr?.docChanged) {
+    revisionMappings.push({ revision: documentRevision, mapping: tr.mapping });
+    if (revisionMappings.length > MAX_REVISION_MAPPINGS) {
+      revisionMappings.splice(0, revisionMappings.length - MAX_REVISION_MAPPINGS);
+    }
+  }
+  invalidateDerivedDocumentState();
+}
+
+export function mapPositionFromRevision(
+  revision: number,
+  pos: number,
+  assoc: -1 | 1
+): number | null {
+  if (revision === documentRevision) return pos;
+  if (revision > documentRevision) return null;
+
+  const startIndex = revisionMappings.findIndex((entry) => entry.revision === revision);
+  if (startIndex === -1) return null;
+
+  let expectedRevision = revision;
+  let mapped = pos;
+  for (let index = startIndex; index < revisionMappings.length; index += 1) {
+    // A gap means some revision bump had no recorded mapping; we can't
+    // bridge across it safely.
+    if (revisionMappings[index].revision !== expectedRevision) return null;
+    mapped = revisionMappings[index].mapping.map(mapped, assoc);
+    expectedRevision += 1;
+  }
+
+  return expectedRevision === documentRevision ? mapped : null;
+}
+
+export function mapRangeFromRevision(
+  revision: number,
+  from: number,
+  to: number
+): SearchMatch | null {
+  const mappedFrom = mapPositionFromRevision(revision, from, 1);
+  const mappedTo = mapPositionFromRevision(revision, to, -1);
+  if (mappedFrom === null || mappedTo === null || mappedTo <= mappedFrom) return null;
+  return { from: mappedFrom, to: mappedTo };
+}
+
 export function setPreservedTextSelection(selection: PreservedTextSelection | null): void {
   preservedTextSelection = selection;
 }
@@ -48,6 +107,7 @@ export function resetDocSyncState(): void {
   if (selectionDebounceTimer) clearTimeout(selectionDebounceTimer);
 
   invalidateDerivedDocumentState();
+  revisionMappings.length = 0;
   lastSentContentUpdate = null;
   lastSentSelectionState = null;
   preservedTextSelection = null;

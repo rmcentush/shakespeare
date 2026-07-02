@@ -28,7 +28,12 @@ import {
   scheduleSmartQuotesNormalization,
   smartifyHTMLFragment,
 } from './smartQuotes';
-import { getDocumentRevision, serializeDocumentPlainText } from './docSync';
+import {
+  getDocumentRevision,
+  mapPositionFromRevision,
+  mapRangeFromRevision,
+  serializeDocumentPlainText,
+} from './docSync';
 import { buildEditBlockIndex } from './editContext';
 
 interface PendingEditsPluginState {
@@ -488,29 +493,52 @@ function targetDocumentIsCurrent(ed: Editor, target: SelectionEditTarget | Propo
 
 export function rangeFromSelectionTarget(ed: Editor, target: SelectionEditTarget | null): SearchMatch | number | null {
   if (!target) return null;
-  if (!targetDocumentIsCurrent(ed, target)) return STALE_EDIT_TARGET;
 
   const from = typeof target.from === 'number' ? target.from : -1;
   const to = typeof target.to === 'number' ? target.to : -1;
-  if (from < 0 || to <= from || to > ed.state.doc.content.size) return INVALID_EDIT_TARGET;
+  if (from < 0 || to <= from) return INVALID_EDIT_TARGET;
+
+  // If the document changed since the target was captured, map its positions
+  // forward through the intervening transactions; the text check below
+  // verifies the mapped range still holds the same content.
+  let range: SearchMatch = { from, to };
+  const revision = typeof target.document_revision === 'number' ? target.document_revision : null;
+  if (revision !== null && revision !== getDocumentRevision()) {
+    const mapped = mapRangeFromRevision(revision, from, to);
+    if (!mapped) return STALE_EDIT_TARGET;
+    range = mapped;
+  } else if (revision === null && !targetDocumentIsCurrent(ed, target)) {
+    return STALE_EDIT_TARGET;
+  }
+
+  if (range.to > ed.state.doc.content.size) return INVALID_EDIT_TARGET;
 
   if (typeof target.text === 'string') {
-    const currentText = ed.state.doc.textBetween(from, to, '\n', '\n');
+    const currentText = ed.state.doc.textBetween(range.from, range.to, '\n', '\n');
     if (currentText !== target.text) return STALE_EDIT_TARGET;
   }
 
-  return { from, to };
+  return range;
 }
 
 export function positionFromInsertionTarget(ed: Editor, target: SelectionEditTarget | null): number | null {
   if (!target) return null;
-  if (!targetDocumentIsCurrent(ed, target)) return STALE_EDIT_TARGET;
 
-  const position = typeof target.position === 'number'
+  let position = typeof target.position === 'number'
     ? target.position
     : (typeof target.from === 'number' ? target.from : -1);
+  if (position < 0) return INVALID_EDIT_TARGET;
 
-  if (position < 0 || position > ed.state.doc.content.size) return INVALID_EDIT_TARGET;
+  const revision = typeof target.document_revision === 'number' ? target.document_revision : null;
+  if (revision !== null && revision !== getDocumentRevision()) {
+    const mapped = mapPositionFromRevision(revision, position, 1);
+    if (mapped === null) return STALE_EDIT_TARGET;
+    position = mapped;
+  } else if (revision === null && !targetDocumentIsCurrent(ed, target)) {
+    return STALE_EDIT_TARGET;
+  }
+
+  if (position > ed.state.doc.content.size) return INVALID_EDIT_TARGET;
   return position;
 }
 
@@ -552,16 +580,24 @@ function resolveProposedEditMatches(
   target: ProposedEditTarget,
   replaceAll: boolean
 ): SearchMatch[] | number {
-  if (!targetDocumentIsCurrent(ed, target)) return STALE_EDIT_TARGET;
-
+  // Content-addressed targets locate text by exact_original plus
+  // prefix/suffix context, so a stale document_revision/document_hash is not
+  // a failure: we simply re-resolve against the current document. This lets
+  // the user keep typing while Claude's edits stream in.
   const exactOriginal = target.exact_original ?? '';
   if (!normalizeSearchQuery(exactOriginal)) return INVALID_EDIT_TARGET;
 
   let scope: SearchMatch | null = null;
   if (target.block_id) {
     const block = findEditContextBlock(ed, target.block_id);
-    if (!block) return STALE_EDIT_TARGET;
-    scope = { from: block.from, to: block.to };
+    if (block) {
+      scope = { from: block.from, to: block.to };
+    } else if (targetDocumentIsCurrent(ed, target)) {
+      // The document is unchanged, so the block id itself is bogus.
+      return STALE_EDIT_TARGET;
+    }
+    // Otherwise the block moved or was edited since the snapshot; fall back
+    // to an unscoped search and rely on prefix/suffix disambiguation.
   }
 
   const maxMatches = replaceAll ? MAX_PENDING_FIND_REPLACE_MATCHES + 1 : Number.POSITIVE_INFINITY;

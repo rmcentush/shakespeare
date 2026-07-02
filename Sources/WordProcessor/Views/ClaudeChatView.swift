@@ -6,6 +6,7 @@ struct ClaudeChatView: View {
     @Environment(EditorViewModel.self) private var editorViewModel
     @Environment(DocumentModel.self) private var document
     @State private var inputText = ""
+    @State private var pendingSelection: String?
     @State private var shouldFollowLatestMessage = true
     @FocusState private var isInputFocused: Bool
 
@@ -49,43 +50,63 @@ struct ClaudeChatView: View {
             Divider()
 
             // Input area
-            HStack(spacing: 8) {
-                // Send selected text as context
-                Button {
-                    editorViewModel.getSelectedText { text in
-                        if !text.isEmpty {
-                            inputText = SmartQuotes.smarten(inputText + "\n\n---\nSelected text:\n\(text)")
+            VStack(alignment: .leading, spacing: 8) {
+                if let pendingSelection {
+                    SelectionContextChip(text: pendingSelection) {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            self.pendingSelection = nil
                         }
                     }
-                } label: {
-                    Image(systemName: "text.quote")
-                        .foregroundStyle(.secondary)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
-                .buttonStyle(.plain)
-                .help("Include selected text")
 
-                TextField("Ask Claude...", text: smartQuotedInputText, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(ClaudeChatFont.input)
-                    .lineLimit(1...5)
-                    .focused($isInputFocused)
-                    .onSubmit {
-                        sendMessage()
+                HStack(alignment: .bottom, spacing: 8) {
+                    // Attach selected text as context
+                    Button {
+                        attachSelection()
+                    } label: {
+                        Image(systemName: "text.quote")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(pendingSelection == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.accentColor))
                     }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 3)
+                    .help("Attach selected text")
 
-                Button {
-                    if chatViewModel.isStreaming {
-                        chatViewModel.cancelStreaming()
-                    } else {
-                        sendMessage()
+                    TextField("Ask Claude...", text: smartQuotedInputText, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(ClaudeChatFont.input)
+                        .lineLimit(1...5)
+                        .padding(.vertical, 2)
+                        .focused($isInputFocused)
+                        .onSubmit {
+                            sendMessage()
+                        }
+
+                    Button {
+                        if chatViewModel.isStreaming {
+                            chatViewModel.cancelStreaming()
+                        } else {
+                            sendMessage()
+                        }
+                    } label: {
+                        Image(systemName: chatViewModel.isStreaming ? "stop.circle.fill" : "arrow.up.circle.fill")
+                            .font(.system(size: 21))
+                            .foregroundColor(buttonColor)
                     }
-                } label: {
-                    Image(systemName: chatViewModel.isStreaming ? "stop.circle.fill" : "arrow.up.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(buttonColor)
+                    .buttonStyle(.plain)
+                    .disabled(!chatViewModel.isStreaming && inputText.isEmpty)
                 }
-                .buttonStyle(.plain)
-                .disabled(!chatViewModel.isStreaming && inputText.isEmpty)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 17, style: .continuous)
+                        .fill(Color(nsColor: .textBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 17, style: .continuous)
+                        .stroke(Color.primary.opacity(isInputFocused ? 0.16 : 0.09), lineWidth: 1)
+                )
             }
             .padding(10)
         }
@@ -109,10 +130,23 @@ struct ClaudeChatView: View {
         )
     }
 
+    private func attachSelection() {
+        editorViewModel.getSelectedText { text in
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            withAnimation(.easeOut(duration: 0.15)) {
+                pendingSelection = SmartQuotes.smarten(trimmed)
+            }
+            isInputFocused = true
+        }
+    }
+
     private func sendMessage() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        let selection = pendingSelection
         inputText = ""
+        pendingSelection = nil
         shouldFollowLatestMessage = true
         let editor = editorViewModel
 
@@ -121,6 +155,7 @@ struct ClaudeChatView: View {
                 if let context {
                     chatViewModel.sendMessage(
                         text,
+                        quotedSelection: selection,
                         documentContent: context.plainText,
                         editContext: context,
                         editorViewModel: editor
@@ -129,13 +164,23 @@ struct ClaudeChatView: View {
                 }
 
                 editor.getPlainText { content in
-                    chatViewModel.sendMessage(text, documentContent: content, editorViewModel: editor)
+                    chatViewModel.sendMessage(
+                        text,
+                        quotedSelection: selection,
+                        documentContent: content,
+                        editorViewModel: editor
+                    )
                 }
             }
             return
         }
 
-        chatViewModel.sendMessage(text, documentContent: document.plainTextContent, editorViewModel: editor)
+        chatViewModel.sendMessage(
+            text,
+            quotedSelection: selection,
+            documentContent: document.plainTextContent,
+            editorViewModel: editor
+        )
     }
 
     private func scrollToBottomIfFollowing(
@@ -183,6 +228,50 @@ struct ClaudeChatView: View {
 
         editorViewModel.insertHTMLAtCursor(html)
         editorViewModel.focusEditor()
+    }
+}
+
+private struct SelectionContextChip: View {
+    let text: String
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Rectangle()
+                .fill(Color.accentColor.opacity(0.45))
+                .frame(width: 3)
+                .clipShape(Capsule())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("SELECTION")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .kerning(0.6)
+                    .foregroundStyle(.tertiary)
+
+                Text(verbatim: text)
+                    .font(ClaudeChatFont.text(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 4)
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+            .help("Remove attached selection")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
     }
 }
 
@@ -378,11 +467,28 @@ struct MessageBubble: View {
         if message.role == .assistant {
             AssistantMessageContent(content: message.content)
         } else {
-            Text(verbatim: SmartQuotes.smarten(message.content))
-                .font(ClaudeChatFont.message)
-                .foregroundStyle(.primary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 8) {
+                if let quote = message.quotedSelection, !quote.isEmpty {
+                    HStack(alignment: .top, spacing: 8) {
+                        Rectangle()
+                            .fill(Color.accentColor.opacity(0.4))
+                            .frame(width: 3)
+                            .clipShape(Capsule())
+
+                        Text(verbatim: SmartQuotes.smarten(quote))
+                            .font(ClaudeChatFont.text(size: 12))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(5)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                Text(verbatim: SmartQuotes.smarten(message.content))
+                    .font(ClaudeChatFont.message)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .textSelection(.enabled)
         }
     }
 

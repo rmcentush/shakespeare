@@ -2,7 +2,11 @@ import Foundation
 
 final class ClaudeAPIService: Sendable {
     private let baseURL = "https://api.anthropic.com/v1/messages"
-    private let model = "claude-opus-4-8"
+    // Fable 5: thinking is always on and must not be configured explicitly
+    // (sending `thinking` returns a 400). Depth is controlled via
+    // output_config.effort instead.
+    private let model = "claude-fable-5"
+    private let effort = "low"
     private let session: URLSession
 
     init(session: URLSession = ClaudeAPIService.makeSession()) {
@@ -18,7 +22,7 @@ final class ClaudeAPIService: Sendable {
     }
 
     static let webSearchTool: [String: Any] = [
-        "type": "web_search_20250305",
+        "type": "web_search_20260209",
         "name": "web_search"
     ]
 
@@ -124,7 +128,7 @@ final class ClaudeAPIService: Sendable {
         cacheControl: [String: Any]? = nil
     ) -> AsyncThrowingStream<StreamChunk, Error> {
         AsyncThrowingStream { continuation in
-            let task = Task.detached(priority: .userInitiated) { [baseURL, model, session] in
+            let task = Task.detached(priority: .userInitiated) { [baseURL, model, effort, session] in
                 guard let apiKey = KeychainService.shared.getAPIKey(service: "anthropic") else {
                     continuation.finish(throwing: APIError.noAPIKey)
                     return
@@ -132,9 +136,11 @@ final class ClaudeAPIService: Sendable {
 
                 var body: [String: Any] = [
                     "model": model,
-                    "max_tokens": 64000,
+                    // Fable 5's tokenizer runs ~30% heavier than Opus-tier;
+                    // streaming means no timeout risk from the larger cap.
+                    "max_tokens": 8192,
                     "stream": true,
-                    "thinking": ["type": "adaptive"],
+                    "output_config": ["effort": effort],
                     "messages": messages
                 ]
 
@@ -194,6 +200,7 @@ final class ClaudeAPIService: Sendable {
                         var inToolUse = false
                         var hasStartedContentBlock = false
                         var previousContentBlockWasText = false
+                        var wasRefused = false
 
                         for try await line in bytes.lines {
                             try Task.checkCancellation()
@@ -250,6 +257,10 @@ final class ClaudeAPIService: Sendable {
                                     hasYieldedChunk = true
                                     inToolUse = false
                                 }
+                            } else if eventType == "message_delta",
+                                      let delta = event["delta"] as? [String: Any],
+                                      delta["stop_reason"] as? String == "refusal" {
+                                wasRefused = true
                             } else if eventType == "message_stop" {
                                 break
                             } else if eventType == "error" {
@@ -259,7 +270,11 @@ final class ClaudeAPIService: Sendable {
                             }
                         }
 
-                        continuation.finish()
+                        if wasRefused {
+                            continuation.finish(throwing: APIError.refused)
+                        } else {
+                            continuation.finish()
+                        }
                         return
                     } catch is CancellationError {
                         continuation.finish(throwing: CancellationError())
@@ -328,6 +343,7 @@ final class ClaudeAPIService: Sendable {
         case invalidResponse
         case httpError(Int, String)
         case streamError(String)
+        case refused
 
         var errorDescription: String? {
             switch self {
@@ -339,6 +355,8 @@ final class ClaudeAPIService: Sendable {
                 return "HTTP \(code): \(body)"
             case .streamError(let msg):
                 return "Stream error: \(msg)"
+            case .refused:
+                return "Claude declined this request. Try rephrasing."
             }
         }
     }
