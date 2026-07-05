@@ -669,11 +669,280 @@ function containsMeaningfulFormattingMarkup(html: string): boolean {
   return /<[^>]+>/.test(wrapperMarkupRemoved);
 }
 
+function containsBlockLevelMarkup(html: string): boolean {
+  return /<\/?(address|article|aside|blockquote|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|table|tbody|td|th|thead|tr|ul)\b/i.test(html);
+}
+
+function textFromHTMLPreservingWhitespace(html: string): string {
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  return (parsed.body.textContent || '').replace(/\u00a0/g, ' ');
+}
+
+interface DiffToken {
+  text: string;
+  start: number;
+  end: number;
+}
+
+interface DiffOp {
+  type: 'equal' | 'insert' | 'delete';
+  oldIndex: number;
+  newIndex: number;
+}
+
+interface DiffSegment {
+  type: 'equal' | 'change';
+  oldStart: number;
+  oldEnd: number;
+  newStart: number;
+  newEnd: number;
+}
+
+function nonWhitespaceTokens(text: string): DiffToken[] {
+  const tokens: DiffToken[] = [];
+  const regex = /\S+/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    tokens.push({
+      text: match[0],
+      start: match.index,
+      end: match.index + match[0].length,
+    });
+  }
+
+  return tokens;
+}
+
+function diffTokenOps(oldTokens: DiffToken[], newTokens: DiffToken[]): DiffOp[] {
+  const rows = oldTokens.length + 1;
+  const columns = newTokens.length + 1;
+  const table: number[][] = Array.from({ length: rows }, () => Array(columns).fill(0));
+
+  for (let i = oldTokens.length - 1; i >= 0; i -= 1) {
+    for (let j = newTokens.length - 1; j >= 0; j -= 1) {
+      if (oldTokens[i].text === newTokens[j].text) {
+        table[i][j] = table[i + 1][j + 1] + 1;
+      } else {
+        table[i][j] = Math.max(table[i + 1][j], table[i][j + 1]);
+      }
+    }
+  }
+
+  const ops: DiffOp[] = [];
+  let oldIndex = 0;
+  let newIndex = 0;
+  while (oldIndex < oldTokens.length && newIndex < newTokens.length) {
+    if (oldTokens[oldIndex].text === newTokens[newIndex].text) {
+      ops.push({ type: 'equal', oldIndex, newIndex });
+      oldIndex += 1;
+      newIndex += 1;
+    } else if (table[oldIndex + 1][newIndex] >= table[oldIndex][newIndex + 1]) {
+      ops.push({ type: 'delete', oldIndex, newIndex });
+      oldIndex += 1;
+    } else {
+      ops.push({ type: 'insert', oldIndex, newIndex });
+      newIndex += 1;
+    }
+  }
+
+  while (oldIndex < oldTokens.length) {
+    ops.push({ type: 'delete', oldIndex, newIndex });
+    oldIndex += 1;
+  }
+
+  while (newIndex < newTokens.length) {
+    ops.push({ type: 'insert', oldIndex, newIndex });
+    newIndex += 1;
+  }
+
+  return ops;
+}
+
+function pushDiffSegment(
+  segments: DiffSegment[],
+  type: DiffSegment['type'],
+  oldStart: number,
+  oldEnd: number,
+  newStart: number,
+  newEnd: number
+) {
+  if (oldStart === oldEnd && newStart === newEnd) return;
+
+  const previous = segments[segments.length - 1];
+  if (previous && previous.type === type) {
+    previous.oldEnd = oldEnd;
+    previous.newEnd = newEnd;
+    return;
+  }
+
+  segments.push({ type, oldStart, oldEnd, newStart, newEnd });
+}
+
+function diffSegments(oldTokens: DiffToken[], newTokens: DiffToken[]): DiffSegment[] {
+  const segments: DiffSegment[] = [];
+  for (const op of diffTokenOps(oldTokens, newTokens)) {
+    if (op.type === 'equal') {
+      pushDiffSegment(segments, 'equal', op.oldIndex, op.oldIndex + 1, op.newIndex, op.newIndex + 1);
+    } else if (op.type === 'delete') {
+      pushDiffSegment(segments, 'change', op.oldIndex, op.oldIndex + 1, op.newIndex, op.newIndex);
+    } else {
+      pushDiffSegment(segments, 'change', op.oldIndex, op.oldIndex, op.newIndex, op.newIndex + 1);
+    }
+  }
+  return segments;
+}
+
+function coalescedChangesFromSegments(segments: DiffSegment[], unchangedTokenThreshold = 3): DiffSegment[] {
+  const changes: DiffSegment[] = [];
+  let pending: DiffSegment | null = null;
+  let unchangedSincePending = 0;
+
+  for (const segment of segments) {
+    if (segment.type === 'equal') {
+      if (pending) {
+        unchangedSincePending += segment.oldEnd - segment.oldStart;
+      }
+      continue;
+    }
+
+    if (!pending) {
+      pending = { ...segment };
+      unchangedSincePending = 0;
+      continue;
+    }
+
+    if (unchangedSincePending < unchangedTokenThreshold) {
+      pending.oldEnd = segment.oldEnd;
+      pending.newEnd = segment.newEnd;
+    } else {
+      changes.push(pending);
+      pending = { ...segment };
+    }
+    unchangedSincePending = 0;
+  }
+
+  if (pending) changes.push(pending);
+  return changes;
+}
+
+function docPositionAtTextOffset(doc: any, from: number, to: number, offset: number): number | null {
+  if (offset <= 0) return from;
+
+  let textOffset = 0;
+  let found: number | null = null;
+
+  doc.nodesBetween(from, to, (node: any, pos: number) => {
+    if (found !== null) return false;
+
+    if (node.isText && typeof node.text === 'string') {
+      const start = Math.max(from, pos);
+      const end = Math.min(to, pos + node.text.length);
+      if (end <= start) return undefined;
+
+      const nodeStart = start - pos;
+      const nodeEnd = end - pos;
+      const length = nodeEnd - nodeStart;
+      if (textOffset + length >= offset) {
+        found = start + (offset - textOffset);
+        return false;
+      }
+
+      textOffset += length;
+      return undefined;
+    }
+
+    if (node.type?.name === 'hardBreak') {
+      if (textOffset + 1 >= offset) {
+        found = Math.min(Math.max(pos, from), to);
+        return false;
+      }
+      textOffset += 1;
+    }
+
+    return undefined;
+  });
+
+  if (found !== null) return found;
+  return offset === textOffset ? to : null;
+}
+
+function wordMinimizedPendingEdits(
+  ed: Editor,
+  groupId: string,
+  match: SearchMatch,
+  replaceHtml: string,
+  kind: PendingEditKind
+): PendingEdit[] {
+  if (containsBlockLevelMarkup(replaceHtml)) return [];
+  if (replaceHtml.trim().length === 0) return [];
+
+  const originalText = ed.state.doc.textBetween(match.from, match.to, '\n', '\n');
+  const replacementText = textFromHTMLPreservingWhitespace(replaceHtml);
+
+  if (replacementText === originalText) return [];
+  if (normalizeSearchQuery(replacementText) === normalizeSearchQuery(originalText)) return [];
+
+  const originalTokens = nonWhitespaceTokens(originalText);
+  const replacementTokens = nonWhitespaceTokens(replacementText);
+  if (originalTokens.length === 0 || replacementTokens.length === 0) return [];
+  if (originalTokens.length + replacementTokens.length > 900) return [];
+
+  const segments = diffSegments(originalTokens, replacementTokens);
+  const changedSegments = coalescedChangesFromSegments(segments, 3);
+  if (changedSegments.length === 0) return [];
+
+  const coversWholeMatch = changedSegments.length === 1 &&
+    changedSegments[0].oldStart === 0 &&
+    changedSegments[0].oldEnd === originalTokens.length;
+  if (coversWholeMatch) return [];
+
+  const edits: PendingEdit[] = [];
+  for (let index = 0; index < changedSegments.length; index += 1) {
+    const change = changedSegments[index];
+    const originalStart = change.oldStart > 0 ? originalTokens[change.oldStart - 1].end : 0;
+    const originalEnd = change.oldEnd < originalTokens.length
+      ? originalTokens[change.oldEnd].start
+      : originalText.length;
+    const replacementStart = change.newStart > 0 ? replacementTokens[change.newStart - 1].end : 0;
+    const replacementEnd = change.newEnd < replacementTokens.length
+      ? replacementTokens[change.newEnd].start
+      : replacementText.length;
+
+    if (originalStart === originalEnd && replacementStart === replacementEnd) {
+      continue;
+    }
+
+    const from = docPositionAtTextOffset(ed.state.doc, match.from, match.to, originalStart);
+    const to = docPositionAtTextOffset(ed.state.doc, match.from, match.to, originalEnd);
+    if (from === null || to === null || from > to) return [];
+
+    const replacementFragment = replacementText.slice(replacementStart, replacementEnd);
+    if (from === to && replacementFragment.length === 0) continue;
+
+    const currentFragment = ed.state.doc.textBetween(from, to, '\n', '\n');
+    const originalFragment = originalText.slice(originalStart, originalEnd);
+    if (currentFragment !== originalFragment) return [];
+
+    edits.push(createPendingEdit(ed, {
+      id: `${groupId}_word_${index}`,
+      groupId,
+      kind,
+      from,
+      to,
+      newHtml: escapeHTML(replacementFragment),
+    }));
+  }
+
+  return edits.length === 0 ? [] : edits;
+}
+
 export function sentenceSplitPendingEdits(
   ed: Editor,
   groupId: string,
   match: SearchMatch,
-  replaceHtml: string
+  replaceHtml: string,
+  kind: PendingEditKind = 'findReplace'
 ): PendingEdit[] {
   if (containsMeaningfulFormattingMarkup(replaceHtml)) return [];
 
@@ -702,7 +971,7 @@ export function sentenceSplitPendingEdits(
     changed.push(createPendingEdit(ed, {
       id: `${groupId}_sentence_${index}`,
       groupId,
-      kind: 'findReplace',
+      kind,
       from: scopedMatches[0].from,
       to: scopedMatches[0].to,
       newHtml: escapeHTML(replacementSentence.text),
@@ -710,6 +979,31 @@ export function sentenceSplitPendingEdits(
   }
 
   return changed;
+}
+
+export function replacementPendingEdits(
+  ed: Editor,
+  groupId: string,
+  match: SearchMatch,
+  replaceHtml: string,
+  kind: PendingEditKind
+): PendingEdit[] {
+  const wordEdits = wordMinimizedPendingEdits(ed, groupId, match, replaceHtml, kind);
+  if (wordEdits.length > 0) return wordEdits;
+
+  const splitEdits = sentenceSplitPendingEdits(ed, groupId, match, replaceHtml, kind);
+  if (splitEdits.length > 0) return splitEdits;
+
+  return [
+    createPendingEdit(ed, {
+      id: groupId,
+      groupId,
+      kind,
+      from: match.from,
+      to: match.to,
+      newHtml: replaceHtml,
+    }),
+  ];
 }
 
 export function queueProposedEdit(
@@ -726,23 +1020,7 @@ export function queueProposedEdit(
   const edits: PendingEdit[] = [];
   resolved.forEach((match, matchIndex) => {
     const groupId = replaceAll ? `${id}_${matchIndex}` : id;
-    const splitEdits = replaceAll
-      ? []
-      : sentenceSplitPendingEdits(ed, groupId, match, replaceHtml);
-
-    if (splitEdits.length > 0) {
-      edits.push(...splitEdits);
-      return;
-    }
-
-    edits.push(createPendingEdit(ed, {
-      id: replaceAll ? `${id}_${matchIndex}` : id,
-      groupId,
-      kind: 'findReplace',
-      from: match.from,
-      to: match.to,
-      newHtml: replaceHtml,
-    }));
+    edits.push(...replacementPendingEdits(ed, groupId, match, replaceHtml, 'findReplace'));
   });
 
   return queuePendingEdits(ed, edits, edits[0]?.id ?? null);
@@ -810,6 +1088,51 @@ function isPendingEditDeletion(edit: PendingEdit): boolean {
   return edit.from < edit.to && edit.newHtml.trim().length === 0;
 }
 
+function surroundingSentenceForEdit(ed: Editor, edit: PendingEdit): string {
+  const before = ed.state.doc.textBetween(Math.max(0, edit.from - 600), edit.from, '\n', '\n');
+  const current = edit.originalText;
+  const after = ed.state.doc.textBetween(edit.to, Math.min(ed.state.doc.content.size, edit.to + 600), '\n', '\n');
+  const context = `${before}${current}${after}`;
+  const anchorStart = before.length;
+  const anchorEnd = anchorStart + current.length;
+
+  let start = 0;
+  for (let index = anchorStart - 1; index >= 0; index -= 1) {
+    if (/[.!?\n]/.test(context[index])) {
+      start = index + 1;
+      break;
+    }
+  }
+
+  let end = context.length;
+  for (let index = anchorEnd; index < context.length; index += 1) {
+    if (/[.!?\n]/.test(context[index])) {
+      end = index + 1;
+      break;
+    }
+  }
+
+  return context.slice(start, end).trim();
+}
+
+function editDecisionPayload(ed: Editor, edit: PendingEdit, decision: 'accept' | 'reject') {
+  return {
+    eventId: `${edit.id}_${decision}_${Date.now()}`,
+    decision,
+    source: edit.source,
+    kind: edit.kind,
+    originalText: edit.originalText,
+    replacementText: edit.replacementText,
+    surroundingSentence: surroundingSentenceForEdit(ed, edit),
+    groupId: edit.groupId,
+    timestamp: Date.now(),
+  };
+}
+
+function emitEditDecision(ed: Editor, edit: PendingEdit, decision: 'accept' | 'reject') {
+  sendToSwift('editDecision', editDecisionPayload(ed, edit, decision));
+}
+
 export function acceptPendingEdit(ed: Editor, id: string): boolean {
   const state = getPendingEditsState(ed.state);
   const edit = getPendingEditById(state, id);
@@ -819,6 +1142,7 @@ export function acceptPendingEdit(ed: Editor, id: string): boolean {
     return false;
   }
 
+  const decisionPayload = editDecisionPayload(ed, edit, 'accept');
   let chain = ed.chain()
     .command(({ tr }) => {
       tr.setMeta(pendingEditPluginKey, { type: 'accept', id } satisfies PendingEditAction);
@@ -835,6 +1159,7 @@ export function acceptPendingEdit(ed: Editor, id: string): boolean {
   const result = chain.run();
 
   if (result) {
+    sendToSwift('editDecision', decisionPayload);
     scheduleSmartQuotesNormalization(ed);
   }
 
@@ -843,8 +1168,11 @@ export function acceptPendingEdit(ed: Editor, id: string): boolean {
 
 export function rejectPendingEdit(ed: Editor, id: string): boolean {
   const state = getPendingEditsState(ed.state);
-  if (!state.edits.some((edit) => edit.id === id)) return false;
-  return dispatchPendingEditAction(ed, { type: 'reject', id });
+  const edit = getPendingEditById(state, id);
+  if (!edit) return false;
+  const result = dispatchPendingEditAction(ed, { type: 'reject', id });
+  if (result) emitEditDecision(ed, edit, 'reject');
+  return result;
 }
 
 export function acceptAllPendingEdits(ed: Editor): boolean {
@@ -876,6 +1204,7 @@ export function acceptAllPendingEdits(ed: Editor): boolean {
   if (accepted.length === 0) return false;
 
   const sorted = [...accepted].sort((a, b) => b.from - a.from || b.to - a.to);
+  const decisionPayloads = sorted.map((edit) => editDecisionPayload(ed, edit, 'accept'));
   const acceptedIds = sorted.map((edit) => edit.id);
   let chain = ed.chain().command(({ tr }) => {
     tr.setMeta(pendingEditPluginKey, { type: 'acceptMany', ids: acceptedIds } satisfies PendingEditAction);
@@ -896,15 +1225,19 @@ export function acceptAllPendingEdits(ed: Editor): boolean {
   const result = chain.run();
 
   if (result) {
+    decisionPayloads.forEach((payload) => sendToSwift('editDecision', payload));
     scheduleSmartQuotesNormalization(ed);
   }
 
   return result;
 }
 
-export function rejectAllPendingEdits(ed: Editor): boolean {
+export function rejectAllPendingEdits(ed: Editor, emitDecisions = true): boolean {
   const state = getPendingEditsState(ed.state);
   if (state.edits.length === 0) return false;
+  if (emitDecisions) {
+    state.edits.forEach((edit) => emitEditDecision(ed, edit, 'reject'));
+  }
   return dispatchPendingEditAction(ed, { type: 'rejectAll' });
 }
 

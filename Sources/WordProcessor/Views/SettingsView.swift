@@ -5,10 +5,19 @@ struct SettingsView: View {
     @State private var anthropicKey = ""
     @State private var showKey = false
     @State private var saved = false
+    @State private var pendingStyleDecisionCount = 0
+    @State private var learnedPreferencesPreview = ""
+    @State private var proposedLearnedPreferences = ""
+    @State private var proposedLearnedPreferencesDiff = ""
+    @State private var proposalEventIDs: [String] = []
+    @State private var isUpdatingStylePreferences = false
+    @State private var styleUpdateError = ""
+    @State private var showStyleProposal = false
 
     // Font settings
     @State private var fontManager = FontManager.shared
     @State private var textCheckingSettings = TextCheckingSettings.shared
+    private let styleGuideUpdater = StyleGuideUpdater()
 
     var body: some View {
         TabView {
@@ -66,6 +75,46 @@ struct SettingsView: View {
                     LabeledContent("Reference File") {
                         Text(styleReferencePath)
                             .font(.caption2)
+                            .textSelection(.enabled)
+                    }
+
+                    LabeledContent("Learned Preferences") {
+                        Text(learnedPreferencesPath)
+                            .font(.caption2)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                Section("Adaptive Preferences") {
+                    LabeledContent("Unprocessed Feedback") {
+                        Text("\(pendingStyleDecisionCount)")
+                            .font(.caption)
+                            .foregroundStyle(pendingStyleDecisionCount >= 20 ? .orange : .secondary)
+                    }
+
+                    Button {
+                        Task { await updateStylePreferences() }
+                    } label: {
+                        if isUpdatingStylePreferences {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Text("Update style preferences from edit history")
+                        }
+                    }
+                    .disabled(isUpdatingStylePreferences || pendingStyleDecisionCount == 0)
+
+                    if !styleUpdateError.isEmpty {
+                        Text(styleUpdateError)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+
+                    if !learnedPreferencesPreview.isEmpty {
+                        Text(learnedPreferencesPreview)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(6)
                             .textSelection(.enabled)
                     }
                 }
@@ -152,12 +201,59 @@ struct SettingsView: View {
             if let key = KeychainService.shared.getAPIKey(service: "anthropic") {
                 anthropicKey = key
             }
+            refreshStyleContext()
+        }
+        .sheet(isPresented: $showStyleProposal) {
+            styleProposalSheet
         }
     }
 
     private var styleReferencePath: String {
-        Bundle.module.url(forResource: "david_oks_style_guide", withExtension: "md")?.path
-            ?? "Bundled resource: david_oks_style_guide.md"
+        AuthorStyleReference.writableReferenceURL.path
+    }
+
+    private var learnedPreferencesPath: String {
+        AuthorStyleReference.learnedPreferencesURL.path
+    }
+
+    private var styleProposalSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Proposed Learned Preferences")
+                .font(.headline)
+
+            Text("Review or edit this file before approving. Approval marks \(proposalEventIDs.count) feedback event\(proposalEventIDs.count == 1 ? "" : "s") as processed.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            TextEditor(text: $proposedLearnedPreferences)
+                .font(.system(.body, design: .monospaced))
+                .frame(minHeight: 260)
+                .border(Color.secondary.opacity(0.25))
+
+            DisclosureGroup("Diff") {
+                ScrollView {
+                    Text(proposedLearnedPreferencesDiff)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .frame(minHeight: 140)
+            }
+
+            HStack {
+                Spacer()
+                Button("Discard") {
+                    showStyleProposal = false
+                }
+                Button("Approve") {
+                    approveStyleProposal()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(proposedLearnedPreferences.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 760, height: 620)
     }
 
     private func pasteAnthropicKeyFromClipboard() {
@@ -183,6 +279,54 @@ struct SettingsView: View {
         }
 
         return trimmedValue
+    }
+
+    private func refreshStyleContext() {
+        _ = AuthorStyleReference.content
+        pendingStyleDecisionCount = StyleFeedbackStore.shared.pendingDecisionCount()
+        learnedPreferencesPreview = AuthorStyleReference.learnedPreferences
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    @MainActor
+    private func updateStylePreferences() async {
+        isUpdatingStylePreferences = true
+        styleUpdateError = ""
+        defer {
+            isUpdatingStylePreferences = false
+            refreshStyleContext()
+        }
+
+        do {
+            let current = AuthorStyleReference.learnedPreferences
+            let proposal = try await styleGuideUpdater.proposeUpdate()
+            proposedLearnedPreferences = proposal.proposedMarkdown
+            proposedLearnedPreferencesDiff = StyleGuideUpdater.unifiedDiff(
+                old: current,
+                new: proposal.proposedMarkdown
+            )
+            proposalEventIDs = proposal.eventIDs
+            showStyleProposal = true
+        } catch {
+            styleUpdateError = error.localizedDescription
+        }
+    }
+
+    private func approveStyleProposal() {
+        do {
+            let proposal = StyleGuideUpdater.Proposal(
+                proposedMarkdown: proposedLearnedPreferences,
+                eventIDs: proposalEventIDs
+            )
+            try styleGuideUpdater.approve(proposal)
+            showStyleProposal = false
+            proposedLearnedPreferences = ""
+            proposedLearnedPreferencesDiff = ""
+            proposalEventIDs = []
+            refreshStyleContext()
+        } catch {
+            styleUpdateError = error.localizedDescription
+        }
     }
 }
 

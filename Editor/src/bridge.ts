@@ -19,6 +19,7 @@ export type BridgeMessageType =
   | 'selectionChanged'
   | 'wordCount'
   | 'pendingEditUpdate'
+  | 'editDecision'
   | 'commentsChanged'
   | 'commentActivated'
   | 'openURL';

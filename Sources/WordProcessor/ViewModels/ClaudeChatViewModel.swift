@@ -33,6 +33,7 @@ final class ClaudeChatViewModel {
     To add new content, use insert_at_cursor. \
     To suggest a cut/deletion, use replace_selection or propose_edit with an empty replacement string. \
     Keep edit targets as small as possible. If only one sentence or one bracketed section changes, target only that span instead of replacing a whole paragraph.
+    When the document contains bracketed placeholders like [stat here] or [link], prefer propose_edit targeting exactly the bracketed span, including the brackets, over rewriting surrounding text.
     For sentence-level edits, pass an inline HTML fragment or plain text as the replacement; do not wrap it in <p> unless replacing multiple whole paragraphs.
     Never guess between repeated occurrences. If the target is ambiguous, include block_id, prefix/suffix, and document_revision/document_hash from <edit_context>, or ask the user to select the text.
 
@@ -364,7 +365,15 @@ final class ClaudeChatViewModel {
                 replacementHTML: replacementHTML,
                 replaceAll: replaceAll
             )
-            return editToolResult(count: count, scopeDetail: nil, isDeletion: Self.isDeletionReplacement(replacementHTML))
+            let result = editToolResult(count: count, scopeDetail: nil, isDeletion: Self.isDeletionReplacement(replacementHTML))
+            if count > 0,
+               let note = Self.minimalityFeedback(
+                original: target["exact_original"] as? String ?? "",
+                replacementHTML: replacementHTML
+               ) {
+                return "\(result)\n\(note)"
+            }
+            return result
 
         case "find_and_replace":
             let find = input["find"] as? String ?? ""
@@ -500,6 +509,21 @@ final class ClaudeChatViewModel {
             )
         }
 
+        let learnedPreferences = AuthorStyleReference.learnedPreferences.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !learnedPreferences.isEmpty {
+            blocks.append(
+                Self.cachedSystemBlock(
+                    """
+                    <learned_style_preferences>
+                    Rules distilled from the author's accepted/rejected edits. Where these conflict with the general voice reference, these win because they are more recent and more specific.
+
+                    \(learnedPreferences)
+                    </learned_style_preferences>
+                    """
+                )
+            )
+        }
+
         if !preparedDocument.isEmpty {
             blocks.append(
                 Self.uncachedSystemBlock(
@@ -516,6 +540,11 @@ final class ClaudeChatViewModel {
 
         if let editContext {
             blocks.append(Self.uncachedSystemBlock(Self.editContextPrompt(editContext)))
+        }
+
+        let rejectedMemory = Self.recentRejectedSuggestionsPrompt()
+        if !rejectedMemory.isEmpty {
+            blocks.append(Self.uncachedSystemBlock(rejectedMemory))
         }
 
         return blocks
@@ -542,9 +571,19 @@ final class ClaudeChatViewModel {
             """
         }.joined(separator: "\n")
 
+        let placeholderLines = (context.placeholders ?? []).map { placeholder in
+            """
+            <placeholder block_id="\(placeholder.blockId.htmlEscaped)" from="\(placeholder.from)" to="\(placeholder.to)" text="\(placeholder.text.htmlEscaped)" />
+            """
+        }.joined(separator: "\n")
+        let placeholdersBlock = placeholderLines.isEmpty
+            ? "<placeholders />"
+            : "<placeholders>\n\(placeholderLines)\n</placeholders>"
+
         return """
         <edit_context revision="\(context.revision)" document_hash="\(context.documentHash)" cursor_position="\(context.cursorPosition)">
         Use this context for edit tools. For propose_edit, copy document_revision/document_hash exactly, use block_id when available, and include exact_original plus short prefix/suffix if repeated text could be ambiguous.
+        If <placeholders> contains a relevant bracketed placeholder, target exactly its text, including brackets.
 
         \(selectionText)
 
@@ -552,10 +591,34 @@ final class ClaudeChatViewModel {
         \(context.nearbyText)
         </nearby_text>
 
+        \(placeholdersBlock)
+
         <block_index>
         \(blockLines)
         </block_index>
         </edit_context>
+        """
+    }
+
+    private static func recentRejectedSuggestionsPrompt(limit: Int = 10) -> String {
+        let rejected = StyleFeedbackStore.shared.recentRejectedDecisions(limit: limit)
+        guard !rejected.isEmpty else { return "" }
+
+        let lines = rejected.map { decision in
+            """
+            <rejected_suggestion source="\(decision.source.htmlEscaped)" kind="\(decision.kind.htmlEscaped)">
+            <original>\(decision.originalText.htmlEscaped)</original>
+            <replacement>\(decision.replacementText.htmlEscaped)</replacement>
+            <context>\(decision.surroundingSentence.htmlEscaped)</context>
+            </rejected_suggestion>
+            """
+        }.joined(separator: "\n")
+
+        return """
+        <recent_rejected_suggestions>
+        The author rejected these suggestions recently. Do not re-suggest similar edits unless the user explicitly asks for them.
+        \(lines)
+        </recent_rejected_suggestions>
         """
     }
 
@@ -667,6 +730,57 @@ final class ClaudeChatViewModel {
 
     private static func isDeletionReplacement(_ html: String) -> Bool {
         html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private static func minimalityFeedback(original: String, replacementHTML: String) -> String? {
+        guard original.count > 200 else { return nil }
+
+        let originalWords = comparableWords(in: original)
+        let replacementWords = comparableWords(in: plainTextFromHTML(replacementHTML))
+        guard originalWords.count > 20, !replacementWords.isEmpty else { return nil }
+
+        var prefixCount = 0
+        while prefixCount < originalWords.count,
+              prefixCount < replacementWords.count,
+              originalWords[prefixCount] == replacementWords[prefixCount] {
+            prefixCount += 1
+        }
+
+        var suffixCount = 0
+        while suffixCount + prefixCount < originalWords.count,
+              suffixCount + prefixCount < replacementWords.count,
+              originalWords[originalWords.count - suffixCount - 1] == replacementWords[replacementWords.count - suffixCount - 1] {
+            suffixCount += 1
+        }
+
+        let changedOriginalWords = max(0, originalWords.count - prefixCount - suffixCount)
+        let changedReplacementWords = max(0, replacementWords.count - prefixCount - suffixCount)
+        let changedWords = max(changedOriginalWords, changedReplacementWords)
+        guard Double(changedWords) / Double(max(originalWords.count, 1)) < 0.25 else {
+            return nil
+        }
+
+        return "Queued, but only \(changedWords) of your \(originalWords.count)-word target differ. Next time, target the smaller changed span directly."
+    }
+
+    private static func comparableWords(in text: String) -> [String] {
+        text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+
+    private static func plainTextFromHTML(_ html: String) -> String {
+        html
+            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func suggestionNoun(for html: String) -> String {

@@ -104,6 +104,13 @@ export interface EditContextBlock {
   textHash: string;
 }
 
+export interface EditContextPlaceholder {
+  blockId: string;
+  from: number;
+  to: number;
+  text: string;
+}
+
 export interface EditContextSelection {
   from: number;
   to: number;
@@ -121,6 +128,7 @@ export interface EditContextSnapshot {
   nearbyText: string;
   selection: EditContextSelection | null;
   blocks: EditContextBlock[];
+  placeholders: EditContextPlaceholder[];
 }
 
 export interface ProposedEditTarget {

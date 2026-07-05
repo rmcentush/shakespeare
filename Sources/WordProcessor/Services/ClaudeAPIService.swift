@@ -66,7 +66,7 @@ final class ClaudeAPIService: Sendable {
         ] as [String: Any],
         [
             "name": "propose_edit",
-            "description": "Queue a precise, reviewable edit to existing document text. Use this instead of a loose find/replace when the user asks to revise, cut, delete, or trim text that is not the active selection. Target the smallest exact span that changes. Prefer a block_id from <edit_context>, the exact original text, nearby prefix/suffix, and the document revision/hash from that context so the app can resolve the target deterministically. For cuts/deletions, set replacement_html to an empty string.",
+            "description": "Queue a precise, reviewable edit to existing document text. Use this instead of a loose find/replace when the user asks to revise, cut, delete, or trim text that is not the active selection. Target the smallest exact span that changes; for bracketed placeholders, target exactly the bracketed text including brackets. Prefer a block_id from <edit_context>, the exact original text, nearby prefix/suffix, and the document revision/hash from that context so the app can resolve the target deterministically. For cuts/deletions, set replacement_html to an empty string.",
             "input_schema": [
                 "type": "object",
                 "properties": [
@@ -80,7 +80,7 @@ final class ClaudeAPIService: Sendable {
                             ],
                             "exact_original": [
                                 "type": "string",
-                                "description": "The exact current text span to replace. Keep this as small as possible."
+                                "description": "The exact current text span to replace. Keep this as small as possible; if filling [placeholder] text, include only that bracketed span."
                             ],
                             "prefix": [
                                 "type": "string",

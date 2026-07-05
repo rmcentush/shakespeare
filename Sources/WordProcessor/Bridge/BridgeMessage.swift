@@ -12,6 +12,7 @@ enum BridgePayload: Codable {
     case selectionChanged(SelectionState)
     case wordCount(words: Int, characters: Int)
     case pendingEditUpdate(PendingEditUpdateData)
+    case editDecision(EditDecisionData)
     case commentsChanged([CommentData], documentChanged: Bool)
     case commentActivated(commentId: String)
     case openURL(url: String)
@@ -94,6 +95,19 @@ enum BridgePayload: Codable {
         let canFocus: Bool
     }
 
+    struct EditDecisionData: Codable {
+        let eventID: String
+        let decision: String
+        let source: String
+        let kind: String
+        let originalText: String
+        let replacementText: String
+        let surroundingSentence: String
+        let groupID: String
+        let rationale: String
+        let timestamp: Double
+    }
+
     init(from decoder: Decoder) throws {
         // This is decoded manually from the raw JSON
         self = .unknown
@@ -173,6 +187,29 @@ enum BridgePayload: Codable {
                     currentIndex: currentIndex,
                     activeEditID: activeEditID,
                     edits: edits
+                )
+            )
+        case "editDecision":
+            let timestamp: Double
+            if let doubleValue = payload["timestamp"] as? Double {
+                timestamp = doubleValue
+            } else if let intValue = payload["timestamp"] as? Int {
+                timestamp = Double(intValue)
+            } else {
+                timestamp = 0
+            }
+            return .editDecision(
+                EditDecisionData(
+                    eventID: payload["eventId"] as? String ?? "",
+                    decision: payload["decision"] as? String ?? "",
+                    source: payload["source"] as? String ?? "",
+                    kind: payload["kind"] as? String ?? "",
+                    originalText: payload["originalText"] as? String ?? "",
+                    replacementText: payload["replacementText"] as? String ?? "",
+                    surroundingSentence: payload["surroundingSentence"] as? String ?? "",
+                    groupID: payload["groupId"] as? String ?? "",
+                    rationale: payload["rationale"] as? String ?? "",
+                    timestamp: timestamp
                 )
             )
         case "commentsChanged":

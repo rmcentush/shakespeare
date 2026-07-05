@@ -98,7 +98,7 @@ import {
   rangeFromSelectionTarget,
   rejectAllPendingEdits,
   rejectPendingEdit,
-  sentenceSplitPendingEdits,
+  replacementPendingEdits,
 } from './pendingEdits';
 import { buildEditContextSnapshot } from './editContext';
 
@@ -259,7 +259,7 @@ function setEditorZoomScale(scale: number) {
 registerSwiftCallbacks({
   loadContent(html: string) {
     resetEditorSyncState();
-    rejectAllPendingEdits(editor);
+    rejectAllPendingEdits(editor, false);
     editor.commands.setContent(stripGeneratedFootnotesSection(html), false);
     normalizeDocumentSmartQuotes(editor);
     renderFootnotesPanel(editor, true);
@@ -270,7 +270,7 @@ registerSwiftCallbacks({
   loadJSONContent(json: string) {
     resetEditorSyncState();
     try {
-      rejectAllPendingEdits(editor);
+      rejectAllPendingEdits(editor, false);
       const parsed = JSON.parse(json);
       editor.commands.setContent(parsed, false);
       normalizeDocumentSmartQuotes(editor);
@@ -500,16 +500,8 @@ registerSwiftCallbacks({
 
     const { from, to } = targetedRange ?? editor.state.selection;
     if (from === to) return 0;
-    return queuePendingEdits(editor, [
-      createPendingEdit(editor, {
-        id,
-        groupId: id,
-        kind: 'selection',
-        from,
-        to,
-        newHtml,
-      }),
-    ], id);
+    const edits = replacementPendingEdits(editor, id, { from, to }, newHtml, 'selection');
+    return queuePendingEdits(editor, edits, edits[0]?.id ?? null);
   },
   pendingInsertAtCursor(id: string, newHtml: string, target?: SelectionEditTarget): number {
     const targetedPosition = positionFromInsertionTarget(editor, target ?? null);
@@ -540,20 +532,10 @@ registerSwiftCallbacks({
       return TOO_MANY_MATCHES;
     }
     const toAdd = replaceAll ? matches : [matches[0]];
-    if (!replaceAll) {
-      const splitEdits = sentenceSplitPendingEdits(editor, id, matches[0], replaceHtml);
-      if (splitEdits.length > 0) {
-        return queuePendingEdits(editor, splitEdits, splitEdits[0]?.id ?? null);
-      }
-    }
-    const edits = toAdd.map((match, i) => createPendingEdit(editor, {
-      id: replaceAll ? `${id}_${i}` : id,
-      groupId: id,
-      kind: 'findReplace',
-      from: match.from,
-      to: match.to,
-      newHtml: replaceHtml,
-    }));
+    const edits = toAdd.flatMap((match, i) => {
+      const groupId = replaceAll ? `${id}_${i}` : id;
+      return replacementPendingEdits(editor, groupId, match, replaceHtml, 'findReplace');
+    });
     return queuePendingEdits(editor, edits, edits[0]?.id ?? null);
   },
   pendingProposeEdit(

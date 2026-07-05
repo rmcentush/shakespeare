@@ -1,6 +1,7 @@
 import { Editor } from '@tiptap/core';
 import {
   EditContextBlock,
+  EditContextPlaceholder,
   EditContextSnapshot,
   MAX_EDIT_CONTEXT_BLOCKS,
   MAX_EDIT_CONTEXT_BLOCK_TEXT,
@@ -72,9 +73,31 @@ function textNearPosition(doc: any, pos: number): string {
   return doc.textBetween(from, to, '\n', '\n');
 }
 
+function bracketPlaceholdersForBlock(block: EditContextBlock): EditContextPlaceholder[] {
+  const placeholders: EditContextPlaceholder[] = [];
+  const regex = /\[[^\]\n]{1,160}\]/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(block.text)) !== null) {
+    placeholders.push({
+      blockId: block.id,
+      from: block.from + match.index,
+      to: block.from + match.index + match[0].length,
+      text: match[0],
+    });
+  }
+
+  return placeholders;
+}
+
+function bracketPlaceholders(blocks: EditContextBlock[]): EditContextPlaceholder[] {
+  return blocks.flatMap(bracketPlaceholdersForBlock).slice(0, 80);
+}
+
 export function buildEditContextSnapshot(editor: Editor): EditContextSnapshot {
   const plainText = serializeDocumentPlainText(editor);
   const activeSelection = effectiveTextSelection(editor);
+  const blocks = buildEditBlockIndex(editor.state.doc);
   const selection = activeSelection
     ? {
       from: activeSelection.from,
@@ -95,6 +118,7 @@ export function buildEditContextSnapshot(editor: Editor): EditContextSnapshot {
     cursorPosition,
     nearbyText: textNearPosition(editor.state.doc, cursorPosition),
     selection,
-    blocks: buildEditBlockIndex(editor.state.doc),
+    blocks,
+    placeholders: bracketPlaceholders(blocks),
   };
 }

@@ -43,6 +43,13 @@ final class EditorViewModel {
     private static let maximumZoomScale = 2.0
     private static let defaultZoomScale = 1.0
     private static let zoomStep = 0.1
+    private static let aiTropesGuidance: String = {
+        guard let resourceURL = Bundle.module.url(forResource: "ai_tropes", withExtension: "md"),
+              let content = try? String(contentsOf: resourceURL, encoding: .utf8)
+        else { return "" }
+        return content
+    }()
+    @ObservationIgnored private let styleFeedbackStore = StyleFeedbackStore.shared
 
     struct SelectionState: Equatable {
         var isBold = false
@@ -179,6 +186,13 @@ final class EditorViewModel {
             let textHash: String
         }
 
+        struct Placeholder: Decodable, Equatable {
+            let blockId: String
+            let from: Int
+            let to: Int
+            let text: String
+        }
+
         let revision: Int
         let documentHash: String
         let plainText: String
@@ -186,6 +200,7 @@ final class EditorViewModel {
         let nearbyText: String
         let selection: Selection?
         let blocks: [Block]
+        let placeholders: [Placeholder]?
     }
 
     private struct AmbientReviewSuggestion: Decodable {
@@ -259,6 +274,9 @@ final class EditorViewModel {
             pendingEditCurrentIndex = update.currentIndex
             activePendingEditID = update.activeEditID
             pendingEdits = update.edits.map(PendingEdit.init)
+
+        case .editDecision(let decision):
+            styleFeedbackStore.appendBridgeDecision(decision)
 
         case .commentsChanged(let newComments, let documentChanged):
             comments = newComments.sorted {
@@ -641,10 +659,17 @@ final class EditorViewModel {
     }
 
     func setCommentStatus(_ commentId: String, status: String) {
+        if status == "dismissed",
+           let comment = comments.first(where: { $0.id == commentId && $0.source == "agent" }) {
+            styleFeedbackStore.appendCommentDecision(decision: "reject", comment: comment)
+        }
         callEditorAPI("setCommentStatus", arguments: [commentId, status])
     }
 
     func removeComment(_ commentId: String) {
+        if let comment = comments.first(where: { $0.id == commentId && $0.source == "agent" && $0.status == "open" }) {
+            styleFeedbackStore.appendCommentDecision(decision: "reject", comment: comment)
+        }
         callEditorAPI("removeComment", arguments: [commentId])
     }
 
@@ -656,6 +681,10 @@ final class EditorViewModel {
     func pendingReplaceComment(_ comment: BridgePayload.CommentData) {
         let replacement = comment.suggestedReplacement.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !replacement.isEmpty else { return }
+
+        if comment.source == "agent" {
+            styleFeedbackStore.appendCommentDecision(decision: "accept", comment: comment)
+        }
 
         callEditorAPI(
             "pendingReplaceComment",
@@ -779,6 +808,35 @@ final class EditorViewModel {
             ])
         }
 
+        if !Self.aiTropesGuidance.isEmpty {
+            systemPrompt.append([
+                "type": "text",
+                "text": """
+                <writing_style_guidance>
+                When writing or editing text for the user, follow this guidance carefully:
+
+                \(Self.aiTropesGuidance)
+                </writing_style_guidance>
+                """,
+                "cache_control": ClaudeAPIService.oneHourPromptCacheControl
+            ])
+        }
+
+        let learnedPreferences = AuthorStyleReference.learnedPreferences.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !learnedPreferences.isEmpty {
+            systemPrompt.append([
+                "type": "text",
+                "text": """
+                <learned_style_preferences>
+                Rules distilled from the author's accepted/rejected edits. Where these conflict with the general voice reference, these win because they are more recent and more specific.
+
+                \(learnedPreferences)
+                </learned_style_preferences>
+                """,
+                "cache_control": ClaudeAPIService.oneHourPromptCacheControl
+            ])
+        }
+
         let messages: [[String: Any]] = [
             [
                 "role": "user",
@@ -802,6 +860,7 @@ final class EditorViewModel {
 
     private func ambientReviewPrompt(_ context: EditContextSnapshot) -> String {
         let existingComments = ambientExistingCommentsXML()
+        let recentRejected = ambientRecentRejectedSuggestionsXML()
         let blockLines = context.blocks.map { block in
             """
             <block id="\(xmlEscaped(block.id))" type="\(xmlEscaped(block.type))" from="\(block.from)" to="\(block.to)" text_hash="\(xmlEscaped(block.textHash))">
@@ -814,6 +873,7 @@ final class EditorViewModel {
         Review the current document using these anchorable blocks. Return JSON only.
         <edit_context revision="\(context.revision)" document_hash="\(xmlEscaped(context.documentHash))">
         \(existingComments)
+        \(recentRejected)
         <block_index>
         \(blockLines)
         </block_index>
@@ -848,6 +908,30 @@ final class EditorViewModel {
         <existing_comments>
         \(commentLines)\(omittedLine)
         </existing_comments>
+        """
+    }
+
+    private func ambientRecentRejectedSuggestionsXML(limit: Int = 10) -> String {
+        let rejected = styleFeedbackStore.recentRejectedDecisions(limit: limit)
+        guard !rejected.isEmpty else {
+            return "<recent_rejected_suggestions />"
+        }
+
+        let lines = rejected.map { decision in
+            """
+            <rejected_suggestion source="\(xmlEscaped(decision.source))" kind="\(xmlEscaped(decision.kind))">
+            <original>\(xmlEscaped(decision.originalText))</original>
+            <replacement>\(xmlEscaped(decision.replacementText))</replacement>
+            <context>\(xmlEscaped(decision.surroundingSentence))</context>
+            </rejected_suggestion>
+            """
+        }.joined(separator: "\n")
+
+        return """
+        <recent_rejected_suggestions>
+        The author rejected these suggestions recently. Do not repeat similar suggestions.
+        \(lines)
+        </recent_rejected_suggestions>
         """
     }
 
