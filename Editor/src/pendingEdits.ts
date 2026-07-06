@@ -900,14 +900,29 @@ function wordMinimizedPendingEdits(
   const edits: PendingEdit[] = [];
   for (let index = 0; index < changedSegments.length; index += 1) {
     const change = changedSegments[index];
-    const originalStart = change.oldStart > 0 ? originalTokens[change.oldStart - 1].end : 0;
-    const originalEnd = change.oldEnd < originalTokens.length
+    let originalStart = change.oldStart > 0 ? originalTokens[change.oldStart - 1].end : 0;
+    let originalEnd = change.oldEnd < originalTokens.length
       ? originalTokens[change.oldEnd].start
       : originalText.length;
-    const replacementStart = change.newStart > 0 ? replacementTokens[change.newStart - 1].end : 0;
-    const replacementEnd = change.newEnd < replacementTokens.length
+    let replacementStart = change.newStart > 0 ? replacementTokens[change.newStart - 1].end : 0;
+    let replacementEnd = change.newEnd < replacementTokens.length
       ? replacementTokens[change.newEnd].start
       : replacementText.length;
+
+    let replacementFragment = replacementText.slice(replacementStart, replacementEnd);
+
+    // TipTap's HTML insertion parser may drop leading/trailing plain spaces in
+    // a fragment. Include the neighboring unchanged token at that edge so the
+    // accepted edit does not glue words together.
+    if (/^\s/.test(replacementFragment) && change.oldStart > 0 && change.newStart > 0) {
+      originalStart = originalTokens[change.oldStart - 1].start;
+      replacementStart = replacementTokens[change.newStart - 1].start;
+    }
+
+    if (/\s$/.test(replacementFragment) && change.oldEnd < originalTokens.length && change.newEnd < replacementTokens.length) {
+      originalEnd = originalTokens[change.oldEnd].end;
+      replacementEnd = replacementTokens[change.newEnd].end;
+    }
 
     if (originalStart === originalEnd && replacementStart === replacementEnd) {
       continue;
@@ -917,7 +932,7 @@ function wordMinimizedPendingEdits(
     const to = docPositionAtTextOffset(ed.state.doc, match.from, match.to, originalEnd);
     if (from === null || to === null || from > to) return [];
 
-    const replacementFragment = replacementText.slice(replacementStart, replacementEnd);
+    replacementFragment = replacementText.slice(replacementStart, replacementEnd);
     if (from === to && replacementFragment.length === 0) continue;
 
     const currentFragment = ed.state.doc.textBetween(from, to, '\n', '\n');
