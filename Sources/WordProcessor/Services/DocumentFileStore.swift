@@ -134,6 +134,11 @@ actor DocumentFileStore {
         let pasteboardTypeIdentifier: String?
     }
 
+    struct StagedImageAsset: Sendable {
+        let source: String
+        let baseURL: URL
+    }
+
     enum FileStoreError: LocalizedError {
         case missingPackageManifest
         case unsupportedPackageContentFormat
@@ -251,6 +256,40 @@ actor DocumentFileStore {
             }
 
             return nil
+        }
+    }
+
+    func stageImageAsset(
+        from dataURL: String,
+        documentID: String,
+        sourceDocumentURL: URL?
+    ) throws -> StagedImageAsset {
+        let payload = try dataFromDataURL(dataURL)
+        let filename = assetFilename(for: payload.data, fileExtension: payload.fileExtension)
+        let baseURL = try workingDocumentURL(for: documentID)
+        let assetsURL = baseURL.appendingPathComponent(
+            DocumentAssetReference.assetsDirectoryName,
+            isDirectory: true
+        )
+
+        try FileManager.default.createDirectory(at: assetsURL, withIntermediateDirectories: true)
+        try copyExistingAssetsIfNeeded(from: sourceDocumentURL, to: assetsURL)
+
+        let destinationURL = assetsURL.appendingPathComponent(filename)
+        if !FileManager.default.fileExists(atPath: destinationURL.path) {
+            try payload.data.write(to: destinationURL, options: .atomic)
+        }
+
+        return StagedImageAsset(
+            source: DocumentAssetReference.urlString(for: filename),
+            baseURL: baseURL
+        )
+    }
+
+    func deleteWorkingAssets(documentID: String) throws {
+        let url = try workingDocumentURL(for: documentID)
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
         }
     }
 
@@ -481,6 +520,57 @@ actor DocumentFileStore {
 
         return try assetURLs.reduce(into: [String: Data]()) { result, assetURL in
             result[assetURL.lastPathComponent] = try Data(contentsOf: assetURL, options: .mappedIfSafe)
+        }
+    }
+
+    private func workingDocumentURL(for documentID: String) throws -> URL {
+        guard let appSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let safeID = documentID.replacingOccurrences(
+            of: "[^A-Za-z0-9_-]",
+            with: "-",
+            options: .regularExpression
+        )
+        let directory = appSupport
+            .appendingPathComponent("Shakespeare", isDirectory: true)
+            .appendingPathComponent("WorkingDocuments", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent(
+            "\(safeID.isEmpty ? UUID().uuidString : safeID).\(Self.documentPackageExtension)",
+            isDirectory: true
+        )
+    }
+
+    private func copyExistingAssetsIfNeeded(from sourceDocumentURL: URL?, to destination: URL) throws {
+        guard let sourceDocumentURL,
+              Self.isNativeDocumentURL(sourceDocumentURL),
+              sourceDocumentURL.standardizedFileURL != destination.deletingLastPathComponent().standardizedFileURL
+        else { return }
+
+        try withSecurityScopedAccess(to: [sourceDocumentURL]) {
+            let source = sourceDocumentURL.appendingPathComponent(
+                DocumentAssetReference.assetsDirectoryName,
+                isDirectory: true
+            )
+            guard FileManager.default.fileExists(atPath: source.path) else { return }
+            let files = try FileManager.default.contentsOfDirectory(
+                at: source,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+            for file in files {
+                let target = destination.appendingPathComponent(file.lastPathComponent)
+                guard !FileManager.default.fileExists(atPath: target.path) else { continue }
+                do {
+                    try FileManager.default.linkItem(at: file, to: target)
+                } catch {
+                    try FileManager.default.copyItem(at: file, to: target)
+                }
+            }
         }
     }
 

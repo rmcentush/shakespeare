@@ -19,10 +19,12 @@ struct ClaudeChatView: View {
                         ForEach(chatViewModel.messages) { message in
                             MessageBubble(
                                 message: message,
+                                isStreaming: chatViewModel.streamingMessageID == message.id,
                                 canInsertIntoDocument: editorViewModel.isEditorReady,
                                 onQuoteAssistant: appendQuotedAssistantMessage,
                                 onInsertAssistant: insertAssistantMessageIntoDocument
                             )
+                                .equatable()
                                 .id(message.id)
                         }
 
@@ -404,14 +406,24 @@ private struct ChatScrollObserver: NSViewRepresentable {
     }
 }
 
-struct MessageBubble: View {
+struct MessageBubble: View, Equatable {
     let message: ChatMessage
+    let isStreaming: Bool
     let canInsertIntoDocument: Bool
     let onQuoteAssistant: (String) -> Void
     let onInsertAssistant: (String) -> Void
 
     @State private var isHovering = false
     private let maxBubbleWidth: CGFloat = 280
+
+    static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
+        lhs.message.id == rhs.message.id
+            && lhs.message.content == rhs.message.content
+            && lhs.message.detail == rhs.message.detail
+            && lhs.message.quotedSelection == rhs.message.quotedSelection
+            && lhs.isStreaming == rhs.isStreaming
+            && lhs.canInsertIntoDocument == rhs.canInsertIntoDocument
+    }
 
     var body: some View {
         switch message.role {
@@ -465,7 +477,7 @@ struct MessageBubble: View {
     @ViewBuilder
     private var bubbleContent: some View {
         if message.role == .assistant {
-            AssistantMessageContent(content: message.content)
+            AssistantMessageContent(content: message.content, isStreaming: isStreaming)
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 if let quote = message.quotedSelection, !quote.isEmpty {
@@ -504,7 +516,7 @@ struct MessageBubble: View {
     }
 
     private var showsAssistantToolbar: Bool {
-        message.role == .assistant && isHovering && hasAssistantContent
+        message.role == .assistant && !isStreaming && isHovering && hasAssistantContent
     }
 
     private func copyMessageToPasteboard(_ text: String) {
@@ -589,15 +601,26 @@ private struct AssistantBubbleToolbar: View {
 
 private struct AssistantMessageContent: View {
     let content: String
+    let isStreaming: Bool
 
     private var blocks: [ClaudeMessageBlock] {
         ClaudeMessageBlock.parse(content)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { entry in
-                blockView(entry.element)
+        Group {
+            if isStreaming {
+                Text(verbatim: content)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .font(ClaudeChatFont.message)
+                    .lineSpacing(3)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(blocks.enumerated()), id: \.offset) { entry in
+                        blockView(entry.element)
+                    }
+                }
             }
         }
         .textSelection(.enabled)

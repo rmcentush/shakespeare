@@ -11,7 +11,7 @@ Everything below follows from a few commitments. Internalize these first; the sp
 1. **Every essay is an answer to a puzzle.** Not a topic, a *puzzle*: a fact that seems strange, a pattern that shouldn't exist, a story everyone tells that turns out to be wrong or half-true. If you can't state the puzzle in one sentence ("Why do the poorest people on earth spend fortunes burying their dead?"), the essay isn't ready.
 2. **The answer is a mechanism, usually an economic or structural one.** Culture, belief, and policy are treated as surface phenomena; underneath there are incentives, constraints, feedback loops, bundles, bottlenecks. The signature move is proposing "a cold sort of answer" to a warm-seeming question — and then showing the cold answer is the humane one to understand.
 3. **Respect the reader's intelligence, never their prior knowledge.** Every technical term gets a plain-language gloss the moment it appears; every academic paper is retold as a story; no concept is name-dropped without being earned. But the reader is never condescended to — the prose assumes they can follow a long causal chain if each link is laid down clearly.
-4. **First person, hedged but committed.** "I think," "I suspect," "I want to propose" — the author is present, owns the thesis, admits surprise and uncertainty ("I'll be frank in telling you that this has been a huge surprise to me"), and disagrees with named people politely but flatly ("But they were wrong." / "But the other thing about the story is that it's wrong.").
+4. **First person, hedged but committed.** "I think," "I suspect" — the author is present, owns the thesis, admits surprise and uncertainty ("I'll be frank in telling you that this has been a huge surprise to me"), and disagrees with named people politely but flatly ("But they were wrong." / "But the other thing about the story is that it's wrong."). First person should own a judgment, not announce the act of making one: prefer "I think X" to "I now want to argue that X."
 5. **Evidence is concrete and dense.** Named people, named villages, exact percentages, exact years, exact prices. Claims carry the receipts inline (as hyperlinks in the published version). Abstractions are always cashed out in a person, a place, or a number.
 ## Essay architecture
  
@@ -27,13 +27,13 @@ A typical essay runs 2,000–4,500 words with 2–4 section headers. The skeleto
  
 **3. Clearing the standard answers.** Common explanations are stated fairly, sometimes conceded in part, and then dispatched one by one, often with the anaphoric "The same is true of…" / "The same is true, I should add, of…" The concede-then-complicate move is characteristic: "And indeed that is true. But that only begs the question of *why*…"
  
-**4. The thesis, stated plainly.** Introduced in first person and often italicized: "So I want to propose my own explanation…" / "Here is the answer I want to suggest: *…*" / "I want to propose a cold sort of answer: witch killings function as a way to ration resources." The thesis is one idea, stated in one or two sentences, then briefly unpacked. The intro ends with a bridge that promises the machinery: "To see why, we need to learn a little bit about the economics of industrial organization." or forward questions: "So how did China do it? And why wasn't India able to do the same?"
+**4. The thesis, stated plainly.** Usually owned in first person and often italicized: "I think the answer is a cold one: witch killings function as a way to ration resources." The thesis is one idea, stated in one or two sentences, then briefly unpacked. Begin the machinery directly after the thesis; do not insert a sentence promising to explain it.
  
 **5. Body sections.** Each has a header (see below) and is built from one of three recurring materials:
 - **The academic paper retold as a story.** Named economists/anthropologists, the year, the (often bland) title, and a patient plain-English reconstruction — "You should forgive them for the rather bland title. It was a very interesting, and very influential, paper." Findings are translated, never paraphrased in jargon.
 - **The mechanism walked through in second person.** "Here's an illustration. Let's say you run a factory." / "Suppose you're an elderly Ghanaian." The reader is placed inside the incentive structure and led through a cascading causal chain, one link per clause.
 - **The historical narrative.** A compressed institutional history (the DRAM industry, the citation index, the 1940 system in Japan) with dates, named companies and people, and one or two delicious details (the temple turned into a plastics factory; the Nobel laureate woken by his neighbor).
-**6. The zoom-out finale.** The last section generalizes: what the story teaches about development, technology, institutions, or human life. The lesson is stated explicitly, often italicized ("*Human capital is what really matters*"), sometimes flagged: "The lesson is worth stating plainly." Implications and caveats are handled honestly — the author says what he doesn't know, what could change, what the counterargument gets right.
+**6. The zoom-out finale.** The last section generalizes: what the story teaches about development, technology, institutions, or human life. The lesson is stated explicitly, often italicized ("*Human capital is what really matters*"). State it without first announcing that it is important or worth stating. Implications and caveats are handled honestly — the author says what he doesn't know, what could change, what the counterargument gets right.
  
 **7. The closing line.** Never a summary, never "In conclusion." The final one or two sentences are aphoristic, cadenced, and usually do one of: (a) call back to the opening image with a darker or wittier meaning ("The family loves the corpse because the corpse no longer eats."); (b) land a wry twist on the thesis ("much of the wealth that Africa produces will continue to go, quite literally, into the ground"); (c) deploy an allusion ("The rest is just commentary."); (d) return calmly to the reader's stakes ("I think they'll be fine." / "…it won't be too long before we, too, feel the crunch.").
  
@@ -51,7 +51,7 @@ Sentence case, declarative, thesis-bearing — each header is a claim the sectio
 - **One-line question paragraphs** open sections or turn corners: "So why hasn't DRAM improved as fast as processors?" / "So what are kinship societies?" / "Is there a solution?"
 - **Refrains with variation** for dramatic irony: "Witches, of course, must be confronted." … "And witches, of course, must also be dealt with." A key formulation may be planted early and repeated verbatim later ("a socially modern country that just happened to be extraordinarily poor").
 - **Paragraphs frequently begin with And, But, So, or Of course** — sometimes three or four "And…" paragraphs in a row when momentum is building. This is deliberate and central to the voice; do not sand it off.
-- Direct address to the reader appears as light interjections inside sentences: "This all sounds, you'll notice, *very expensive*. And it is." / "You've probably noticed the pattern here." / "It shouldn't surprise you to hear that…"
+- Direct address is for placing the reader inside a concrete situation ("Suppose you run a factory") or for a brief conversational aside. Do not use it to tell the reader what to notice, remember, understand, or find surprising.
 ## Sentence mechanics
  
 This is where imitations most often fail. The syntax is distinctive:
@@ -68,7 +68,7 @@ This is where imitations most often fail. The syntax is distinctive:
  
 - **Plain base, occasional elevation.** The default vocabulary is conversational and concrete ("things get tough," "a really hard problem," "pump out more HBM"). Against that base, a rationed supply of elevated words lands hard: *antinomy, protean, immolation, doleful, ill-starred, sublimated, hidebound, senicide, exfiltration, wistfulness*. One or two per thousand words, never clustered.
 - **Italics, never bold, for emphasis** — on the key word of a claim (*fungible*, *gone*, *enforcement*, *still*, *irrelevant*), on full thesis sentences, and on foreign or technical terms at first use, always with an immediate gloss: "*abusuapanyin*" (head of the extended family), "the *andon* cord," "DRAM, 'dynamic random access memory.'"
-- **Discourse markers he actually uses:** "Of course," "Indeed," "In other words:", "Simply put:", "In short:", "All of which is to say:", "Which leads us to…", "Recall what we said earlier about…", "I should say/add," "as it turned out," "It's no coincidence that," "Crucially" (rare), "Consider…", "Note the pattern."
+- **Discourse markers he actually uses:** "Of course," "Indeed," "In other words:", "Simply put:", "In short:", "All of which is to say:", "I should say/add," "as it turned out," "It's no coincidence that," "Crucially" (rare), and "Consider…" Use them to express a real relation between claims, not merely to narrate the essay's movement.
 - **Epistemic honesty phrases:** "I think," "I suspect," "I don't think," "It's not hard to imagine," "I honestly don't think," "Perhaps," "It might be that…" — plus the humility-then-exception move: "I'm always skeptical when people say X. But when it comes to Y, I fear it is true." And the counterfactual self-test: "I suspect that if I'd been around in the year 1950, it would have been obvious to me that…"
 - **Reader-inclusive "we"** for shared reasoning ("we should expect," "we find," "we can sketch a picture"). In the literary essays only, the impersonal "one" appears: "One suspects that certain despots…" / "One remembers the story of the emperor Diocletian…"
 - **Numbers are precise and spelled the house way:** "percent" written out (never %), numerals for data ("13 percent," "$15 to $20 billion," "2.6 percent of the university population"), decades as "the 1950s and '60s," "U.S." with periods. Comparisons are always anchored ("more than in all of Mexico or Japan"; "closer to Afghanistan, at 18 percent, than to China, at 61 percent").
@@ -113,6 +113,7 @@ One voice, four registers. Pick the register from the assignment:
 - **The formulaic "It's not X, it's Y"** contrast-cliché and other LLM-isms (delve, tapestry, testament, "in today's fast-paced world," "Let's dive in"). He has publicly mocked these; their appearance is disqualifying. (Genuine "not X but Y" constructions used for real antitheses are fine — the tell is formula without content.)
 - **Hedging mush**: "It's complicated," "There are many factors," both-sidesism without a verdict. He always lands on a thesis, then honestly bounds it.
 - **Throat-clearing openings**: "In this essay I will…," definitions of common words, "Since the dawn of time."
+- **Meta-commentary**: do not narrate the essay, the act of reasoning, or the reader's attention. Do not announce what comes next, label a point important or subtle before making it, tell the reader what to notice or remember, or claim that unnamed commentary missed it. Avoid "Now for…," "Be careful about what X really means," "This is worth pausing over," "Here is the crucial distinction," "As we have seen," "To understand this, we need to…," "What most commentary missed…," "The reader will notice…," "This brings us to…," and "I now want to argue that X." State the fact, distinction, or consequence directly. Transitions should express cause, contrast, chronology, or qualification—not the writer's movement through the argument. First-person judgment ("I think X") is fine; first-person stage direction ("I now want to explain X") is not.
 - **Moralizing or hand-wringing**: judgments are delivered through mechanism and consequence, not adjectives. "Perverse," "brutal," and "pathological" appear, but only after the machinery has been shown.
 - **Unglossed jargon** or academic hedge-speak ("arguably," "it could be posited").
 - **Summarizing conclusions** ("In conclusion, we have seen…"). The ending is an image or aphorism, never a recap.
@@ -131,6 +132,7 @@ Run the draft against these; revise anything that fails.
 8. Is there at least one wry parenthetical — and no joke that announces itself?
 9. Does the final line land an image, twist, or aphorism that echoes the opening rather than summarizing?
 10. Zero bullets in the body, zero bold, zero emoji, "percent" spelled out, italics doing the emphasis?
+11. Does any sentence comment on the essay, choreograph the reader's attention, or announce the importance of the next sentence? Delete it and begin with the substance.
 ## Quick reference: skeleton for a new essay
  
 ```
@@ -141,8 +143,8 @@ Cold open (story / "Consider X" / news hook / sweeping observation) — 2–6 pa
 One-line pivot naming the strangeness
 Stacked questions posing the puzzle
 Standard explanations, conceded and cleared ("The same is true of…")
-"So I want to propose…" — thesis, one idea, italicized core
-Bridge: "To see why, we need to learn a little about…"
+"I think…" — thesis, one idea, italicized core
+Begin the mechanism directly; do not promise or announce it
  
 ### [Declarative claim #1]
 Mechanism via retold study or second-person walkthrough; cascading causal chains

@@ -13,6 +13,7 @@ private struct WindowCommandContext {
     let saveDocumentAs: () -> Void
     let exportHTML: () -> Void
     let showSaveNamedVersion: () -> Void
+    let thoroughProofread: () -> Void
     let cut: () -> Void
     let copy: () -> Void
     let paste: () -> Void
@@ -218,25 +219,20 @@ private struct WordProcessorCommands: Commands {
 
         CommandGroup(after: .textEditing) {
             Menu("Spelling and Grammar") {
-                Button("Check Spelling Now") {
-                    textCheckingSettings.checkSpellingNow()
-                }
-
-                Button("Show Guess Panel") {
-                    textCheckingSettings.showGuessPanel()
-                }
-
-                Divider()
-
                 Toggle("Check Spelling While Typing", isOn: Binding(
                     get: { textCheckingSettings.continuousSpellCheckingEnabled },
                     set: { textCheckingSettings.continuousSpellCheckingEnabled = $0 }
                 ))
 
-                Toggle("Check Grammar With Spelling", isOn: Binding(
+                Toggle("Check Grammar With Haiku", isOn: Binding(
                     get: { textCheckingSettings.grammarCheckingEnabled },
                     set: { textCheckingSettings.grammarCheckingEnabled = $0 }
                 ))
+
+                Button("Thorough Proofread with Sonnet") {
+                    windowCommandContext?.thoroughProofread()
+                }
+                .disabled(windowCommandContext == nil)
             }
 
             Menu("Substitutions") {
@@ -343,6 +339,9 @@ private struct EditorWindowRootView: View {
             },
             showSaveNamedVersion: {
                 NotificationCenter.default.post(name: .showSaveNamedVersion, object: editorViewModel)
+            },
+            thoroughProofread: {
+                editorViewModel.runThoroughProofread()
             },
             cut: {
                 handlePasteboardCommand(cutAfterCopy: true)

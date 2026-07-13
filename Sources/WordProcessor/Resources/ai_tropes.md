@@ -153,6 +153,22 @@ Numbered or labeled points dressed up as continuous prose. The model writes what
 
 ## Tone
 
+### Meta-Commentary
+
+Writing that narrates itself instead of discussing its subject. The model announces the next move, tells the reader what to notice, labels a point important or subtle before making it, or positions itself as more perceptive than an unnamed body of commentary. Delete the stage direction and state the substance. First-person judgment ("I think X") is fine; first-person narration of the argument ("I now want to explain X") is not.
+
+**Avoid patterns like:**
+- "Now for the detail that most of the commentary missed."
+- "But be careful about what efficiency really means here."
+- "This is worth pausing over."
+- "Here is the crucial distinction."
+- "As we have seen..."
+- "To understand this, we need to..."
+- "The reader will notice..."
+- "This brings us to..."
+
+If a term is ambiguous, define it concretely. If a detail matters, state the consequence that makes it matter. If another account is wrong, name the person or source and identify the error; do not invoke "commentary," "critics," "the debate," or "what everyone missed" as imaginary opposition.
+
 ### "Here's the Kicker"
 
 False suspense transitions that promise a revelation but deliver a point that did NOT need the buildup. The model uses these phrases to manufacture drama before an otherwise unremarkable observation LOL. Also includes: "Here's the thing", "Here's where it gets interesting", "Here's what most people miss".

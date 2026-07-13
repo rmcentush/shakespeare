@@ -42,13 +42,13 @@ import {
   attachSelectionChangeFallback,
   attachSmartQuotesNormalizationFallback,
   emitSelectionUpdate,
-  emitWordCountUpdate,
   getDocumentTextSnapshot,
+  getDocumentRevision,
+  mapPositionFromRevision,
   noteDocumentChanged,
   resetDocSyncState,
   scheduleContentUpdate,
   scheduleSelectionUpdate,
-  scheduleWordCountUpdate,
   serializeDocumentHTML,
   serializeDocumentPlainText,
   serializeSelectionClipboardData,
@@ -60,6 +60,7 @@ import {
   renderFootnotesPanel,
   resetFootnotePanelState,
   scheduleFootnotesPanelRender,
+  transactionTouchesFootnotes,
   upsertFootnote,
 } from './footnotes';
 import {
@@ -80,6 +81,7 @@ import {
   pendingReplaceComment,
   removeComment,
   resetCommentsSignature,
+  scheduleCommentsChanged,
   setCommentStatus,
   updateCommentText,
 } from './comments';
@@ -101,11 +103,65 @@ import {
   replacementPendingEdits,
 } from './pendingEdits';
 import { buildEditContextSnapshot } from './editContext';
+import { attachProofreading } from './proofreading';
 
 function resetEditorSyncState() {
   resetDocSyncState();
   resetFootnotePanelState();
   resetCommentsSignature();
+  pendingImageImports.clear();
+}
+
+interface PendingImageImport {
+  from: number;
+  to: number;
+  revision: number;
+}
+
+const pendingImageImports = new Map<string, PendingImageImport>();
+
+function requestImageImport(file: File, from: number, to: number) {
+  const requestId = crypto.randomUUID();
+  pendingImageImports.set(requestId, {
+    from,
+    to,
+    revision: getDocumentRevision(),
+  });
+
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    const dataURL = event.target?.result;
+    if (typeof dataURL !== 'string') {
+      pendingImageImports.delete(requestId);
+      return;
+    }
+    sendToSwift('imageImportRequested', {
+      requestId,
+      dataURL,
+      filename: file.name,
+    });
+  };
+  reader.onerror = () => pendingImageImports.delete(requestId);
+  reader.readAsDataURL(file);
+}
+
+function completeImageImport(requestId: string, source: string, errorMessage = '') {
+  const pending = pendingImageImports.get(requestId);
+  pendingImageImports.delete(requestId);
+  if (!pending) return;
+  if (!source) {
+    if (errorMessage) console.error('Image import failed:', errorMessage);
+    return;
+  }
+
+  const mappedFrom = mapPositionFromRevision(pending.revision, pending.from, 1);
+  const mappedTo = mapPositionFromRevision(pending.revision, pending.to, -1);
+  if (mappedFrom === null || mappedTo === null) return;
+
+  const from = Math.min(mappedFrom, editor.state.doc.content.size);
+  const to = Math.min(Math.max(mappedTo, from), editor.state.doc.content.size);
+  const image = editor.state.schema.nodes.image.create(insertedImageAttrs(source));
+  editor.view.dispatch(editor.state.tr.replaceRangeWith(from, to, image));
 }
 
 const editor = new Editor({
@@ -136,7 +192,7 @@ const editor = new Editor({
     Footnote,
     DocumentImage.configure({
       inline: true,
-      allowBase64: true,
+      allowBase64: false,
     }),
     CommentMark,
     SearchHighlight,
@@ -156,15 +212,8 @@ const editor = new Editor({
                     event.preventDefault();
                     const file = item.getAsFile();
                     if (!file) continue;
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                      const src = e.target?.result as string;
-                      editorRef.chain().focus().insertContent({
-                        type: 'image',
-                        attrs: insertedImageAttrs(src),
-                      }).run();
-                    };
-                    reader.readAsDataURL(file);
+                    const { from, to } = editorRef.state.selection;
+                    requestImageImport(file, from, to);
                     return true;
                   }
                 }
@@ -176,27 +225,12 @@ const editor = new Editor({
                 for (const file of Array.from(files)) {
                   if (file.type.startsWith('image/')) {
                     event.preventDefault();
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                      const src = e.target?.result as string;
-                      const coords = view.posAtCoords({
-                        left: event.clientX,
-                        top: event.clientY,
-                      });
-                      if (coords) {
-                        const tr = view.state.tr.insert(
-                          coords.pos,
-                          view.state.schema.nodes.image.create(insertedImageAttrs(src))
-                        );
-                        view.dispatch(tr);
-                      } else {
-                        editorRef.chain().focus().insertContent({
-                          type: 'image',
-                          attrs: insertedImageAttrs(src),
-                        }).run();
-                      }
-                    };
-                    reader.readAsDataURL(file);
+                    const coords = view.posAtCoords({
+                      left: event.clientX,
+                      top: event.clientY,
+                    });
+                    const position = coords?.pos ?? editorRef.state.selection.from;
+                    requestImageImport(file, position, position);
                     return true;
                   }
                 }
@@ -213,7 +247,7 @@ const editor = new Editor({
   editorProps: {
     attributes: {
       class: 'editor-content',
-      spellcheck: 'true',
+      spellcheck: 'false',
       autocorrect: 'on',
     },
     transformPastedHTML(html, view) {
@@ -227,10 +261,11 @@ const editor = new Editor({
     noteDocumentChanged(transaction);
     updatePreservedTextSelection(editor);
     scheduleSelectionUpdate(editor);
-    scheduleWordCountUpdate(editor);
     scheduleContentUpdate(editor);
-    scheduleFootnotesPanelRender(editor);
-    emitCommentsChanged(editor, false, true);
+    if (transactionTouchesFootnotes(transaction)) {
+      scheduleFootnotesPanelRender(editor);
+    }
+    scheduleCommentsChanged(editor, true);
   },
   onSelectionUpdate({ editor }) {
     updatePreservedTextSelection(editor);
@@ -239,6 +274,7 @@ const editor = new Editor({
 });
 
 setEditorInstance(editor);
+const proofreading = attachProofreading(editor);
 
 function setEditorSpellcheckEnabled(enabled: boolean) {
   const dom = editor.view.dom as HTMLElement;
@@ -263,7 +299,6 @@ registerSwiftCallbacks({
     editor.commands.setContent(stripGeneratedFootnotesSection(html), false);
     normalizeDocumentSmartQuotes(editor);
     renderFootnotesPanel(editor, true);
-    emitWordCountUpdate(editor);
     emitSelectionUpdate(editor);
     emitCommentsChanged(editor, true);
   },
@@ -275,7 +310,6 @@ registerSwiftCallbacks({
       editor.commands.setContent(parsed, false);
       normalizeDocumentSmartQuotes(editor);
       renderFootnotesPanel(editor, true);
-      emitWordCountUpdate(editor);
       emitSelectionUpdate(editor);
       emitCommentsChanged(editor, true);
     } catch (error) {
@@ -285,15 +319,15 @@ registerSwiftCallbacks({
   getContent(): string {
     return serializeDocumentHTML(editor);
   },
-  getDocumentSnapshot(): string {
+  getDocumentSnapshot(): unknown {
     const snapshot = getDocumentTextSnapshot(editor);
-    return JSON.stringify({
+    return {
       html: serializeDocumentHTML(editor),
       json: editor.getJSON(),
       text: snapshot.plainText,
       words: snapshot.words,
       characters: snapshot.characters,
-    });
+    };
   },
   getPlainText(): string {
     return serializeDocumentPlainText(editor);
@@ -410,6 +444,24 @@ registerSwiftCallbacks({
   },
   setAutocorrectEnabled(enabled: boolean) {
     setEditorAutocorrectEnabled(enabled);
+  },
+  setProofreadingOptions(spelling: boolean, grammar: boolean, dialect: string) {
+    proofreading.setOptions(spelling, grammar, dialect);
+  },
+  setAIGrammarIssues(json: string) {
+    proofreading.setAIGrammarIssues(json);
+  },
+  resetProofreadingDictionary() {
+    proofreading.resetDictionary();
+  },
+  getProofreadingState(): string {
+    return proofreading.stateJSON();
+  },
+  getGrammarContextSnapshot(): string {
+    return proofreading.grammarContextJSON();
+  },
+  completeImageImport(requestId: string, source: string, errorMessage = '') {
+    completeImageImport(requestId, source, errorMessage);
   },
   setZoomScale(scale: number) {
     setEditorZoomScale(scale);

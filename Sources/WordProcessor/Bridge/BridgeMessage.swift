@@ -7,14 +7,14 @@ struct BridgeMessage: Codable {
 
 enum BridgePayload: Codable {
     case editorReady
-    case contentChanged(html: String)
     case contentUpdate(html: String, text: String, words: Int, characters: Int)
     case selectionChanged(SelectionState)
-    case wordCount(words: Int, characters: Int)
     case pendingEditUpdate(PendingEditUpdateData)
     case editDecision(EditDecisionData)
     case commentsChanged([CommentData], documentChanged: Bool)
     case commentActivated(commentId: String)
+    case proofreadingUpdate(ProofreadingUpdateData)
+    case imageImportRequested(ImageImportRequestData)
     case openURL(url: String)
     case unknown
 
@@ -39,13 +39,16 @@ enum BridgePayload: Codable {
         let imageHeight: String
     }
 
-    struct WordCountData: Codable {
-        let words: Int
-        let characters: Int
+    struct ProofreadingUpdateData: Codable {
+        let status: String
+        let issueCount: Int
+        let message: String
     }
 
-    struct ContentChangedData: Codable {
-        let html: String
+    struct ImageImportRequestData: Codable {
+        let requestID: String
+        let dataURL: String
+        let filename: String
     }
 
     struct CommentData: Identifiable, Equatable {
@@ -121,9 +124,6 @@ enum BridgePayload: Codable {
         switch type {
         case "editorReady":
             return .editorReady
-        case "contentChanged":
-            let html = payload["html"] as? String ?? ""
-            return .contentChanged(html: html)
         case "contentUpdate":
             let html = payload["html"] as? String ?? ""
             let text = payload["text"] as? String ?? ""
@@ -152,10 +152,6 @@ enum BridgePayload: Codable {
                 imageHeight: payload["imageHeight"] as? String ?? ""
             )
             return .selectionChanged(state)
-        case "wordCount":
-            let words = payload["words"] as? Int ?? 0
-            let characters = payload["characters"] as? Int ?? 0
-            return .wordCount(words: words, characters: characters)
         case "pendingEditUpdate":
             let count = payload["count"] as? Int ?? 0
             let currentIndex = payload["currentIndex"] as? Int ?? -1
@@ -236,6 +232,22 @@ enum BridgePayload: Codable {
             return .commentsChanged(comments, documentChanged: documentChanged)
         case "commentActivated":
             return .commentActivated(commentId: payload["commentId"] as? String ?? "")
+        case "proofreadingUpdate":
+            return .proofreadingUpdate(
+                ProofreadingUpdateData(
+                    status: payload["status"] as? String ?? "ready",
+                    issueCount: payload["issueCount"] as? Int ?? 0,
+                    message: payload["message"] as? String ?? ""
+                )
+            )
+        case "imageImportRequested":
+            return .imageImportRequested(
+                ImageImportRequestData(
+                    requestID: payload["requestId"] as? String ?? "",
+                    dataURL: payload["dataURL"] as? String ?? "",
+                    filename: payload["filename"] as? String ?? ""
+                )
+            )
         case "openURL":
             return .openURL(url: payload["url"] as? String ?? "")
         default:

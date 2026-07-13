@@ -6,6 +6,7 @@ import SwiftUI
 final class ClaudeChatViewModel {
     var messages: [ChatMessage] = []
     var isStreaming = false
+    var streamingMessageID: UUID?
     var streamingContentLength = 0
 
     @ObservationIgnored private let apiService = ClaudeAPIService()
@@ -21,8 +22,8 @@ final class ClaudeChatViewModel {
     private nonisolated static let maxDocumentContextCharacters = 24_000
     private static let maxToolHTMLCharacters = 20_000
     private static let maxFindQueryCharacters = 500
-    private static let flushChunkThreshold = 12
-    private static let flushInterval: TimeInterval = 0.12
+    private static let flushChunkThreshold = 32
+    private static let flushInterval: TimeInterval = 0.25
 
     private static let baseSystemPrompt = """
     You are a writing assistant embedded in a word processor. Keep responses concise and helpful.
@@ -87,6 +88,7 @@ final class ClaudeChatViewModel {
         requestTask?.cancel()
         requestTask = nil
         isStreaming = false
+        streamingMessageID = nil
 
         guard markCancelledMessage,
               let lastIndex = messages.indices.last,
@@ -124,6 +126,7 @@ final class ClaudeChatViewModel {
         isStreaming = true
         defer {
             isStreaming = false
+            streamingMessageID = nil
             requestTask = nil
             trimVisibleMessages()
         }
@@ -142,6 +145,7 @@ final class ClaudeChatViewModel {
 
             loopCount += 1
             let assistantMessageID = appendVisibleMessage(role: .assistant, content: "")
+            streamingMessageID = assistantMessageID
 
             var fullText = ""
             var toolCalls: [(id: String, name: String, inputJSON: String)] = []
@@ -183,6 +187,7 @@ final class ClaudeChatViewModel {
 
                 // Final flush of text
                 updateAssistantMessage(id: assistantMessageID, content: fullText)
+                streamingMessageID = nil
             } catch is CancellationError {
                 if fullText.isEmpty {
                     updateAssistantMessage(id: assistantMessageID, content: "Request cancelled.")

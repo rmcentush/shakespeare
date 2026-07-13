@@ -12,6 +12,7 @@ final class EditorViewModel {
     }
     var isEditorReady = false
     var assetBaseURL: URL?
+    private var activeDocumentID = ""
     var selectionState = SelectionState()
     var zoomScale = EditorViewModel.storedZoomScale()
     var pendingEdits: [PendingEdit] = []
@@ -23,12 +24,19 @@ final class EditorViewModel {
     var ambientReviewEnabled = false
     var isAmbientReviewing = false
     var ambientReviewStatusText = ""
+    var proofreadingStatus = "disabled"
+    var proofreadingIssueCount = 0
+    var proofreadingErrorMessage = ""
     var persistenceStatusText = ""
     var persistenceStatusIsError = false
-    private var autoSaveTimer: Timer?
-    private var recoveryDraftTimer: Timer?
+    private var persistenceTimer: Timer?
+    private var persistenceTask: Task<Void, Never>?
     private var ambientReviewTimer: Timer?
     private var ambientReviewTask: Task<Void, Never>?
+    private var grammarCheckTimer: Timer?
+    private var grammarCheckTask: Task<Void, Never>?
+    private var checkedGrammarBlockHashes: [String: String] = [:]
+    private var grammarIssuesByBlockID: [String: [DisplayedGrammarIssue]] = [:]
     private var lastAmbientReviewedDocumentHash: String?
     private var pendingSnapshot: DocumentFileStore.FileSnapshot?
     private var lastAutoSaveCheckpointByDocumentID: [String: Date] = [:]
@@ -36,6 +44,14 @@ final class EditorViewModel {
     private var lastSnapshotCaptureFailed = false
     private let autoSaveCheckpointInterval: TimeInterval = 60
     @ObservationIgnored private let ambientReviewService = ClaudeAPIService()
+    @ObservationIgnored private let grammarService = ClaudeAPIService(
+        model: "claude-haiku-4-5-20251001",
+        effort: nil
+    )
+    @ObservationIgnored private let thoroughGrammarService = ClaudeAPIService(
+        model: "claude-sonnet-5",
+        effort: "low"
+    )
     /// Incremented each time the editor signals ready (supports detecting web process restarts).
     var editorReadyCount = 0
     private static let zoomDefaultsKey = "editorZoomScale"
@@ -203,6 +219,19 @@ final class EditorViewModel {
         let placeholders: [Placeholder]?
     }
 
+    private struct GrammarContextSnapshot: Decodable {
+        struct Block: Decodable {
+            let id: String
+            let from: Int
+            let to: Int
+            let text: String
+            let textHash: String
+            let type: String
+        }
+
+        let blocks: [Block]
+    }
+
     private struct AmbientReviewSuggestion: Decodable {
         let blockID: String
         let exactOriginal: String
@@ -225,6 +254,49 @@ final class EditorViewModel {
         let comments: [AmbientReviewSuggestion]
     }
 
+    private struct GrammarCheckIssue: Decodable {
+        let id: String
+        let blockID: String
+        let exactOriginal: String
+        let replacement: String
+        let message: String
+        let kind: String
+        let rule: String
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case blockID = "block_id"
+            case exactOriginal = "exact_original"
+            case replacement
+            case message
+            case kind
+            case rule
+        }
+    }
+
+    private struct GrammarCheckResponse: Decodable {
+        let issues: [GrammarCheckIssue]
+    }
+
+    private struct GrammarVerificationDecision: Decodable {
+        let id: String
+        let verdict: String
+    }
+
+    private struct GrammarVerificationResponse: Decodable {
+        let decisions: [GrammarVerificationDecision]
+    }
+
+    private struct DisplayedGrammarIssue {
+        let id: String
+        let from: Int
+        let to: Int
+        let kind: String
+        let message: String
+        let problem: String
+        let replacement: String
+    }
+
     // Called by bridge when JS sends a message
     func handleBridgeMessage(type: String, payload: BridgePayload) {
         switch payload {
@@ -236,13 +308,6 @@ final class EditorViewModel {
                 applySnapshotToEditor(snapshot)
             }
             NotificationCenter.default.post(name: .editorBecameReady, object: self)
-
-        case .contentChanged(let html):
-            NotificationCenter.default.post(
-                name: .editorContentUpdated,
-                object: self,
-                userInfo: ["html": html]
-            )
 
         case .contentUpdate(let html, let text, let words, let characters):
             NotificationCenter.default.post(
@@ -261,13 +326,6 @@ final class EditorViewModel {
             if nextSelectionState != selectionState {
                 selectionState = nextSelectionState
             }
-
-        case .wordCount(let words, let characters):
-            NotificationCenter.default.post(
-                name: .editorContentUpdated,
-                object: self,
-                userInfo: ["words": words, "characters": characters]
-            )
 
         case .pendingEditUpdate(let update):
             pendingEditCount = update.count
@@ -304,6 +362,39 @@ final class EditorViewModel {
                 userInfo: ["commentId": commentId]
             )
 
+        case .proofreadingUpdate(let update):
+            proofreadingStatus = update.status
+            proofreadingIssueCount = update.issueCount
+            proofreadingErrorMessage = update.message
+
+        case .imageImportRequested(let request):
+            guard !request.requestID.isEmpty,
+                  !request.dataURL.isEmpty,
+                  !activeDocumentID.isEmpty
+            else { break }
+            let sourceDocumentURL = assetBaseURL
+            let documentID = activeDocumentID
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let staged = try await DocumentFileStore.shared.stageImageAsset(
+                        from: request.dataURL,
+                        documentID: documentID,
+                        sourceDocumentURL: sourceDocumentURL
+                    )
+                    assetBaseURL = staged.baseURL
+                    callEditorAPI(
+                        "completeImageImport",
+                        arguments: [request.requestID, staged.source, ""]
+                    )
+                } catch {
+                    callEditorAPI(
+                        "completeImageImport",
+                        arguments: [request.requestID, "", error.localizedDescription]
+                    )
+                }
+            }
+
         case .openURL(let urlString):
             guard let url = URL(string: urlString),
                   let scheme = url.scheme?.lowercased(),
@@ -319,7 +410,9 @@ final class EditorViewModel {
     // MARK: - Content Loading
 
     func loadSnapshot(_ snapshot: DocumentFileStore.FileSnapshot) {
+        activeDocumentID = snapshot.documentID
         lastAmbientReviewedDocumentHash = nil
+        clearGrammarCheckingState()
 
         guard isEditorReady else {
             pendingSnapshot = snapshot
@@ -365,11 +458,15 @@ final class EditorViewModel {
 
     func getDocumentSnapshot(completion: @escaping (DocumentFileStore.FileSnapshot?) -> Void) {
         callEditorAPI("getDocumentSnapshot") { [weak self] result in
-            guard let jsonString = result as? String else {
+            if let dictionary = result as? [String: Any] {
+                completion(self?.parseEditorSnapshot(from: dictionary))
+            } else if let jsonString = result as? String,
+                      let data = jsonString.data(using: .utf8),
+                      let dictionary = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                completion(self?.parseEditorSnapshot(from: dictionary))
+            } else {
                 completion(nil)
-                return
             }
-            completion(self?.parseEditorSnapshot(from: jsonString))
         }
     }
 
@@ -404,6 +501,21 @@ final class EditorViewModel {
             }
 
             completion(snapshot)
+        }
+    }
+
+    private func currentGrammarContextSnapshot() async -> GrammarContextSnapshot? {
+        await withCheckedContinuation { continuation in
+            callEditorAPI("getGrammarContextSnapshot") { result in
+                guard let jsonString = result as? String,
+                      let data = jsonString.data(using: .utf8),
+                      let snapshot = try? JSONDecoder().decode(GrammarContextSnapshot.self, from: data)
+                else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: snapshot)
+            }
         }
     }
 
@@ -690,6 +802,429 @@ final class EditorViewModel {
             "pendingReplaceComment",
             arguments: [comment.id, "comment_edit_\(UUID().uuidString)", replacement]
         )
+    }
+
+    // MARK: - Grammar Checking
+
+    func scheduleGrammarCheck(delay: TimeInterval = 4) {
+        grammarCheckTimer?.invalidate()
+        grammarCheckTimer = nil
+        grammarCheckTask?.cancel()
+
+        guard TextCheckingSettings.shared.grammarCheckingEnabled else { return }
+
+        grammarCheckTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.startGrammarCheck()
+            }
+        }
+    }
+
+    func grammarCheckingSettingsDidChange() {
+        if TextCheckingSettings.shared.grammarCheckingEnabled {
+            checkedGrammarBlockHashes = [:]
+            scheduleGrammarCheck(delay: 0)
+        } else {
+            clearGrammarCheckingState()
+        }
+    }
+
+    private func startGrammarCheck() {
+        guard TextCheckingSettings.shared.grammarCheckingEnabled else { return }
+        grammarCheckTask?.cancel()
+        grammarCheckTask = Task { [weak self] in
+            guard let self else { return }
+            await self.runGrammarCheck(
+                using: self.grammarService,
+                temperature: 0,
+                requiresEnabledSetting: true,
+                verifiesCandidates: true
+            )
+        }
+    }
+
+    func runThoroughProofread() {
+        grammarCheckTimer?.invalidate()
+        grammarCheckTimer = nil
+        grammarCheckTask?.cancel()
+        checkedGrammarBlockHashes = [:]
+        grammarCheckTask = Task { [weak self] in
+            guard let self else { return }
+            await self.runGrammarCheck(
+                using: self.thoroughGrammarService,
+                temperature: nil,
+                requiresEnabledSetting: false,
+                verifiesCandidates: false
+            )
+        }
+    }
+
+    private func runGrammarCheck(
+        using service: ClaudeAPIService,
+        temperature: Double?,
+        requiresEnabledSetting: Bool,
+        verifiesCandidates: Bool
+    ) async {
+        defer { grammarCheckTask = nil }
+
+        if requiresEnabledSetting {
+            guard TextCheckingSettings.shared.grammarCheckingEnabled else { return }
+        }
+        guard let context = await currentGrammarContextSnapshot() else { return }
+
+        let currentBlockIDs = Set(context.blocks.map(\.id))
+        grammarIssuesByBlockID = grammarIssuesByBlockID.filter { currentBlockIDs.contains($0.key) }
+        checkedGrammarBlockHashes = checkedGrammarBlockHashes.filter { currentBlockIDs.contains($0.key) }
+
+        let changedBlocks = context.blocks.filter { block in
+            block.type != "codeBlock"
+                && !block.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && checkedGrammarBlockHashes[block.id] != block.textHash
+        }
+        guard !changedBlocks.isEmpty else { return }
+
+        proofreadingStatus = "checking"
+        proofreadingErrorMessage = ""
+
+        do {
+            for batch in grammarBlockBatches(changedBlocks) {
+                try Task.checkCancellation()
+
+                for block in batch {
+                    grammarIssuesByBlockID[block.id] = []
+                }
+                publishGrammarIssues()
+
+                var response = try await collectGrammarResponse(
+                    blocks: batch,
+                    using: service,
+                    temperature: temperature
+                )
+                try Task.checkCancellation()
+                if verifiesCandidates, !response.issues.isEmpty {
+                    response = try await verifyGrammarResponse(response, blocks: batch)
+                    try Task.checkCancellation()
+                }
+                applyGrammarResponse(response, to: batch)
+
+                for block in batch {
+                    checkedGrammarBlockHashes[block.id] = block.textHash
+                }
+                publishGrammarIssues()
+            }
+            proofreadingStatus = "ready"
+        } catch is CancellationError {
+            return
+        } catch {
+            proofreadingStatus = "error"
+            proofreadingErrorMessage = "Grammar check failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func grammarBlockBatches(
+        _ blocks: [GrammarContextSnapshot.Block],
+        maximumCharacters: Int = 12_000,
+        maximumBlocks: Int = 30
+    ) -> [[GrammarContextSnapshot.Block]] {
+        var batches: [[GrammarContextSnapshot.Block]] = []
+        var current: [GrammarContextSnapshot.Block] = []
+        var characters = 0
+
+        for block in blocks {
+            let blockCharacters = block.text.count
+            if !current.isEmpty,
+               current.count >= maximumBlocks || characters + blockCharacters > maximumCharacters {
+                batches.append(current)
+                current = []
+                characters = 0
+            }
+            current.append(block)
+            characters += blockCharacters
+        }
+        if !current.isEmpty {
+            batches.append(current)
+        }
+        return batches
+    }
+
+    private func collectGrammarResponse(
+        blocks: [GrammarContextSnapshot.Block],
+        using service: ClaudeAPIService,
+        temperature: Double?
+    ) async throws -> GrammarCheckResponse {
+        let dialect = TextCheckingSettings.shared.dialect
+        let blockPayload = blocks.map { block in
+            ["id": block.id, "type": block.type, "text": block.text]
+        }
+        guard JSONSerialization.isValidJSONObject(blockPayload),
+              let blockData = try? JSONSerialization.data(withJSONObject: blockPayload),
+              let blockJSON = String(data: blockData, encoding: .utf8)
+        else {
+            throw ClaudeAPIService.APIError.invalidResponse
+        }
+
+        let systemPrompt = """
+        You are a conservative grammar checker inside a word processor. Flag a passage only when the original is grammatically invalid under standard edited English.
+        Use \(dialect) English conventions.
+
+        An issue must fit exactly one of these objective rules:
+        - agreement
+        - verb_form_or_tense
+        - article_or_determiner
+        - preposition
+        - pronoun
+        - number_or_possessive
+        - word_order
+        - missing_or_extra_word
+        - conjunction
+        - confused_word (only an unambiguously incorrect word, not a better word)
+        - punctuation (only punctuation required for grammatical correctness)
+        - capitalization
+
+        Never flag awkwardness, wordiness, concision, clarity, fluency, tone, formality, vocabulary preference, sentence length, passive voice, repeated words, optional commas, the Oxford comma, split infinitives, sentence-ending prepositions, singular "they," contractions, dialect or register, disputed usage, or any other defensible stylistic choice. In particular, do not enforce less/fewer preferences or rewrite "the reason is because"; treat those as usage/style, not grammar. Preserve deliberate fragments, quotations, names, meaning, voice, and factual claims. If a construction is acceptable in context, debatable, or merely improvable, emit no issue. Precision is more important than recall.
+
+        Each issue must target one supplied block. exact_original must be a nonempty, exact, uniquely occurring substring copied verbatim from that block.
+        replacement must be the smallest replacement for exact_original that fixes the error. For an insertion, include a small existing anchor in exact_original and return that anchor with the insertion in replacement.
+        Give each issue a unique short id. message must identify the violated grammatical rule, not describe a stylistic benefit. kind must be Grammar or Punctuation.
+        """
+
+        let messages: [[String: Any]] = [[
+            "role": "user",
+            "content": "Check these changed document blocks. Return structured JSON only.\n\(blockJSON)"
+        ]]
+
+        let outputFormat: [String: Any] = [
+            "type": "json_schema",
+            "schema": [
+                "type": "object",
+                "properties": [
+                    "issues": [
+                        "type": "array",
+                        "items": [
+                            "type": "object",
+                            "properties": [
+                                "id": ["type": "string"],
+                                "block_id": ["type": "string"],
+                                "exact_original": ["type": "string"],
+                                "replacement": ["type": "string"],
+                                "message": ["type": "string"],
+                                "kind": [
+                                    "type": "string",
+                                    "enum": ["Grammar", "Punctuation"]
+                                ],
+                                "rule": [
+                                    "type": "string",
+                                    "enum": [
+                                        "agreement",
+                                        "verb_form_or_tense",
+                                        "article_or_determiner",
+                                        "preposition",
+                                        "pronoun",
+                                        "number_or_possessive",
+                                        "word_order",
+                                        "missing_or_extra_word",
+                                        "conjunction",
+                                        "confused_word",
+                                        "punctuation",
+                                        "capitalization",
+                                    ]
+                                ],
+                            ],
+                            "required": ["id", "block_id", "exact_original", "replacement", "message", "kind", "rule"],
+                            "additionalProperties": false,
+                        ],
+                    ],
+                ],
+                "required": ["issues"],
+                "additionalProperties": false,
+            ] as [String: Any],
+        ]
+
+        var responseText = ""
+        for try await chunk in service.streamMessage(
+            messages: messages,
+            systemPrompt: systemPrompt,
+            tools: nil,
+            cacheControl: nil,
+            outputFormat: outputFormat,
+            temperature: temperature,
+            maxTokens: 4096
+        ) {
+            if case .text(let text) = chunk {
+                responseText += text
+            }
+        }
+
+        guard let data = responseText.data(using: .utf8) else {
+            throw ClaudeAPIService.APIError.invalidResponse
+        }
+        return try JSONDecoder().decode(GrammarCheckResponse.self, from: data)
+    }
+
+    /// Haiku's detector is intentionally followed by a separate, conservative
+    /// adjudication pass. A candidate must survive both passes before it is shown.
+    private func verifyGrammarResponse(
+        _ response: GrammarCheckResponse,
+        blocks: [GrammarContextSnapshot.Block]
+    ) async throws -> GrammarCheckResponse {
+        let dialect = TextCheckingSettings.shared.dialect
+        let blocksByID = Dictionary(uniqueKeysWithValues: blocks.map { ($0.id, $0.text) })
+        let candidates: [[String: String]] = response.issues.compactMap { issue in
+            guard let blockText = blocksByID[issue.blockID] else { return nil }
+            return [
+                "id": issue.id,
+                "block_id": issue.blockID,
+                "block_text": blockText,
+                "exact_original": issue.exactOriginal,
+                "replacement": issue.replacement,
+                "claimed_rule": issue.rule,
+                "detector_explanation": issue.message,
+            ]
+        }
+        guard !candidates.isEmpty,
+              JSONSerialization.isValidJSONObject(candidates),
+              let candidateData = try? JSONSerialization.data(withJSONObject: candidates),
+              let candidateJSON = String(data: candidateData, encoding: .utf8)
+        else { return GrammarCheckResponse(issues: []) }
+
+        let systemPrompt = """
+        You are the strict final gate for an automatic grammar checker. Independently judge each proposed correction using \(dialect) English.
+
+        Accept a candidate only if all of these are true:
+        1. The exact original clearly violates a rule of standard edited English in its full block context.
+        2. The problem is objective, not stylistic, optional, regional, register-dependent, or reasonably debatable.
+        3. The replacement is the smallest correction and preserves meaning and voice.
+
+        Reject candidates about awkwardness, wordiness, concision, clarity, fluency, tone, formality, vocabulary preference, sentence length, passive voice, repetition, optional commas, the Oxford comma, split infinitives, sentence-ending prepositions, singular "they," contractions, deliberate fragments, dialect, or disputed usage. Do not accept a candidate merely because the proposed replacement also sounds natural.
+
+        For calibration, all of these are grammatical and any proposed rewrite must be rejected: "Where are you at?"; "Due to the fact that it rained, we stayed home"; "I think that that is correct"; "Less people attended"; and "The reason is because costs rose." They may attract usage or style advice, but they are not errors for this checker. Reject any candidate if you are uncertain. False positives are substantially worse than missed errors.
+
+        Return exactly one decision for every supplied candidate, in the same order. Use actual_error only when every acceptance condition is met; otherwise use style_or_uncertain. Do not omit a candidate. Do not repair or replace candidates.
+        """
+        let messages: [[String: Any]] = [[
+            "role": "user",
+            "content": "Adjudicate these proposed corrections. Return structured JSON only.\n\(candidateJSON)",
+        ]]
+        let outputFormat: [String: Any] = [
+            "type": "json_schema",
+            "schema": [
+                "type": "object",
+                "properties": [
+                    "decisions": [
+                        "type": "array",
+                        "items": [
+                            "type": "object",
+                            "properties": [
+                                "id": ["type": "string"],
+                                "verdict": [
+                                    "type": "string",
+                                    "enum": ["actual_error", "style_or_uncertain"],
+                                ],
+                            ],
+                            "required": ["id", "verdict"],
+                            "additionalProperties": false,
+                        ],
+                    ],
+                ],
+                "required": ["decisions"],
+                "additionalProperties": false,
+            ] as [String: Any],
+        ]
+
+        var responseText = ""
+        for try await chunk in grammarService.streamMessage(
+            messages: messages,
+            systemPrompt: systemPrompt,
+            tools: nil,
+            cacheControl: nil,
+            outputFormat: outputFormat,
+            temperature: 0,
+            maxTokens: 1024
+        ) {
+            if case .text(let text) = chunk {
+                responseText += text
+            }
+        }
+
+        guard let data = responseText.data(using: .utf8) else {
+            throw ClaudeAPIService.APIError.invalidResponse
+        }
+        let verification = try JSONDecoder().decode(GrammarVerificationResponse.self, from: data)
+        let acceptedIDs = Set(
+            verification.decisions
+                .filter { $0.verdict == "actual_error" }
+                .map(\.id)
+        )
+        return GrammarCheckResponse(issues: response.issues.filter { acceptedIDs.contains($0.id) })
+    }
+
+    private func applyGrammarResponse(
+        _ response: GrammarCheckResponse,
+        to blocks: [GrammarContextSnapshot.Block]
+    ) {
+        let blocksByID = Dictionary(uniqueKeysWithValues: blocks.map { ($0.id, $0) })
+        var acceptedRangesByBlockID: [String: [(start: Int, end: Int)]] = [:]
+
+        for issue in response.issues {
+            guard let block = blocksByID[issue.blockID],
+                  !issue.exactOriginal.isEmpty,
+                  issue.exactOriginal != issue.replacement,
+                  let range = block.text.range(of: issue.exactOriginal),
+                  block.text[range.upperBound...].range(of: issue.exactOriginal) == nil,
+                  let lowerBound = range.lowerBound.samePosition(in: block.text.utf16)
+            else { continue }
+
+            let offset = block.text.utf16.distance(from: block.text.utf16.startIndex, to: lowerBound)
+            let start = block.from + offset
+            let end = start + issue.exactOriginal.utf16.count
+            let candidateRange = (start: start, end: end)
+            let existingRanges = acceptedRangesByBlockID[block.id, default: []]
+            guard !existingRanges.contains(where: { rangesOverlap($0, candidateRange) }) else { continue }
+
+            let displayed = DisplayedGrammarIssue(
+                id: "ai_grammar_\(UUID().uuidString)",
+                from: start,
+                to: end,
+                kind: issue.kind,
+                message: issue.message,
+                problem: issue.exactOriginal,
+                replacement: issue.replacement
+            )
+            grammarIssuesByBlockID[block.id, default: []].append(displayed)
+            acceptedRangesByBlockID[block.id, default: []].append(candidateRange)
+        }
+    }
+
+    private func publishGrammarIssues() {
+        let payload: [[String: Any]] = grammarIssuesByBlockID.values.flatMap { issues in
+            issues.map { issue in
+                [
+                    "id": issue.id,
+                    "from": issue.from,
+                    "to": issue.to,
+                    "kind": issue.kind,
+                    "message": issue.message,
+                    "problem": issue.problem,
+                    "replacement": issue.replacement,
+                ]
+            }
+        }
+
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8)
+        else { return }
+        callEditorAPI("setAIGrammarIssues", arguments: [json])
+    }
+
+    private func clearGrammarCheckingState() {
+        grammarCheckTimer?.invalidate()
+        grammarCheckTimer = nil
+        grammarCheckTask?.cancel()
+        grammarCheckTask = nil
+        checkedGrammarBlockHashes = [:]
+        grammarIssuesByBlockID = [:]
+        callEditorAPI("setAIGrammarIssues", arguments: ["[]"])
     }
 
     // MARK: - Ambient Review
@@ -1202,23 +1737,26 @@ final class EditorViewModel {
 
     // MARK: - Auto-Save
 
-    func scheduleRecoveryDraft(document: DocumentModel) {
-        recoveryDraftTimer?.invalidate()
+    func schedulePersistence(document: DocumentModel) {
+        persistenceTimer?.invalidate()
         guard document.isDirty else { return }
-        recoveryDraftTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                await self?.saveRecoveryDraft(document: document)
+
+        let delay: TimeInterval = document.fileURL == nil ? 2 : 5
+        persistenceTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.startScheduledPersistence(document: document)
             }
         }
     }
 
-    func scheduleAutoSave(document: DocumentModel) {
-        autoSaveTimer?.invalidate()
-        guard document.fileURL != nil else { return }
-        autoSaveTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                await self?.autoSave(document: document)
+    private func startScheduledPersistence(document: DocumentModel) {
+        let previousTask = persistenceTask
+        persistenceTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let previousTask {
+                await previousTask.value
             }
+            await performScheduledPersistence(document: document)
         }
     }
 
@@ -1237,39 +1775,58 @@ final class EditorViewModel {
         }
     }
 
-    private func autoSave(document: DocumentModel) async {
-        guard let url = document.fileURL, document.isDirty else { return }
-        let shouldCheckpoint = shouldCreateAutoSaveCheckpoint(for: document)
-        await persistDocument(
-            document: document,
-            to: url,
-            captureLatestEditorState: true,
-            createVersionSnapshot: shouldCheckpoint,
-            actionName: "Auto-save"
-        )
+    private func performScheduledPersistence(document: DocumentModel) async {
+        guard document.isDirty else { return }
+        let snapshot = await latestSnapshot(for: document)
+
+        if let url = document.fileURL {
+            let saved = await persistDocument(
+                document: document,
+                to: url,
+                captureLatestEditorState: false,
+                createVersionSnapshot: shouldCreateAutoSaveCheckpoint(for: document),
+                actionName: "Auto-save",
+                providedSnapshot: snapshot
+            )
+            if !saved {
+                await saveRecoveryDraft(document: document, providedSnapshot: snapshot)
+            }
+        } else {
+            await saveRecoveryDraft(document: document, providedSnapshot: snapshot)
+        }
     }
 
     private func flushBeforeDocumentChange(document: DocumentModel) async {
-        autoSaveTimer?.invalidate()
-        autoSaveTimer = nil
-        recoveryDraftTimer?.invalidate()
-        recoveryDraftTimer = nil
+        persistenceTimer?.invalidate()
+        persistenceTimer = nil
+        if let persistenceTask {
+            await persistenceTask.value
+            self.persistenceTask = nil
+        }
         ambientReviewTimer?.invalidate()
         ambientReviewTimer = nil
         ambientReviewTask?.cancel()
         ambientReviewTask = nil
+        grammarCheckTimer?.invalidate()
+        grammarCheckTimer = nil
+        grammarCheckTask?.cancel()
+        grammarCheckTask = nil
 
         guard document.isDirty else { return }
-        await saveRecoveryDraft(document: document)
+        let snapshot = await latestSnapshot(for: document)
 
-        guard let url = document.fileURL else { return }
-        await persistDocument(
-            document: document,
-            to: url,
-            captureLatestEditorState: true,
-            createVersionSnapshot: false,
-            actionName: "Flush"
-        )
+        if let url = document.fileURL {
+            _ = await persistDocument(
+                document: document,
+                to: url,
+                captureLatestEditorState: false,
+                createVersionSnapshot: false,
+                actionName: "Flush",
+                providedSnapshot: snapshot
+            )
+        } else {
+            await saveRecoveryDraft(document: document, providedSnapshot: snapshot)
+        }
     }
 
     private func shouldCreateAutoSaveCheckpoint(for document: DocumentModel) -> Bool {
@@ -1283,11 +1840,19 @@ final class EditorViewModel {
         return now.timeIntervalSince(lastCheckpoint) >= autoSaveCheckpointInterval
     }
 
-    private func saveRecoveryDraft(document: DocumentModel) async {
+    private func saveRecoveryDraft(
+        document: DocumentModel,
+        providedSnapshot: DocumentFileStore.FileSnapshot? = nil
+    ) async {
         guard document.isDirty else { return }
 
         do {
-            let snapshot = await latestSnapshot(for: document)
+            let snapshot: DocumentFileStore.FileSnapshot
+            if let providedSnapshot {
+                snapshot = providedSnapshot
+            } else {
+                snapshot = await latestSnapshot(for: document)
+            }
             _ = try await RecoveryDraftStore.shared.saveDraft(
                 snapshot: snapshot,
                 assetSourceDocumentURL: assetBaseURL ?? document.fileURL,
@@ -1304,10 +1869,8 @@ final class EditorViewModel {
 
     func recoverDraft(_ metadata: RecoveryDraftStore.DraftMetadata, document: DocumentModel) {
         Task { @MainActor in
-            autoSaveTimer?.invalidate()
-            autoSaveTimer = nil
-            recoveryDraftTimer?.invalidate()
-            recoveryDraftTimer = nil
+            persistenceTimer?.invalidate()
+            persistenceTimer = nil
 
             do {
                 let draft = try await RecoveryDraftStore.shared.loadDraft(id: metadata.id)
@@ -1316,7 +1879,7 @@ final class EditorViewModel {
                 assetBaseURL = draft.packageURL
                 loadSnapshot(draft.snapshot)
                 setPersistenceStatus("Recovered draft \(formattedStatusTime())", isError: false)
-                scheduleRecoveryDraft(document: document)
+                schedulePersistence(document: document)
             } catch {
                 setPersistenceStatus("Recover failed: \(error.localizedDescription)", isError: true)
             }
@@ -1365,14 +1928,12 @@ final class EditorViewModel {
     }
 
     func saveDocument(document: DocumentModel) {
-        autoSaveTimer?.invalidate()
-        autoSaveTimer = nil
-        recoveryDraftTimer?.invalidate()
-        recoveryDraftTimer = nil
+        persistenceTimer?.invalidate()
+        persistenceTimer = nil
 
         if let url = document.fileURL {
             Task { @MainActor in
-                await persistDocument(
+                _ = await persistDocument(
                     document: document,
                     to: url,
                     captureLatestEditorState: true,
@@ -1386,10 +1947,8 @@ final class EditorViewModel {
     }
 
     func saveDocumentAs(document: DocumentModel) {
-        autoSaveTimer?.invalidate()
-        autoSaveTimer = nil
-        recoveryDraftTimer?.invalidate()
-        recoveryDraftTimer = nil
+        persistenceTimer?.invalidate()
+        persistenceTimer = nil
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.shakespeareDocument]
@@ -1398,7 +1957,7 @@ final class EditorViewModel {
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
             Task { @MainActor in
-                await self?.persistDocument(
+                _ = await self?.persistDocument(
                     document: document,
                     to: url,
                     captureLatestEditorState: true,
@@ -1438,10 +1997,19 @@ final class EditorViewModel {
         to url: URL,
         captureLatestEditorState: Bool,
         createVersionSnapshot: Bool,
-        actionName: String
-    ) async {
-        let latestSnapshot = await latestSnapshot(for: document, preferEditorState: captureLatestEditorState)
-        let request = document.makePersistenceRequest(snapshot: latestSnapshot)
+        actionName: String,
+        providedSnapshot: DocumentFileStore.FileSnapshot? = nil
+    ) async -> Bool {
+        let resolvedSnapshot: DocumentFileStore.FileSnapshot
+        if let providedSnapshot {
+            resolvedSnapshot = providedSnapshot
+        } else {
+            resolvedSnapshot = await latestSnapshot(
+                for: document,
+                preferEditorState: captureLatestEditorState
+            )
+        }
+        let request = document.makePersistenceRequest(snapshot: resolvedSnapshot)
         let sourceDocumentURL = assetBaseURL ?? document.fileURL
         setPersistenceStatus("\(actionName) saving...", isError: false)
 
@@ -1466,6 +2034,11 @@ final class EditorViewModel {
 
             if !document.isDirty {
                 try? await RecoveryDraftStore.shared.deleteDraft(documentID: persistedSnapshot.documentID)
+                if sourceDocumentURL != url {
+                    try? await DocumentFileStore.shared.deleteWorkingAssets(
+                        documentID: persistedSnapshot.documentID
+                    )
+                }
             }
             if lastSnapshotCaptureFailed {
                 setPersistenceStatus(
@@ -1475,8 +2048,10 @@ final class EditorViewModel {
             } else {
                 setPersistenceStatus("\(actionName) saved \(formattedStatusTime())", isError: false)
             }
+            return true
         } catch {
             setPersistenceStatus("\(actionName) failed: \(error.localizedDescription)", isError: true)
+            return false
         }
     }
 
@@ -1505,14 +2080,7 @@ final class EditorViewModel {
         }
     }
 
-    private func parseEditorSnapshot(from jsonString: String) -> DocumentFileStore.FileSnapshot? {
-        guard let data = jsonString.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            print("Failed to parse editor snapshot JSON: \(jsonString.prefix(200))")
-            return nil
-        }
-
+    private func parseEditorSnapshot(from dict: [String: Any]) -> DocumentFileStore.FileSnapshot? {
         let html = dict["html"] as? String ?? ""
         let plainText = dict["text"] as? String ?? ""
         let words = dict["words"] as? Int
@@ -1721,5 +2289,6 @@ private enum EditorClipboardWriter {
 extension Notification.Name {
     static let editorContentUpdated = Notification.Name("editorContentUpdated")
     static let editorBecameReady = Notification.Name("editorBecameReady")
+    static let grammarCheckingSettingsChanged = Notification.Name("grammarCheckingSettingsChanged")
     static let showSaveNamedVersion = Notification.Name("showSaveNamedVersion")
 }

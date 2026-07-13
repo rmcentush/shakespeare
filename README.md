@@ -46,6 +46,10 @@ Shakespeare includes a bundled David Oks sentence and paragraph style guide and 
 
 The bundled reference lives at `Sources/WordProcessor/Resources/david_oks_style_guide.md`.
 
+### Spelling and grammar
+
+Shakespeare uses [Harper](https://writewithharper.com/) for fast, offline English spell-checking and Claude Haiku for higher-recall grammar checking. Harper runs entirely inside the editor; when grammar checking is enabled, only changed text blocks are sent to Anthropic using the API key configured in Settings. An on-demand **Thorough Proofread with Sonnet** command is available under **Spelling and Grammar**. Click a red or blue underline to apply or ignore a correction, or add a spelling to the local dictionary. English dialect and checking options live under **Settings → Editing**.
+
 ## Build commands
 
 | Command | What it does |

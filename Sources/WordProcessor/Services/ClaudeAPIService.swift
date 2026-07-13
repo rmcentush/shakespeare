@@ -5,11 +5,17 @@ final class ClaudeAPIService: Sendable {
     // Fable 5: thinking is always on and must not be configured explicitly
     // (sending `thinking` returns a 400). Depth is controlled via
     // output_config.effort instead.
-    private let model = "claude-fable-5"
-    private let effort = "low"
+    private let model: String
+    private let effort: String?
     private let session: URLSession
 
-    init(session: URLSession = ClaudeAPIService.makeSession()) {
+    init(
+        model: String = "claude-fable-5",
+        effort: String? = "low",
+        session: URLSession = ClaudeAPIService.makeSession()
+    ) {
+        self.model = model
+        self.effort = effort
         self.session = session
     }
 
@@ -125,7 +131,10 @@ final class ClaudeAPIService: Sendable {
         messages: [[String: Any]],
         systemPrompt: Any? = nil,
         tools: [[String: Any]]? = nil,
-        cacheControl: [String: Any]? = nil
+        cacheControl: [String: Any]? = nil,
+        outputFormat: [String: Any]? = nil,
+        temperature: Double? = nil,
+        maxTokens: Int = 8192
     ) -> AsyncThrowingStream<StreamChunk, Error> {
         AsyncThrowingStream { continuation in
             let task = Task.detached(priority: .userInitiated) { [baseURL, model, effort, session] in
@@ -136,13 +145,24 @@ final class ClaudeAPIService: Sendable {
 
                 var body: [String: Any] = [
                     "model": model,
-                    // Fable 5's tokenizer runs ~30% heavier than Opus-tier;
-                    // streaming means no timeout risk from the larger cap.
-                    "max_tokens": 8192,
+                    "max_tokens": maxTokens,
                     "stream": true,
-                    "output_config": ["effort": effort],
                     "messages": messages
                 ]
+
+                var outputConfig: [String: Any] = [:]
+                if let effort {
+                    outputConfig["effort"] = effort
+                }
+                if let outputFormat {
+                    outputConfig["format"] = outputFormat
+                }
+                if !outputConfig.isEmpty {
+                    body["output_config"] = outputConfig
+                }
+                if let temperature {
+                    body["temperature"] = temperature
+                }
 
                 if let tools = tools, !tools.isEmpty {
                     body["tools"] = tools

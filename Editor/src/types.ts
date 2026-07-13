@@ -195,7 +195,7 @@ export const INVALID_EDIT_TARGET = -5;
 export const ACCEPTED_LLM_EDIT_COLOR = '#319795';
 export const FOOTNOTE_NODE_NAME = 'footnote';
 export const GENERATED_FOOTNOTES_SELECTOR = 'section[data-generated-footnotes="true"]';
-export const WORD_COUNT_DEBOUNCE_MS = 250;
 export const CONTENT_SYNC_DEBOUNCE_MS = 1000;
+export const COMMENTS_SYNC_DEBOUNCE_MS = 250;
 export const FOOTNOTE_PANEL_DEBOUNCE_MS = 180;
 export const SELECTION_SYNC_DEBOUNCE_MS = 80;

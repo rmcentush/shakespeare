@@ -14,7 +14,10 @@ let package = Package(
                 .copy("Resources/david_oks_style_guide.md"),
                 .copy("Resources/editor.css"),
                 .copy("Resources/editor.html"),
-                .copy("Resources/editor.js")
+                .copy("Resources/editor.js"),
+                .copy("Resources/harper-runtime.js"),
+                .copy("Resources/harper_wasm_slim_bg.wasm"),
+                .copy("Resources/Harper_LICENSE.txt")
             ]
         )
     ]

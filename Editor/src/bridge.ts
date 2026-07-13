@@ -5,7 +5,7 @@ declare global {
     webkit?: {
       messageHandlers?: {
         editorBridge?: {
-          postMessage(message: string): void;
+          postMessage(message: unknown): void;
         };
       };
     };
@@ -14,14 +14,14 @@ declare global {
 
 export type BridgeMessageType =
   | 'editorReady'
-  | 'contentChanged'
   | 'contentUpdate'
   | 'selectionChanged'
-  | 'wordCount'
   | 'pendingEditUpdate'
   | 'editDecision'
   | 'commentsChanged'
   | 'commentActivated'
+  | 'proofreadingUpdate'
+  | 'imageImportRequested'
   | 'openURL';
 
 export interface BridgeMessage {
@@ -31,8 +31,7 @@ export interface BridgeMessage {
 
 export function sendToSwift(type: BridgeMessageType, payload: unknown = {}): void {
   const message: BridgeMessage = { type, payload };
-  const json = JSON.stringify(message);
-  window.webkit?.messageHandlers?.editorBridge?.postMessage(json);
+  window.webkit?.messageHandlers?.editorBridge?.postMessage(message);
 }
 
 // Swift calls these functions on the JS side
@@ -40,7 +39,7 @@ export function registerSwiftCallbacks(callbacks: {
   loadContent: (html: string) => void;
   loadJSONContent: (json: string) => void;
   getContent: () => string;
-  getDocumentSnapshot: () => string;
+  getDocumentSnapshot: () => unknown;
   getPlainText: () => string;
   getSelectionClipboardData: () => string;
   applyFormat: (command: string, value?: string) => void;
@@ -48,6 +47,12 @@ export function registerSwiftCallbacks(callbacks: {
   setEditable: (editable: boolean) => void;
   setSpellcheckEnabled: (enabled: boolean) => void;
   setAutocorrectEnabled: (enabled: boolean) => void;
+  setProofreadingOptions: (spelling: boolean, grammar: boolean, dialect: string) => void;
+  setAIGrammarIssues: (json: string) => void;
+  resetProofreadingDictionary: () => void;
+  getProofreadingState: () => string;
+  getGrammarContextSnapshot: () => string;
+  completeImageImport: (requestId: string, source: string, errorMessage?: string) => void;
   setZoomScale: (scale: number) => void;
   getSelectedText: () => string;
   setThemeCSS: (css: string) => void;

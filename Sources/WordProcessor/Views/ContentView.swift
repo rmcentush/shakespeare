@@ -91,28 +91,26 @@ struct ContentView: View {
             }
             .background { keyboardShortcuts }
             .onReceive(NotificationCenter.default.publisher(for: .editorContentUpdated, object: editorViewModel)) { notification in
-                var contentChanged = false
-                if let html = notification.userInfo?["html"] as? String,
-                   let text = notification.userInfo?["text"] as? String,
-                   let words = notification.userInfo?["words"] as? Int,
-                   let characters = notification.userInfo?["characters"] as? Int {
-                    contentChanged = document.syncFromEditor(html: html, plainText: text, words: words, characters: characters)
-                } else if let html = notification.userInfo?["html"] as? String {
-                    contentChanged = document.updateContent(html)
-                } else if let words = notification.userInfo?["words"] as? Int,
-                          let characters = notification.userInfo?["characters"] as? Int {
-                    document.markEditorActivity(words: words, characters: characters)
-                }
+                guard let html = notification.userInfo?["html"] as? String,
+                      let text = notification.userInfo?["text"] as? String,
+                      let words = notification.userInfo?["words"] as? Int,
+                      let characters = notification.userInfo?["characters"] as? Int
+                else { return }
+                let contentChanged = document.syncFromEditor(
+                    html: html,
+                    plainText: text,
+                    words: words,
+                    characters: characters
+                )
                 if contentChanged {
-                    editorViewModel.scheduleRecoveryDraft(document: document)
-                    editorViewModel.scheduleAutoSave(document: document)
+                    editorViewModel.schedulePersistence(document: document)
                     editorViewModel.scheduleAmbientReview()
+                    editorViewModel.scheduleGrammarCheck()
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .editorDocumentMutated, object: editorViewModel)) { _ in
                 document.markEditorMutation()
-                editorViewModel.scheduleRecoveryDraft(document: document)
-                editorViewModel.scheduleAutoSave(document: document)
+                editorViewModel.schedulePersistence(document: document)
             }
             .onReceive(NotificationCenter.default.publisher(for: .editorCommentActivated, object: editorViewModel)) { _ in
                 withAnimation(Layout.sidebarAnimation) {
@@ -121,6 +119,10 @@ struct ContentView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .editorBecameReady, object: editorViewModel)) { _ in
                 editorViewModel.loadSnapshot(document.currentSnapshot())
+                editorViewModel.scheduleGrammarCheck(delay: 5)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .grammarCheckingSettingsChanged)) { _ in
+                editorViewModel.grammarCheckingSettingsDidChange()
             }
             .onReceive(NotificationCenter.default.publisher(for: .fontSettingsChanged)) { _ in
                 let appearance = UserDefaults.standard.string(forKey: "editorAppearance") ?? "system"
@@ -615,6 +617,7 @@ struct StatusBarView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
+            proofreadingStatus
             if !editorViewModel.persistenceStatusText.isEmpty {
                 Text(editorViewModel.persistenceStatusText)
                     .font(.caption)
@@ -626,5 +629,20 @@ struct StatusBarView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
         .background(.bar)
+    }
+
+    @ViewBuilder
+    private var proofreadingStatus: some View {
+        if editorViewModel.proofreadingStatus == "error" {
+            Image(systemName: "exclamationmark.triangle")
+                .foregroundStyle(.red)
+                .help(editorViewModel.proofreadingErrorMessage.isEmpty
+                    ? "The local proofreader could not start."
+                    : editorViewModel.proofreadingErrorMessage)
+        } else if editorViewModel.proofreadingIssueCount > 0 {
+            Text("\(editorViewModel.proofreadingIssueCount) writing issue\(editorViewModel.proofreadingIssueCount == 1 ? "" : "s")")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 }

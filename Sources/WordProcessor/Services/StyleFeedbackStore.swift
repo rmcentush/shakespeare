@@ -118,9 +118,18 @@ final class StyleFeedbackStore {
             .suffix(limit)
     }
 
+    func unprocessedStyleDecisions(limit: Int = 80) -> [EditDecision] {
+        let processed = processedIDs()
+        return allDecisions()
+            .filter { !processed.contains($0.id) && Self.isStyleLearningEligible($0) }
+            .suffix(limit)
+    }
+
     func pendingDecisionCount() -> Int {
         let processed = processedIDs()
-        return allDecisions().filter { !processed.contains($0.id) }.count
+        return allDecisions().filter {
+            !processed.contains($0.id) && Self.isStyleLearningEligible($0)
+        }.count
     }
 
     func recentRejectedDecisions(limit: Int = 10) -> [EditDecision] {
@@ -145,6 +154,19 @@ final class StyleFeedbackStore {
 
     func writeLearnedPreferences(_ content: String) throws {
         try AuthorStyleReference.writeLearnedPreferences(content)
+    }
+
+    private static func isStyleLearningEligible(_ decision: EditDecision) -> Bool {
+        let styleKinds: Set<String> = [
+            "voice",
+            "tone",
+            "clarity",
+            "structure",
+            "concision",
+            "style",
+        ]
+        return styleKinds.contains(decision.kind.lowercased())
+            && !decision.originalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func ensureStorage() throws {

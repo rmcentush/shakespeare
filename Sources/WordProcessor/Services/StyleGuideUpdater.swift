@@ -28,7 +28,7 @@ final class StyleGuideUpdater {
     }
 
     func proposeUpdate() async throws -> Proposal {
-        let decisions = store.unprocessedDecisions(limit: 100)
+        let decisions = store.unprocessedStyleDecisions(limit: 100)
         guard !decisions.isEmpty else { throw UpdateError.noFeedback }
 
         let currentPreferences = store.learnedPreferences()
@@ -44,12 +44,16 @@ final class StyleGuideUpdater {
 
                 Rules:
                 - Preserve useful existing rules unless newer evidence contradicts them.
-                - Add active rules only when supported by at least 2 consistent decisions.
-                - Put single but plausible observations under "Tentative" or drop them.
+                - Treat each decision as weak evidence, not a direct instruction to alter the style profile.
+                - Add or materially strengthen an active rule only when supported by at least 5 consistent decisions from at least 3 distinct group IDs.
+                - Put patterns supported by 3 or 4 consistent decisions under "Tentative". Drop patterns supported by only 1 or 2 decisions.
+                - Do not create the opposite of a rejected suggestion as a positive preference. A rejection is negative evidence only unless the preferred alternative is independently accepted several times.
+                - Do not generalize from topic-specific wording, factual corrections, targeting mistakes, one-off instructions, or document-specific constraints.
+                - Conflicting evidence means no new rule. Keep a tentative rule tentative until the stronger threshold is met.
                 - Phrase rules as actionable editing guidance.
                 - Include date \(today) and evidence count for each rule.
                 - Merge duplicates, prune contradicted rules, and keep the whole file under 30 rules and 1,500 words.
-                - Rejections may mean factual error, bad targeting, or bad style; infer carefully from context and rationale.
+                - The input has already been filtered to style-relevant categories, but rejections may still mean bad targeting rather than bad style; infer conservatively from context and rationale.
                 """,
                 "cache_control": ClaudeAPIService.oneHourPromptCacheControl
             ]

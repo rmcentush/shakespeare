@@ -8,18 +8,25 @@ import WebKit
 final class TextCheckingSettings {
     static let shared = TextCheckingSettings()
 
+    static let dialects: [(value: String, label: String)] = [
+        ("american", "American English"),
+        ("british", "British English"),
+        ("australian", "Australian English"),
+        ("canadian", "Canadian English"),
+        ("indian", "Indian English"),
+    ]
+
     private enum Keys {
-        static let continuousSpellChecking = "textChecking.continuousSpellCheckingEnabled"
-        static let grammarChecking = "textChecking.grammarCheckingEnabled"
+        static let continuousSpellChecking = "proofreading.spellingEnabled"
+        static let grammarChecking = "proofreading.grammarEnabled"
+        static let dialect = "proofreading.dialect"
         static let automaticSpellingCorrection = "textChecking.automaticSpellingCorrectionEnabled"
         static let automaticTextReplacement = "textChecking.automaticTextReplacementEnabled"
     }
 
-    private let baselineContinuousSpellCheckingEnabled: Bool
-    private let baselineGrammarCheckingEnabled: Bool
     private let baselineAutomaticSpellingCorrectionEnabled: Bool
     private let baselineAutomaticTextReplacementEnabled: Bool
-    private var didApplyDeferredNativeTogglesToCurrentWebView = false
+    private var didApplyAutomaticCorrectionToCurrentWebView = false
 
     weak var webView: WKWebView?
 
@@ -27,7 +34,7 @@ final class TextCheckingSettings {
         didSet {
             guard continuousSpellCheckingEnabled != oldValue else { return }
             persist(continuousSpellCheckingEnabled, key: Keys.continuousSpellChecking)
-            applyContinuousSpellChecking(previousValue: oldValue)
+            applyProofreadingOptions()
         }
     }
 
@@ -35,7 +42,17 @@ final class TextCheckingSettings {
         didSet {
             guard grammarCheckingEnabled != oldValue else { return }
             persist(grammarCheckingEnabled, key: Keys.grammarChecking)
-            applyGrammarChecking()
+            applyProofreadingOptions()
+            NotificationCenter.default.post(name: .grammarCheckingSettingsChanged, object: self)
+        }
+    }
+
+    var dialect: String {
+        didSet {
+            guard dialect != oldValue else { return }
+            UserDefaults.standard.set(dialect, forKey: Keys.dialect)
+            applyProofreadingOptions()
+            NotificationCenter.default.post(name: .grammarCheckingSettingsChanged, object: self)
         }
     }
 
@@ -56,97 +73,70 @@ final class TextCheckingSettings {
     }
 
     private init() {
-        let baseline = Self.baselineDefaults()
-        baselineContinuousSpellCheckingEnabled = baseline.continuousSpellCheckingEnabled
-        baselineGrammarCheckingEnabled = baseline.grammarCheckingEnabled
-        baselineAutomaticSpellingCorrectionEnabled = baseline.automaticSpellingCorrectionEnabled
-        baselineAutomaticTextReplacementEnabled = baseline.automaticTextReplacementEnabled
+        let textView = NSTextView()
+        baselineAutomaticSpellingCorrectionEnabled = textView.isAutomaticSpellingCorrectionEnabled
+        baselineAutomaticTextReplacementEnabled = textView.isAutomaticTextReplacementEnabled
 
-        continuousSpellCheckingEnabled = Self.loadBool(
-            key: Keys.continuousSpellChecking,
-            fallback: baseline.continuousSpellCheckingEnabled
-        )
-        grammarCheckingEnabled = Self.loadBool(
-            key: Keys.grammarChecking,
-            fallback: baseline.grammarCheckingEnabled
-        )
+        continuousSpellCheckingEnabled = Self.loadBool(key: Keys.continuousSpellChecking, fallback: true)
+        grammarCheckingEnabled = Self.loadBool(key: Keys.grammarChecking, fallback: true)
+        let storedDialect = UserDefaults.standard.string(forKey: Keys.dialect)
+        dialect = storedDialect.flatMap { stored in
+            Self.dialects.contains(where: { $0.value == stored }) ? stored : nil
+        } ?? Self.defaultDialect()
         automaticSpellingCorrectionEnabled = Self.loadBool(
             key: Keys.automaticSpellingCorrection,
-            fallback: baseline.automaticSpellingCorrectionEnabled
+            fallback: textView.isAutomaticSpellingCorrectionEnabled
         )
         automaticTextReplacementEnabled = Self.loadBool(
             key: Keys.automaticTextReplacement,
-            fallback: baseline.automaticTextReplacementEnabled
+            fallback: textView.isAutomaticTextReplacementEnabled
         )
     }
 
     func bind(webView: WKWebView) {
         self.webView = webView
-        didApplyDeferredNativeTogglesToCurrentWebView = false
-        applyGrammarChecking()
+        didApplyAutomaticCorrectionToCurrentWebView = false
         applyAutomaticTextReplacement()
     }
 
     func editorDidBecomeReady() {
-        applyEditorAttributes()
+        // Harper and Haiku supply the visible spelling/grammar marks. Disabling WebKit's
+        // checker avoids duplicate, conflicting underlines and context menus.
+        setEditorBoolOption(callback: "setSpellcheckEnabled", value: false)
+        setEditorBoolOption(callback: "setAutocorrectEnabled", value: automaticSpellingCorrectionEnabled)
+        applyProofreadingOptions()
 
-        if !didApplyDeferredNativeTogglesToCurrentWebView {
-            let needsContinuousToggle = continuousSpellCheckingEnabled != baselineContinuousSpellCheckingEnabled
-            let needsAutomaticCorrectionToggle = automaticSpellingCorrectionEnabled != baselineAutomaticSpellingCorrectionEnabled
-
-            if !needsContinuousToggle && !needsAutomaticCorrectionToggle {
-                didApplyDeferredNativeTogglesToCurrentWebView = true
-            }
-
-            var appliedDeferredToggles = false
-
-            if needsContinuousToggle {
-                appliedDeferredToggles = performAction(#selector(NSTextView.toggleContinuousSpellChecking(_:))) || appliedDeferredToggles
-            }
-
-            if needsAutomaticCorrectionToggle {
-                appliedDeferredToggles = performAction(#selector(NSTextView.toggleAutomaticSpellingCorrection(_:))) || appliedDeferredToggles
-            }
-
-            didApplyDeferredNativeTogglesToCurrentWebView = didApplyDeferredNativeTogglesToCurrentWebView || appliedDeferredToggles
+        if !didApplyAutomaticCorrectionToCurrentWebView,
+           automaticSpellingCorrectionEnabled != baselineAutomaticSpellingCorrectionEnabled {
+            didApplyAutomaticCorrectionToCurrentWebView = performAction(
+                #selector(NSTextView.toggleAutomaticSpellingCorrection(_:))
+            )
         }
-
-        applyGrammarChecking()
         applyAutomaticTextReplacement()
     }
 
-    func checkSpellingNow() {
-        performAction(#selector(NSText.checkSpelling(_:)))
+    func resetDictionary() {
+        webView?.evaluateJavaScript("window.editorAPI?.resetProofreadingDictionary()")
+        NotificationCenter.default.post(name: .grammarCheckingSettingsChanged, object: self)
     }
 
-    func showGuessPanel() {
-        performAction(#selector(NSText.showGuessPanel(_:)))
-    }
-
-    private func applyContinuousSpellChecking(previousValue: Bool) {
-        applyEditorAttributes()
-        guard previousValue != continuousSpellCheckingEnabled else { return }
-        if performAction(#selector(NSTextView.toggleContinuousSpellChecking(_:))) {
-            didApplyDeferredNativeTogglesToCurrentWebView = true
+    private func applyProofreadingOptions() {
+        guard let webView else { return }
+        let spelling = continuousSpellCheckingEnabled ? "true" : "false"
+        let safeDialect = Self.dialects.contains(where: { $0.value == dialect }) ? dialect : "american"
+        webView.evaluateJavaScript(
+            "window.editorAPI?.setProofreadingOptions(\(spelling), false, '\(safeDialect)')"
+        )
+        if !grammarCheckingEnabled {
+            webView.evaluateJavaScript("window.editorAPI?.setAIGrammarIssues('[]')")
         }
     }
 
     private func applyAutomaticSpellingCorrection(previousValue: Bool) {
-        applyEditorAttributes()
+        setEditorBoolOption(callback: "setAutocorrectEnabled", value: automaticSpellingCorrectionEnabled)
         guard previousValue != automaticSpellingCorrectionEnabled else { return }
         if performAction(#selector(NSTextView.toggleAutomaticSpellingCorrection(_:))) {
-            didApplyDeferredNativeTogglesToCurrentWebView = true
-        }
-    }
-
-    private func applyGrammarChecking() {
-        guard let webView else { return }
-        if !setBoolSelector(
-            "setGrammarCheckingEnabled:",
-            on: webView,
-            value: grammarCheckingEnabled
-        ), grammarCheckingEnabled != baselineGrammarCheckingEnabled {
-            performAction(#selector(NSTextView.toggleGrammarChecking(_:)))
+            didApplyAutomaticCorrectionToCurrentWebView = true
         }
     }
 
@@ -161,20 +151,8 @@ final class TextCheckingSettings {
         }
     }
 
-    private func applyEditorAttributes() {
-        setEditorBoolOption(
-            callback: "setSpellcheckEnabled",
-            value: continuousSpellCheckingEnabled
-        )
-        setEditorBoolOption(
-            callback: "setAutocorrectEnabled",
-            value: automaticSpellingCorrectionEnabled
-        )
-    }
-
     private func setEditorBoolOption(callback: String, value: Bool) {
-        guard let webView else { return }
-        webView.evaluateJavaScript("window.editorAPI?.\(callback)(\(value ? "true" : "false"))")
+        webView?.evaluateJavaScript("window.editorAPI?.\(callback)(\(value ? "true" : "false"))")
     }
 
     @discardableResult
@@ -182,11 +160,7 @@ final class TextCheckingSettings {
         if NSApp.sendAction(selector, to: nil, from: nil) {
             return true
         }
-
-        guard let webView else {
-            return false
-        }
-
+        guard let webView else { return false }
         return NSApp.sendAction(selector, to: webView, from: nil)
     }
 
@@ -195,37 +169,26 @@ final class TextCheckingSettings {
     }
 
     private static func loadBool(key: String, fallback: Bool) -> Bool {
-        if let stored = UserDefaults.standard.object(forKey: key) as? Bool {
-            return stored
-        }
-        return fallback
+        UserDefaults.standard.object(forKey: key) as? Bool ?? fallback
     }
 
-    private static func baselineDefaults() -> (
-        continuousSpellCheckingEnabled: Bool,
-        grammarCheckingEnabled: Bool,
-        automaticSpellingCorrectionEnabled: Bool,
-        automaticTextReplacementEnabled: Bool
-    ) {
-        let textView = NSTextView()
-        return (
-            textView.isContinuousSpellCheckingEnabled,
-            textView.isGrammarCheckingEnabled,
-            textView.isAutomaticSpellingCorrectionEnabled,
-            textView.isAutomaticTextReplacementEnabled
-        )
+    private static func defaultDialect() -> String {
+        switch Locale.current.region?.identifier.uppercased() {
+        case "GB": return "british"
+        case "AU", "NZ": return "australian"
+        case "CA": return "canadian"
+        case "IN": return "indian"
+        default: return "american"
+        }
     }
 
     private func setBoolSelector(_ selectorName: String, on target: AnyObject, value: Bool) -> Bool {
-        let selector = Selector((selectorName))
-        guard let method = class_getInstanceMethod(type(of: target), selector) else {
-            return false
-        }
+        let selector = Selector(selectorName)
+        guard let method = class_getInstanceMethod(type(of: target), selector) else { return false }
 
         typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
         let implementation = method_getImplementation(method)
-        let function = unsafeBitCast(implementation, to: Setter.self)
-        function(target, selector, value)
+        unsafeBitCast(implementation, to: Setter.self)(target, selector, value)
         return true
     }
 }

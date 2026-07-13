@@ -1,4 +1,4 @@
-import { Editor } from '@tiptap/core';
+import { Editor, getText, getTextSerializersFromSchema } from '@tiptap/core';
 import { TextSelection, Transaction } from '@tiptap/pm/state';
 import { Mapping } from '@tiptap/pm/transform';
 import { sendToSwift } from './bridge';
@@ -11,7 +11,6 @@ import {
   SELECTION_SYNC_DEBOUNCE_MS,
   SearchMatch,
   SelectionClipboardData,
-  WORD_COUNT_DEBOUNCE_MS,
 } from './types';
 import { countWords } from './utils';
 import {
@@ -31,8 +30,8 @@ let cachedSerializedHTML = '';
 let lastSentContentUpdate: { html: string; text: string } | null = null;
 let lastSentSelectionState: EditorSelectionState | null = null;
 let preservedTextSelection: PreservedTextSelection | null = null;
+const blockTextCache = new WeakMap<object, { text: string; words: number }>();
 
-let wordCountDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let contentSyncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let selectionDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -102,7 +101,6 @@ export function setPreservedTextSelection(selection: PreservedTextSelection | nu
 }
 
 export function resetDocSyncState(): void {
-  if (wordCountDebounceTimer) clearTimeout(wordCountDebounceTimer);
   if (contentSyncDebounceTimer) clearTimeout(contentSyncDebounceTimer);
   if (selectionDebounceTimer) clearTimeout(selectionDebounceTimer);
 
@@ -113,8 +111,33 @@ export function resetDocSyncState(): void {
   preservedTextSelection = null;
 }
 
+function cachedDocumentText(editor: Editor): { text: string; words: number } {
+  const parts: string[] = [];
+  let words = 0;
+  const textSerializers = getTextSerializersFromSchema(editor.schema);
+
+  editor.state.doc.forEach((node) => {
+    let cached = blockTextCache.get(node);
+    if (!cached) {
+      // getText(doc) emits a separator for a top-level container's first block
+      // child; getText(container) starts that child at position zero and omits
+      // it. Restore that boundary so cached top-level pieces join identically.
+      const leadingContainerSeparator = node.firstChild?.isBlock ? '\n\n' : '';
+      const text = leadingContainerSeparator
+        + getText(node, { blockSeparator: '\n\n', textSerializers });
+      cached = { text, words: countWords(text) };
+      blockTextCache.set(node, cached);
+    }
+    parts.push(cached.text);
+    words += cached.words;
+  });
+
+  return { text: parts.join('\n\n'), words };
+}
+
 function buildPlainTextSnapshot(editor: Editor, footnotes: FootnoteDetails[]): DocumentTextSnapshot {
-  const text = editor.getText();
+  const documentText = cachedDocumentText(editor);
+  const text = documentText.text;
 
   if (footnotes.length === 0) {
     return {
@@ -123,7 +146,7 @@ function buildPlainTextSnapshot(editor: Editor, footnotes: FootnoteDetails[]): D
       footnotesSignature: '',
       footnotesStructureSignature: '',
       plainText: text,
-      words: countWords(text),
+      words: documentText.words,
       characters: text.length,
     };
   }
@@ -350,14 +373,6 @@ function selectionStatesEqual(
     a.imageHeight === b.imageHeight;
 }
 
-export function emitWordCountUpdate(editor: Editor) {
-  const snapshot = getDocumentTextSnapshot(editor);
-  sendToSwift('wordCount', {
-    words: snapshot.words,
-    characters: snapshot.characters,
-  });
-}
-
 export function emitContentUpdate(editor: Editor) {
   const snapshot = getDocumentTextSnapshot(editor);
   const html = serializeDocumentHTML(editor);
@@ -398,13 +413,6 @@ export function scheduleSelectionUpdate(editor: Editor) {
   selectionDebounceTimer = setTimeout(() => {
     emitSelectionUpdate(editor);
   }, SELECTION_SYNC_DEBOUNCE_MS);
-}
-
-export function scheduleWordCountUpdate(editor: Editor) {
-  if (wordCountDebounceTimer) clearTimeout(wordCountDebounceTimer);
-  wordCountDebounceTimer = setTimeout(() => {
-    emitWordCountUpdate(editor);
-  }, WORD_COUNT_DEBOUNCE_MS);
 }
 
 export function scheduleContentUpdate(editor: Editor) {

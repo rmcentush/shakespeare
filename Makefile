@@ -6,10 +6,13 @@ all: build
 editor:
 	cd Editor && npm install && node esbuild.config.mjs
 
-# Copy JS + CSS bundles to Swift resources
+# Copy editor bundles to Swift resources
 copy-assets: editor
 	cp Editor/dist/editor.js Sources/WordProcessor/Resources/editor.js
 	cp Editor/dist/editor.css Sources/WordProcessor/Resources/editor.css
+	cp Editor/dist/harper-runtime.js Sources/WordProcessor/Resources/harper-runtime.js
+	cp Editor/dist/harper_wasm_slim_bg.wasm Sources/WordProcessor/Resources/harper_wasm_slim_bg.wasm
+	cp Editor/dist/Harper_LICENSE.txt Sources/WordProcessor/Resources/Harper_LICENSE.txt
 
 # Build Swift executable
 swift: copy-assets
@@ -38,4 +41,4 @@ install: build
 # Clean everything
 clean:
 	rm -rf .build Editor/node_modules Editor/dist
-	rm -f Sources/WordProcessor/Resources/editor.js Sources/WordProcessor/Resources/editor.css
+	rm -f Sources/WordProcessor/Resources/editor.js Sources/WordProcessor/Resources/editor.css Sources/WordProcessor/Resources/harper-runtime.js Sources/WordProcessor/Resources/harper_wasm_slim_bg.wasm Sources/WordProcessor/Resources/Harper_LICENSE.txt

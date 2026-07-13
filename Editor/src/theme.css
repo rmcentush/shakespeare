@@ -634,6 +634,133 @@ body {
   background: rgba(0, 122, 255, 0.2);
 }
 
+/* Inline spelling and grammar checking */
+.proofreading-issue {
+  cursor: text;
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-thickness: 1.25px;
+  text-underline-offset: 3px;
+  text-decoration-skip-ink: none;
+}
+
+.proofreading-spelling {
+  text-decoration-color: #d93025;
+}
+
+.proofreading-grammar {
+  text-decoration-color: #1a73e8;
+}
+
+#proofreading-popover {
+  position: fixed;
+  z-index: 1400;
+  width: min(320px, calc(100vw - 20px));
+  padding: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.98);
+  color: #202124;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+}
+
+#proofreading-popover[hidden] {
+  display: none;
+}
+
+.proofreading-popover-header,
+.proofreading-popover-footer {
+  display: flex;
+  align-items: center;
+}
+
+.proofreading-popover-header {
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+
+.proofreading-kind {
+  color: #1a73e8;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.proofreading-kind.is-spelling {
+  color: #b3261e;
+}
+
+.proofreading-close,
+.proofreading-suggestion,
+.proofreading-secondary-action {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.proofreading-close {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  background: transparent;
+  color: #5f6368;
+  font-size: 19px;
+  line-height: 20px;
+}
+
+.proofreading-close:hover {
+  background: rgba(60, 64, 67, 0.09);
+}
+
+.proofreading-message {
+  margin: 0 0 10px;
+  color: #3c4043;
+}
+
+.proofreading-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+
+.proofreading-suggestion {
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: rgba(26, 115, 232, 0.09);
+  color: #174ea6;
+  font-weight: 600;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.proofreading-suggestion:hover {
+  background: rgba(26, 115, 232, 0.16);
+}
+
+.proofreading-popover-footer {
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.proofreading-secondary-action {
+  padding: 3px 0;
+  background: transparent;
+  color: #5f6368;
+  font-size: 12px;
+}
+
+.proofreading-secondary-action:hover {
+  color: #1a73e8;
+}
+
 /* Dark mode support */
 @media (prefers-color-scheme: dark) {
   html, body {
@@ -807,5 +934,54 @@ body {
 
   #link-preview:hover {
     background: #ffffff;
+  }
+
+  .proofreading-spelling {
+    text-decoration-color: #ff7369;
+  }
+
+  .proofreading-grammar {
+    text-decoration-color: #78b1ff;
+  }
+
+  #proofreading-popover {
+    border-color: rgba(255, 255, 255, 0.16);
+    background: rgba(38, 38, 40, 0.98);
+    color: #f1f3f4;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.46);
+  }
+
+  .proofreading-message {
+    color: #d7d9dc;
+  }
+
+  .proofreading-kind {
+    color: #8ab4f8;
+  }
+
+  .proofreading-kind.is-spelling {
+    color: #ff8a80;
+  }
+
+  .proofreading-close,
+  .proofreading-secondary-action {
+    color: #bdc1c6;
+  }
+
+  .proofreading-close:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .proofreading-suggestion {
+    background: rgba(138, 180, 248, 0.14);
+    color: #aecbfa;
+  }
+
+  .proofreading-suggestion:hover {
+    background: rgba(138, 180, 248, 0.22);
+  }
+
+  .proofreading-popover-footer {
+    border-top-color: rgba(255, 255, 255, 0.1);
   }
 }

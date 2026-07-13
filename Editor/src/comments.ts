@@ -2,6 +2,7 @@ import { Editor, Mark, mergeAttributes } from '@tiptap/core';
 import { TextSelection } from '@tiptap/pm/state';
 import { sendToSwift } from './bridge';
 import { createPendingEdit, queuePendingEdits } from './pendingEdits';
+import { COMMENTS_SYNC_DEBOUNCE_MS } from './types';
 import {
   effectiveTextSelection,
   getDocumentRevision,
@@ -9,8 +10,13 @@ import {
 } from './docSync';
 
 let lastSentCommentsSignature: string | null = null;
+let commentsSyncTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingDocumentChanged = false;
 
 export function resetCommentsSignature(): void {
+  if (commentsSyncTimer) clearTimeout(commentsSyncTimer);
+  commentsSyncTimer = null;
+  pendingDocumentChanged = false;
   lastSentCommentsSignature = null;
 }
 
@@ -455,6 +461,17 @@ export function emitCommentsChanged(editor: Editor, force = false, documentChang
 
   lastSentCommentsSignature = signature;
   sendToSwift('commentsChanged', { comments, documentChanged });
+}
+
+export function scheduleCommentsChanged(editor: Editor, documentChanged = false) {
+  pendingDocumentChanged ||= documentChanged;
+  if (commentsSyncTimer) clearTimeout(commentsSyncTimer);
+  commentsSyncTimer = setTimeout(() => {
+    commentsSyncTimer = null;
+    const changed = pendingDocumentChanged;
+    pendingDocumentChanged = false;
+    emitCommentsChanged(editor, false, changed);
+  }, COMMENTS_SYNC_DEBOUNCE_MS);
 }
 
 export function addComment(editor: Editor, commentId: string): boolean {

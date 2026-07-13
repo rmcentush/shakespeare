@@ -1,5 +1,5 @@
 import { Editor, Node as TiptapNode, mergeAttributes } from '@tiptap/core';
-import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state';
+import { NodeSelection, Plugin, PluginKey, Transaction } from '@tiptap/pm/state';
 import {
   FOOTNOTE_NODE_NAME,
   FOOTNOTE_PANEL_DEBOUNCE_MS,
@@ -51,6 +51,23 @@ function sliceContainsFootnote(slice: any, type: any): boolean {
     return !found;
   });
   return found;
+}
+
+export function transactionTouchesFootnotes(transaction: Transaction): boolean {
+  if (!transaction.docChanged) return false;
+  const type = transaction.doc.type.schema.nodes[FOOTNOTE_NODE_NAME];
+  if (!type) return false;
+
+  if (docContainsFootnote(transaction.before, type)) {
+    footnotePresence.set(transaction.doc, true);
+    return true;
+  }
+
+  const insertedFootnote = transaction.steps.some((step) => (
+    sliceContainsFootnote((step as any).slice, type)
+  ));
+  footnotePresence.set(transaction.doc, insertedFootnote);
+  return insertedFootnote;
 }
 
 function normalizeFootnoteNote(note: string): string {

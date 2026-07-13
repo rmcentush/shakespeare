@@ -86,11 +86,15 @@ struct SettingsView: View {
                 }
 
                 Section("Adaptive Preferences") {
-                    LabeledContent("Unprocessed Feedback") {
+                    LabeledContent("Eligible Style Feedback") {
                         Text("\(pendingStyleDecisionCount)")
                             .font(.caption)
                             .foregroundStyle(pendingStyleDecisionCount >= 20 ? .orange : .secondary)
                     }
+
+                    Text("Only voice, tone, clarity, structure, concision, and style decisions are eligible. Active rules require at least five consistent decisions across three suggestion groups.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
                     Button {
                         Task { await updateStylePreferences() }
@@ -170,10 +174,19 @@ struct SettingsView: View {
                         set: { textCheckingSettings.continuousSpellCheckingEnabled = $0 }
                     ))
 
-                    Toggle("Check grammar with spelling", isOn: Binding(
+                    Toggle("Check grammar with Haiku", isOn: Binding(
                         get: { textCheckingSettings.grammarCheckingEnabled },
                         set: { textCheckingSettings.grammarCheckingEnabled = $0 }
                     ))
+
+                    Picker("English dialect", selection: Binding(
+                        get: { textCheckingSettings.dialect },
+                        set: { textCheckingSettings.dialect = $0 }
+                    )) {
+                        ForEach(TextCheckingSettings.dialects, id: \.value) { dialect in
+                            Text(dialect.label).tag(dialect.value)
+                        }
+                    }
 
                     Toggle("Correct spelling automatically", isOn: Binding(
                         get: { textCheckingSettings.automaticSpellingCorrectionEnabled },
@@ -189,7 +202,11 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Text("These settings use macOS and WebKit text checking for the editor.")
+                    Button("Reset Learned Words and Ignored Issues") {
+                        textCheckingSettings.resetDictionary()
+                    }
+
+                    Text("Spelling is checked locally by Harper. When grammar checking is enabled, changed paragraphs are sent to Claude Haiku using your Anthropic API key. A Sonnet proofread is available from the Spelling and Grammar menu.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
