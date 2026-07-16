@@ -16,6 +16,7 @@ struct SettingsView: View {
     @State private var tinkerConnected = false
     @State private var isValidatingTinkerKey = false
     @State private var tinkerConnectionError = ""
+    @State private var tinkerConnectionRequiresBilling = false
     @State private var showDisconnectConfirmation = false
     @AppStorage(SettingsDestination.defaultsKey) private var selectedTab = SettingsDestination.apiKeys
     @AppStorage(InferenceSettings.tinkerModelDefaultsKey) private var tinkerModel = InferenceSettings.defaultTinkerModel
@@ -292,6 +293,7 @@ struct SettingsView: View {
         }
         .onChange(of: tinkerKey) {
             tinkerConnectionError = ""
+            tinkerConnectionRequiresBilling = false
         }
         .confirmationDialog(
             "Delete local learning history?",
@@ -413,7 +415,11 @@ struct SettingsView: View {
                         }
                     }
 
-                    if !tinkerConnectionError.isEmpty {
+                    if tinkerConnectionRequiresBilling {
+                        TinkerBillingNotice(
+                            message: "This key is valid, but Inkling cannot connect until the Tinker account has payment information or credits."
+                        )
+                    } else if !tinkerConnectionError.isEmpty {
                         Label(tinkerConnectionError, systemImage: "exclamationmark.triangle.fill")
                             .font(.caption)
                             .foregroundStyle(.red)
@@ -494,6 +500,7 @@ struct SettingsView: View {
         guard let clipboardString = NSPasteboard.general.string(forType: .string) else { return }
         tinkerKey = clipboardString.trimmingCharacters(in: .whitespacesAndNewlines)
         tinkerConnectionError = ""
+        tinkerConnectionRequiresBilling = false
     }
 
     @MainActor
@@ -503,6 +510,7 @@ struct SettingsView: View {
 
         isValidatingTinkerKey = true
         tinkerConnectionError = ""
+        tinkerConnectionRequiresBilling = false
         tinkerSaved = false
         defer { isValidatingTinkerKey = false }
 
@@ -521,6 +529,9 @@ struct SettingsView: View {
             }
         } catch is CancellationError {
             return
+        } catch let error as TinkerConnectionValidator.ValidationError {
+            tinkerConnectionRequiresBilling = error == .billingRequired
+            tinkerConnectionError = error.localizedDescription
         } catch {
             tinkerConnectionError = error.localizedDescription
         }
@@ -532,6 +543,7 @@ struct SettingsView: View {
         tinkerConnected = false
         tinkerSaved = false
         tinkerConnectionError = ""
+        tinkerConnectionRequiresBilling = false
         NotificationCenter.default.post(name: .inklingConnectionChanged, object: nil)
     }
 

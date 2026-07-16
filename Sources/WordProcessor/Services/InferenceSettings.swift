@@ -27,6 +27,7 @@ enum InferenceSettings {
     static let tinkerModelDefaultsKey = "tinkerBaseModel"
     static let defaultTinkerModel = "thinkingmachines/Inkling"
     static let tinkerConsoleURL = URL(string: "https://tinker-console.thinkingmachines.ai")!
+    static let tinkerBillingURL = URL(string: "https://tinker.thinkingmachines.ai/billing/balance")!
 
     static func runtime(
         purpose: InferencePurpose,

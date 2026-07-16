@@ -125,6 +125,7 @@ private struct TinkerConnectionEvals {
             preconditionFailure("Expected billing-required error")
         } catch let error as TinkerConnectionValidator.ValidationError {
             precondition(error == .billingRequired)
+            precondition(error.errorDescription?.contains("billing balance") == true)
         } catch {
             preconditionFailure("Unexpected error: \(error)")
         }

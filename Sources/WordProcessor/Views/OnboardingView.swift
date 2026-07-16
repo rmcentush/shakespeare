@@ -37,6 +37,7 @@ struct OnboardingView: View {
     @State private var isReplacingAPIKey = false
     @State private var isConnecting = false
     @State private var connectionError = ""
+    @State private var connectionRequiresBilling = false
     @FocusState private var isAPIKeyFocused: Bool
 
     private let connectionValidator = TinkerConnectionValidator()
@@ -49,7 +50,7 @@ struct OnboardingView: View {
             Divider()
             footer
         }
-        .frame(width: 700, height: 520)
+        .frame(width: 720, height: 580)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             hasExistingAPIKey = APIKeyStore.shared.getAPIKey(service: "tinker") != nil
@@ -62,12 +63,12 @@ struct OnboardingView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             ShakespeareMark()
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text("Welcome to Shakespeare")
-                    .font(.headline)
+                    .font(.system(size: 15, weight: .semibold))
                 Text("A calmer place to write and revise.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -75,30 +76,47 @@ struct OnboardingView: View {
 
             Spacer()
 
-            Text("ONE-MINUTE SETUP")
+            Label("ONE-MINUTE SETUP", systemImage: "clock")
                 .font(.system(size: 9.5, weight: .semibold))
-                .kerning(0.7)
-                .foregroundStyle(.tertiary)
+                .kerning(0.55)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(Color.primary.opacity(0.045), in: Capsule())
         }
-        .padding(.horizontal, 26)
-        .padding(.vertical, 18)
+        .padding(.horizontal, 32)
+        .padding(.vertical, 19)
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 9) {
                 Text("One key. That’s it.")
-                    .font(.system(size: 29, weight: .semibold, design: .serif))
+                    .font(.system(size: 31, weight: .semibold, design: .serif))
                 Text("Your Tinker API key automatically connects Inkling for writing help. The same credential is used by Tinker training later—there is no separate Inkling key.")
-                    .font(.title3)
+                    .font(.system(size: 15))
+                    .lineSpacing(3)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 620, alignment: .leading)
             }
 
             HStack(spacing: 10) {
-                ConnectionCapability(icon: "sparkles", label: "Inkling assistant")
-                ConnectionCapability(icon: "person.text.rectangle", label: "Tinker training")
-                ConnectionCapability(icon: "checkmark.shield", label: "One secure key")
+                ConnectionCapability(
+                    icon: "sparkles",
+                    title: "Inkling assistant",
+                    detail: "Draft and revise"
+                )
+                ConnectionCapability(
+                    icon: "person.text.rectangle",
+                    title: "Personal training",
+                    detail: "Only when you opt in"
+                )
+                ConnectionCapability(
+                    icon: "checkmark.shield",
+                    title: "Secure credential",
+                    detail: "Saved in Keychain"
+                )
             }
 
             credentialCard
@@ -107,16 +125,19 @@ struct OnboardingView: View {
                 Image(systemName: "hand.raised")
                     .foregroundStyle(.secondary)
                     .frame(width: 18)
+                    .accessibilityHidden(true)
                 Text("Text is sent to Tinker only when you ask the assistant for help. Style learning is a separate choice in My Style and is never enabled by connecting a key.")
                     .font(.caption)
+                    .lineSpacing(2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 34)
-        .padding(.vertical, 28)
+        .padding(.horizontal, 32)
+        .padding(.top, 24)
+        .padding(.bottom, 20)
     }
 
     @ViewBuilder
@@ -139,6 +160,7 @@ struct OnboardingView: View {
 
                 Button("Replace Key") {
                     connectionError = ""
+                    connectionRequiresBilling = false
                     isReplacingAPIKey = true
                     DispatchQueue.main.async {
                         isAPIKeyFocused = true
@@ -164,6 +186,7 @@ struct OnboardingView: View {
                         .disabled(isConnecting)
                         .onChange(of: apiKey) {
                             connectionError = ""
+                            connectionRequiresBilling = false
                         }
                         .onSubmit {
                             connectAndFinish()
@@ -185,11 +208,22 @@ struct OnboardingView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                } else if connectionRequiresBilling {
+                    TinkerBillingNotice(
+                        message: "This key is valid, but Tinker won’t serve Inkling until the account has payment information or credits."
+                    )
                 } else if !connectionError.isEmpty {
-                    Label(connectionError, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .top, spacing: 9) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                        Text(connectionError)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(11)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.red.opacity(0.075), in: RoundedRectangle(cornerRadius: 9))
                 } else {
                     Text("Shakespeare checks the connection before saving the key.")
                         .font(.caption)
@@ -197,7 +231,11 @@ struct OnboardingView: View {
                 }
             }
             .padding(16)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+            }
         }
     }
 
@@ -239,14 +277,16 @@ struct OnboardingView: View {
                 .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isConnecting)
             }
         }
-        .padding(.horizontal, 26)
+        .padding(.horizontal, 32)
         .padding(.vertical, 16)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.45))
     }
 
     private func pasteAPIKey() {
         guard let value = NSPasteboard.general.string(forType: .string) else { return }
         apiKey = value.trimmingCharacters(in: .whitespacesAndNewlines)
         connectionError = ""
+        connectionRequiresBilling = false
     }
 
     private func connectAndFinish() {
@@ -255,6 +295,7 @@ struct OnboardingView: View {
 
         isConnecting = true
         connectionError = ""
+        connectionRequiresBilling = false
 
         Task { @MainActor in
             defer { isConnecting = false }
@@ -273,6 +314,9 @@ struct OnboardingView: View {
                 finish()
             } catch is CancellationError {
                 return
+            } catch let error as TinkerConnectionValidator.ValidationError {
+                connectionRequiresBilling = error == .billingRequired
+                connectionError = error.localizedDescription
             } catch {
                 connectionError = error.localizedDescription
             }
@@ -294,23 +338,46 @@ private struct ShakespeareMark: View {
                 .font(.system(size: 20, weight: .semibold, design: .serif))
                 .foregroundStyle(.white)
         }
-        .frame(width: 40, height: 40)
+        .frame(width: 42, height: 42)
         .accessibilityHidden(true)
     }
 }
 
 private struct ConnectionCapability: View {
     let icon: String
-    let label: String
+    let title: String
+    let detail: String
 
     var body: some View {
-        Label(label, systemImage: icon)
-            .font(.caption.weight(.medium))
-            .foregroundStyle(.secondary)
+        HStack(spacing: 9) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 28, height: 28)
+                .background(Color.accentColor.opacity(0.1), in: Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(detail)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+
+            Spacer(minLength: 0)
+        }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 11)
-            .padding(.vertical, 9)
-            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
+            .padding(.vertical, 10)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.primary.opacity(0.055), lineWidth: 1)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(title). \(detail).")
     }
 }
 
