@@ -4,13 +4,14 @@ Shakespeare has a local-first personalization pipeline for adapting Inkling to o
 
 ## Data flow
 
-1. The writer enables **Settings → Personalization → Collect local training events**.
-2. The editor records accepted and rejected assistant edits, including the original instruction, editorial category, rationale, surrounding text, provider, and exact model/checkpoint.
-3. A deduplicated final-text snapshot is recorded after a successful document save.
-4. The local compiler creates document-separated SFT and DPO train/evaluation files.
-5. An explicit CLI command submits a LoRA training run to Tinker.
-6. A held-out evaluation produces a report tied to the exact dataset manifest.
-7. A separate `promote` command verifies the report and writes the passing checkpoint to the local model registry. Selecting **Tinker / Inkling** in Settings then uses that checkpoint for inference.
+1. The writer enables **Settings → My Style → Learn from saved edits and documents**.
+2. The editor records the raw accept or reject action with its instruction, category, rationale, context, and exact model/checkpoint.
+3. On the next successful save, the editor appends a linked outcome: kept, modified, reverted, rejected unchanged, rejected then rewritten, later accepted, or unresolvable.
+4. A deduplicated final-text snapshot is recorded after the save. Raw actions are never rewritten.
+5. The local compiler keeps only high-confidence outcomes, the latest bounded snapshot per document, and deterministic document-separated train/evaluation sets.
+6. An explicit CLI command submits a LoRA training run to Tinker and evaluates held-out loss during training.
+7. A separate external comparison produces a report tied to the exact dataset manifest and checkpoint.
+8. The `promote` command verifies that report before writing the candidate to the local model registry.
 
 Raw data lives at:
 
@@ -18,7 +19,7 @@ Raw data lives at:
 ~/Library/Application Support/Shakespeare/personalization/training_events.jsonl
 ```
 
-The directory is owner-only (`0700`) and the ledger and model registry are owner-only files (`0600`). Use the Personalization settings tab to reveal or delete the ledger.
+The directory is owner-only (`0700`) and the ledger and model registry are owner-only files (`0600`). Use **My Style** to inspect readiness, reveal the directory, or delete the local learning history.
 
 ## Compile and inspect
 
@@ -33,11 +34,11 @@ PYTHONPATH=Trainer python3 -m shakespeare_train compile \
 
 The compiler emits:
 
-- `sft_train.jsonl` and `sft_eval.jsonl` from accepted edits and final prose continuations.
-- `dpo_train.jsonl` and `dpo_eval.jsonl` from rejected assistant edits.
-- `manifest.json` with counts, source hash, and the deterministic split policy.
+- `sft_train.jsonl` and `sft_eval.jsonl` from saved accepted/modified edits plus bounded continuations from only the latest snapshot per document.
+- `dpo_train.jsonl` and `dpo_eval.jsonl` only when a rejected suggestion is followed by a writer rewrite; the actual rewrite is the chosen response.
+- `manifest.json` with signal policy, counts, source hash, and deterministic split policy.
 
-All examples from a document stay in one split. This prevents near-identical passages from the same draft leaking from training into evaluation.
+All examples from a document stay in one split. Ambiguous rejections and low-confidence or unresolvable outcomes are excluded. This prevents false preferences and near-identical passages from the same draft leaking into evaluation.
 
 ## Train Inkling with Tinker
 
@@ -62,7 +63,7 @@ shakespeare-train train \
   --epochs 1
 ```
 
-Rejected edits can drive a separate DPO run. It can start from the base model or from the SFT run's `state_path`:
+Rejected-then-rewritten edits can drive a separate DPO run. DPO must start from the SFT run's `state_path`, keeping the preference base in-distribution:
 
 ```bash
 shakespeare-train train-dpo \
@@ -72,7 +73,7 @@ shakespeare-train train-dpo \
   --load-checkpoint '<sft-state-path>'
 ```
 
-Do not promote a checkpoint solely because training completed. Compare it with the base model on the held-out documents first: blind preference, instruction adherence, factual preservation, unwanted phrase copying, and regression on grammar/mechanical edits. Keep the base provider available as a rollback.
+Do not promote a checkpoint solely because training completed. Compare it with the current active checkpoint and untuned Inkling on held-out documents first: blind preference, instruction adherence, factual preservation, unwanted phrase copying, and regression on grammar/mechanical edits. The untuned base model remains the rollback.
 
 The promotion report is a versioned JSON object. `dataset_manifest_sha256` must be the SHA-256 digest of the exact `manifest.json`, and `metrics` must contain the measured evaluation results:
 

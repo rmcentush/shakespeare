@@ -6,18 +6,8 @@ enum InferencePurpose: String, Sendable {
     case proofread
 }
 
-enum InferenceProviderID: String, CaseIterable, Identifiable, Sendable {
-    case anthropic
+enum InferenceProviderID: String, Sendable {
     case tinker
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .anthropic: return "Anthropic"
-        case .tinker: return "Tinker / Inkling"
-        }
-    }
 }
 
 struct InferenceRuntime: Sendable, Equatable {
@@ -34,69 +24,36 @@ struct InferenceRuntime: Sendable, Equatable {
 }
 
 enum InferenceSettings {
-    static let providerDefaultsKey = "inferenceProvider"
-    static let anthropicModelDefaultsKey = "anthropicAssistantModel"
     static let tinkerModelDefaultsKey = "tinkerBaseModel"
-    static let defaultAnthropicModel = "claude-fable-5"
     static let defaultTinkerModel = "thinkingmachines/Inkling"
-
-    static var selectedProvider: InferenceProviderID {
-        let rawValue = UserDefaults.standard.string(forKey: providerDefaultsKey) ?? ""
-        return InferenceProviderID(rawValue: rawValue) ?? .anthropic
-    }
 
     static func runtime(
         purpose: InferencePurpose,
         modelOverride: String?,
         effortOverride: String?
     ) -> InferenceRuntime {
-        switch selectedProvider {
-        case .anthropic:
-            let configuredAssistantModel = nonemptyDefault(
-                key: anthropicModelDefaultsKey,
-                fallback: defaultAnthropicModel
-            )
-            let model = modelOverride ?? {
-                switch purpose {
-                case .assistant: return configuredAssistantModel
-                case .grammar: return "claude-haiku-4-5-20251001"
-                case .proofread: return "claude-sonnet-5"
-                }
-            }()
-            return InferenceRuntime(
-                providerID: .anthropic,
-                providerName: "Anthropic",
-                messagesURL: URL(string: "https://api.anthropic.com/v1/messages")!,
-                apiKeyService: "anthropic",
-                apiVersion: "2023-06-01",
-                model: model,
-                effort: effortOverride,
-                supportsPromptCaching: true,
-                supportsOutputFormat: true,
-                supportsServerWebSearch: true
-            )
-
-        case .tinker:
-            let configuredBaseModel = nonemptyDefault(
-                key: tinkerModelDefaultsKey,
-                fallback: defaultTinkerModel
-            )
-            let model = PersonalizationModelRegistry.activeSamplerPath ?? configuredBaseModel
-            return InferenceRuntime(
-                providerID: .tinker,
-                providerName: "Tinker",
-                messagesURL: URL(
-                    string: "https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api/v1/messages"
-                )!,
-                apiKeyService: "tinker",
-                apiVersion: "2023-06-01",
-                model: model,
-                effort: effortOverride,
-                supportsPromptCaching: false,
-                supportsOutputFormat: false,
-                supportsServerWebSearch: false
-            )
-        }
+        let configuredBaseModel = nonemptyDefault(
+            key: tinkerModelDefaultsKey,
+            fallback: defaultTinkerModel
+        )
+        let defaultModel = purpose == .assistant
+            ? (PersonalizationModelRegistry.activeSamplerPath ?? configuredBaseModel)
+            : configuredBaseModel
+        let model = modelOverride ?? defaultModel
+        return InferenceRuntime(
+            providerID: .tinker,
+            providerName: "Tinker",
+            messagesURL: URL(
+                string: "https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api/v1/messages"
+            )!,
+            apiKeyService: "tinker",
+            apiVersion: "2023-06-01",
+            model: model,
+            effort: effortOverride,
+            supportsPromptCaching: false,
+            supportsOutputFormat: false,
+            supportsServerWebSearch: false
+        )
     }
 
     private static func nonemptyDefault(key: String, fallback: String) -> String {
@@ -133,6 +90,11 @@ enum PersonalizationModelRegistry {
               !path.isEmpty
         else { return nil }
         return path
+    }
+
+    static func deactivate() throws {
+        guard FileManager.default.fileExists(atPath: registryURL.path) else { return }
+        try FileManager.default.removeItem(at: registryURL)
     }
 }
 

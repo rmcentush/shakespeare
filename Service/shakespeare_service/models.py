@@ -23,9 +23,11 @@ class Provenance(StrictModel):
 
 
 class TrainingEvent(StrictModel):
-    schema_version: Literal[1] = Field(alias="schemaVersion")
+    schema_version: Literal[1, 2] = Field(alias="schemaVersion")
     id: str = Field(min_length=1, max_length=200)
-    event_type: Literal["edit_decision", "document_snapshot"] = Field(alias="eventType")
+    event_type: Literal["edit_decision", "edit_outcome", "document_snapshot"] = Field(
+        alias="eventType"
+    )
     recorded_at: float = Field(alias="recordedAt", gt=0)
     writer_id: str = Field(alias="writerID", min_length=1, max_length=200)
     document_id: str = Field(alias="documentID", min_length=1, max_length=200)
@@ -45,6 +47,38 @@ class TrainingEvent(StrictModel):
     content_hash: str = Field(alias="contentHash", pattern=r"^[0-9a-f]{64}$")
     consent: Consent
     provenance: Provenance
+    parent_event_id: Optional[str] = Field(
+        default=None, alias="parentEventID", min_length=1, max_length=200
+    )
+    outcome: Optional[str] = Field(default=None, max_length=100)
+    confidence: Optional[float] = Field(default=None, ge=0, le=1)
+    training_eligible: Optional[bool] = Field(default=None, alias="trainingEligible")
+
+    @model_validator(mode="after")
+    def validate_event_version(self) -> TrainingEvent:
+        if self.event_type == "edit_outcome":
+            if self.schema_version != 2:
+                raise ValueError("edit_outcome requires schemaVersion 2")
+            if (
+                self.parent_event_id is None
+                or self.outcome is None
+                or self.confidence is None
+                or self.training_eligible is None
+            ):
+                raise ValueError(
+                    "edit_outcome requires parentEventID, outcome, confidence, and trainingEligible"
+                )
+        elif self.schema_version == 1 and any(
+            value is not None
+            for value in (
+                self.parent_event_id,
+                self.outcome,
+                self.confidence,
+                self.training_eligible,
+            )
+        ):
+            raise ValueError("schemaVersion 1 cannot contain outcome fields")
+        return self
 
 
 class TrainingEventBatch(StrictModel):

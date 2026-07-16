@@ -60,4 +60,4 @@ Deploy one Uvicorn process per container and let the platform handle replicas, h
 | `POST` | `/v1/model-versions/{id}/activate` | Activate a passed candidate |
 | `DELETE` | `/v1/personalization` | Purge service data and queue remote cleanup |
 
-The event body contract is [training-event.v1.schema.json](../Contracts/training-event.v1.schema.json). Local-only consent is deliberately rejected by the service contract.
+The current event body contract is [training-event.v2.schema.json](../Contracts/training-event.v2.schema.json); v1 events remain accepted for migration. V2 adds immutable save-time edit outcomes linked to raw decisions. Local-only consent is deliberately rejected by the service contract.

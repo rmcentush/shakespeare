@@ -16,7 +16,7 @@ let package = Package(
                 .copy("Resources/editor.html"),
                 .copy("Resources/editor.js"),
                 .copy("Resources/harper-runtime.js"),
-                .copy("Resources/harper_wasm_slim_bg.wasm"),
+                .copy("Resources/harper-wasm-data.js"),
                 .copy("Resources/Harper_LICENSE.txt")
             ]
         )

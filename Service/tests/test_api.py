@@ -98,6 +98,37 @@ def test_event_ingestion_is_idempotent_and_requires_service_consent() -> None:
         assert response.json()["code"] == "invalid_request"
 
 
+def test_v2_outcome_requires_linkage_and_confidence() -> None:
+    with TestClient(create_app(settings(), InMemoryRepository(), StaticVerifier())) as client:
+        resolved = event("event-2-outcome")
+        resolved.update(
+            {
+                "schemaVersion": 2,
+                "eventType": "edit_outcome",
+                "parentEventID": "event-2",
+                "outcome": "accepted_modified",
+                "confidence": 0.9,
+                "trainingEligible": True,
+            }
+        )
+        response = client.post(
+            "/v1/training-events/batches",
+            headers=headers(),
+            json={"events": [resolved]},
+        )
+        assert response.status_code == 202
+
+        malformed = dict(resolved)
+        malformed.pop("parentEventID")
+        malformed["id"] = "malformed-outcome"
+        response = client.post(
+            "/v1/training-events/batches",
+            headers=headers(),
+            json={"events": [malformed]},
+        )
+        assert response.status_code == 422
+
+
 def test_training_run_idempotency_and_tenant_isolation() -> None:
     repository = InMemoryRepository()
     with TestClient(create_app(settings(), repository, StaticVerifier())) as client:

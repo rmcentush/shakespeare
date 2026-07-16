@@ -21,9 +21,9 @@ final class StyleGuideUpdater {
     }
 
     private let apiService = LanguageModelService()
-    private let store: StyleFeedbackStore
+    private let store: TrainingEventStore
 
-    init(store: StyleFeedbackStore = .shared) {
+    init(store: TrainingEventStore = .shared) {
         self.store = store
     }
 
@@ -126,7 +126,7 @@ final class StyleGuideUpdater {
         return lines.joined(separator: "\n")
     }
 
-    private func decisionsJSON(_ decisions: [StyleFeedbackStore.EditDecision]) throws -> String {
+    private func decisionsJSON(_ decisions: [TrainingEventStore.DecisionSummary]) throws -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(decisions)

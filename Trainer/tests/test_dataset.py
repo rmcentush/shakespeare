@@ -13,6 +13,7 @@ def event(**overrides):
         "schemaVersion": 1,
         "id": "event-1",
         "eventType": "edit_decision",
+        "recordedAt": 1,
         "documentID": "document-a",
         "consent": {"collectionEnabled": True, "scope": "local_personalization"},
         "decision": "accept",
@@ -23,6 +24,22 @@ def event(**overrides):
         "finalText": "This is slow.",
         "surroundingText": "This is quite long and slow.",
     }
+    value.update(overrides)
+    return value
+
+
+def outcome(action_id="event-1", **overrides):
+    value = event(
+        schemaVersion=2,
+        id=f"{action_id}_outcome",
+        eventType="edit_outcome",
+        parentEventID=action_id,
+        outcome="accepted_unchanged",
+        confidence=1.0,
+        trainingEligible=True,
+        finalText="This is slow.",
+        recordedAt=2,
+    )
     value.update(overrides)
     return value
 
@@ -46,19 +63,95 @@ class DatasetCompilerTests(unittest.TestCase):
         row = json.loads((output / "sft_train.jsonl").read_text(encoding="utf-8"))
         self.assertEqual(row["messages"][-1]["content"], "This is slow.")
 
-    def test_rejected_edits_become_preferences(self):
+    def test_ambiguous_rejections_are_not_preferences(self):
         result, output = self.compile(
             [event(decision="reject", finalText=None, proposedText="This is terrible.")]
         )
+        self.assertEqual(result.dpo_train_examples, 0)
+        self.assertEqual(result.ambiguous_rejections_skipped, 1)
+        self.assertEqual((output / "dpo_train.jsonl").read_text(), "")
+
+    def test_rejected_then_rewritten_uses_writer_rewrite_as_preferred(self):
+        action = event(
+            schemaVersion=2,
+            decision="reject",
+            finalText=None,
+            proposedText="This is terrible.",
+        )
+        resolved = outcome(
+            outcome="rejected_rewritten",
+            finalText="This moves too slowly.",
+        )
+        result, output = self.compile([action, resolved])
         self.assertEqual(result.dpo_train_examples, 1)
         row = json.loads((output / "dpo_train.jsonl").read_text(encoding="utf-8"))
         self.assertEqual(row["label"], "A")
         self.assertEqual(
             row["comparison"]["completion_A"][0]["content"],
-            "This is quite long and slow.",
+            "This moves too slowly.",
         )
         self.assertEqual(
             row["comparison"]["completion_B"][0]["content"], "This is terrible."
+        )
+
+    def test_v2_accept_waits_for_save_time_outcome(self):
+        action = event(schemaVersion=2, finalText=None)
+        unresolved, _ = self.compile([action])
+        self.assertEqual(unresolved.sft_train_examples, 0)
+
+        resolved, output = self.compile([action, outcome()])
+        self.assertEqual(resolved.sft_train_examples, 1)
+        row = json.loads((output / "sft_train.jsonl").read_text(encoding="utf-8"))
+        self.assertEqual(row["metadata"]["signal_outcome"], "accepted_unchanged")
+
+    def test_modified_accept_trains_on_the_writer_final_text(self):
+        action = event(schemaVersion=2, finalText=None)
+        resolved = outcome(
+            outcome="accepted_modified",
+            confidence=0.9,
+            finalText="This still moves slowly.",
+        )
+        result, output = self.compile([action, resolved])
+        self.assertEqual(result.modified_accept_examples, 1)
+        row = json.loads((output / "sft_train.jsonl").read_text(encoding="utf-8"))
+        self.assertEqual(row["messages"][-1]["content"], "This still moves slowly.")
+
+    def test_low_confidence_outcomes_are_skipped(self):
+        action = event(schemaVersion=2, finalText=None)
+        result, _ = self.compile([action, outcome(confidence=0.5)])
+        self.assertEqual(result.sft_train_examples, 0)
+
+    def test_only_latest_snapshot_is_used_and_continuations_are_bounded(self):
+        paragraph = " ".join(["word"] * 25)
+        old_text = "\n\n".join([f"old {paragraph}"] * 20)
+        new_text = "\n\n".join([f"new {index} {paragraph}" for index in range(30)])
+        old = event(
+            id="snapshot-old",
+            eventType="document_snapshot",
+            decision="final",
+            originalText="",
+            proposedText="",
+            finalText=old_text,
+            recordedAt=1,
+        )
+        new = event(
+            id="snapshot-new",
+            eventType="document_snapshot",
+            decision="final",
+            originalText="",
+            proposedText="",
+            finalText=new_text,
+            recordedAt=2,
+        )
+        result, output = self.compile([old, new])
+        self.assertEqual(result.continuation_examples, 12)
+        self.assertEqual(result.superseded_snapshots_skipped, 1)
+        rows = [
+            json.loads(line)
+            for line in (output / "sft_train.jsonl").read_text().splitlines()
+        ]
+        self.assertTrue(
+            all(row["metadata"]["source_event_id"] == "snapshot-new" for row in rows)
         )
 
     def test_documents_never_cross_splits(self):

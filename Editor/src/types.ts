@@ -185,6 +185,23 @@ export interface PendingEdit {
   instruction: string;
 }
 
+export type PersonalizationOutcomeKind =
+  | 'accepted_unchanged'
+  | 'accepted_modified'
+  | 'reverted'
+  | 'rejected_unchanged'
+  | 'rejected_rewritten'
+  | 'later_accepted'
+  | 'unresolvable';
+
+export interface PersonalizationOutcomeSnapshot {
+  actionId: string;
+  outcome: PersonalizationOutcomeKind;
+  finalText: string;
+  confidence: number;
+  trainingEligible: boolean;
+}
+
 // --- Limits ---
 export const MAX_SEARCH_RESULTS = 500;
 export const MAX_PENDING_EDITS = 120;

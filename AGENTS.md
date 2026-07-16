@@ -48,7 +48,7 @@ The bridge is the core integration point. All communication flows through a sing
 
 **JS → Swift:** `sendToSwift(type, payload)` in `bridge.ts` serializes to JSON string → `window.webkit.messageHandlers.editorBridge.postMessage()` → `EditorBridge.swift` deserializes → `BridgePayload.parse()` → `EditorViewModel.handleBridgeMessage()` → posts to NotificationCenter.
 
-**Swift → JS:** `EditorViewModel` calls `evaluateJavaScript("window.editorAPI.methodName(args)")`. Available methods registered in `bridge.ts`: `loadContent`, `getContent`, `applyFormat`, `focus`, `setEditable`, `getSelectedText`, `setThemeCSS`.
+**Swift → JS:** `EditorViewModel` calls `evaluateJavaScript("window.editorAPI.methodName(args)")`. Available methods registered in `bridge.ts` include document loading/snapshots, formatting, pending-edit review, save-time personalization acknowledgements, focus, and theme control.
 
 Content changes sent across the bridge are debounced for 1 second in the editor.
 
@@ -64,7 +64,7 @@ Content changes sent across the bridge are debounced for 1 second in the editor.
 | `Sources/WordProcessor/Views/EditorWebView.swift` | NSViewRepresentable wrapping WKWebView, loads editor.html |
 | `Sources/WordProcessor/Views/ContentView.swift` | Main layout: editor + optional sidebars |
 | `Sources/WordProcessor/Services/LanguageModelService.swift` | Provider-configured Messages API client with SSE streaming |
-| `Sources/WordProcessor/Services/InferenceSettings.swift` | Runtime provider/model selection and promoted-checkpoint registry |
+| `Sources/WordProcessor/Services/InferenceSettings.swift` | Inkling runtime configuration and promoted-checkpoint registry |
 | `Sources/WordProcessor/Services/TrainingEventStore.swift` | Opt-in, versioned, local personalization event ledger |
 | `Sources/WordProcessor/Services/APIKeyStore.swift` | Keychain-backed API keys with an owner-only development fallback |
 | `Sources/WordProcessor/Services/FontManager.swift` | Font config, @font-face CSS generation, UserDefaults persistence |
@@ -79,9 +79,9 @@ Views communicate via NotificationCenter, not direct bindings: `editorContentCha
 
 ### Model Provider Boundary
 
-`InferenceSettings` resolves an immutable runtime configuration for each request. `LanguageModelService` sanitizes provider-specific features at the boundary. Keep provider selection separate from document editing and keep training code in `TrainingEventStore` and `Trainer/`.
+`InferenceSettings` resolves an immutable Inkling runtime configuration for each request. `LanguageModelService` contains the remote Messages-compatible protocol boundary. Keep inference separate from document editing and keep training code in `TrainingEventStore` and `Trainer/`.
 
-Personalization collection must remain off by default. Never upload the raw ledger implicitly, weaken its owner-only permissions, mix examples from one document across train/evaluation splits, or promote a checkpoint merely because a run completed.
+Personalization collection must remain off by default. Raw edit decisions and save-time outcomes are separate immutable events. Never upload the raw ledger implicitly, weaken its owner-only permissions, train on ambiguous rejections, let snapshots dominate curated edit signals, mix one document across train/evaluation splits, or promote a checkpoint merely because a run completed.
 
 ### Hosted Service Boundary
 

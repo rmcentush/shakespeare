@@ -13,6 +13,7 @@ import {
   PendingEdit,
   PendingEditKind,
   PendingEditMetadata,
+  PersonalizationOutcomeSnapshot,
   ProposedEditTarget,
   STALE_EDIT_TARGET,
   SearchMatch,
@@ -61,6 +62,146 @@ type PendingEditAction =
   | { type: 'rejectAll' };
 
 const pendingEditPluginKey = new PluginKey<PendingEditsPluginState>('pendingEdits');
+
+interface TrackedPersonalizationDecision {
+  actionId: string;
+  decision: 'accept' | 'reject';
+  originalText: string;
+  proposedText: string;
+  from: number;
+  to: number;
+  revision: number;
+}
+
+const trackedPersonalizationDecisions = new Map<string, TrackedPersonalizationDecision>();
+const MAX_TRACKED_PERSONALIZATION_DECISIONS = 200;
+
+function rememberPersonalizationDecision(decision: TrackedPersonalizationDecision) {
+  trackedPersonalizationDecisions.set(decision.actionId, decision);
+  while (trackedPersonalizationDecisions.size > MAX_TRACKED_PERSONALIZATION_DECISIONS) {
+    const oldest = trackedPersonalizationDecisions.keys().next().value;
+    if (typeof oldest !== 'string') break;
+    trackedPersonalizationDecisions.delete(oldest);
+  }
+}
+
+function closestReplacementRange(ed: Editor, edit: PendingEdit): SearchMatch {
+  if (!edit.replacementText.trim()) {
+    const position = Math.min(edit.from, ed.state.doc.content.size);
+    return { from: position, to: position };
+  }
+
+  const matches = findTextInDoc(ed.state.doc, edit.replacementText);
+  return matches.reduce<SearchMatch | null>((closest, match) => {
+    if (!closest) return match;
+    return Math.abs(match.from - edit.from) < Math.abs(closest.from - edit.from)
+      ? match
+      : closest;
+  }, null) ?? {
+    from: Math.min(edit.from, ed.state.doc.content.size),
+    to: Math.min(edit.from, ed.state.doc.content.size),
+  };
+}
+
+function trackPersonalizationDecision(
+  ed: Editor,
+  edit: PendingEdit,
+  payload: ReturnType<typeof editDecisionPayload>
+) {
+  const range = payload.decision === 'accept'
+    ? closestReplacementRange(ed, edit)
+    : { from: edit.from, to: edit.to };
+  rememberPersonalizationDecision({
+    actionId: payload.eventId,
+    decision: payload.decision,
+    originalText: edit.originalText,
+    proposedText: edit.replacementText,
+    from: range.from,
+    to: range.to,
+    revision: getDocumentRevision(),
+  });
+}
+
+export function resetPersonalizationOutcomeTracking() {
+  trackedPersonalizationDecisions.clear();
+}
+
+export function acknowledgePersonalizationOutcomes(actionIds: string[]) {
+  actionIds.forEach((id) => trackedPersonalizationDecisions.delete(id));
+}
+
+export function collectPersonalizationOutcomes(ed: Editor): PersonalizationOutcomeSnapshot[] {
+  return Array.from(trackedPersonalizationDecisions.values()).map((tracked) => {
+    // Map the outside edges so a writer replacing the entire tracked passage
+    // still yields the replacement text instead of a collapsed range.
+    const mappedFrom = mapPositionFromRevision(tracked.revision, tracked.from, -1);
+    const mappedTo = mapPositionFromRevision(tracked.revision, tracked.to, 1);
+    if (mappedFrom === null || mappedTo === null || mappedTo < mappedFrom) {
+      return {
+        actionId: tracked.actionId,
+        outcome: 'unresolvable',
+        finalText: '',
+        confidence: 0,
+        trainingEligible: false,
+      };
+    }
+
+    const finalText = ed.state.doc.textBetween(mappedFrom, mappedTo, '\n', '\n');
+    if (tracked.decision === 'accept') {
+      if (finalText === tracked.proposedText) {
+        return {
+          actionId: tracked.actionId,
+          outcome: 'accepted_unchanged',
+          finalText,
+          confidence: 1,
+          trainingEligible: finalText.trim().length > 0,
+        };
+      }
+      if (finalText === tracked.originalText) {
+        return {
+          actionId: tracked.actionId,
+          outcome: 'reverted',
+          finalText,
+          confidence: 0.95,
+          trainingEligible: false,
+        };
+      }
+      return {
+        actionId: tracked.actionId,
+        outcome: 'accepted_modified',
+        finalText,
+        confidence: 0.9,
+        trainingEligible: finalText.trim().length > 0,
+      };
+    }
+
+    if (finalText === tracked.originalText) {
+      return {
+        actionId: tracked.actionId,
+        outcome: 'rejected_unchanged',
+        finalText,
+        confidence: 0.35,
+        trainingEligible: false,
+      };
+    }
+    if (finalText === tracked.proposedText) {
+      return {
+        actionId: tracked.actionId,
+        outcome: 'later_accepted',
+        finalText,
+        confidence: 0.9,
+        trainingEligible: finalText.trim().length > 0,
+      };
+    }
+    return {
+      actionId: tracked.actionId,
+      outcome: 'rejected_rewritten',
+      finalText,
+      confidence: 1,
+      trainingEligible: finalText.trim().length > 0,
+    };
+  });
+}
 
 function scrollToPendingEdit(view: EditorView, edit: PendingEdit) {
   try {
@@ -1158,10 +1299,6 @@ function editDecisionPayload(ed: Editor, edit: PendingEdit, decision: 'accept' |
   };
 }
 
-function emitEditDecision(ed: Editor, edit: PendingEdit, decision: 'accept' | 'reject') {
-  sendToSwift('editDecision', editDecisionPayload(ed, edit, decision));
-}
-
 export function acceptPendingEdit(ed: Editor, id: string): boolean {
   const state = getPendingEditsState(ed.state);
   const edit = getPendingEditById(state, id);
@@ -1189,6 +1326,7 @@ export function acceptPendingEdit(ed: Editor, id: string): boolean {
 
   if (result) {
     sendToSwift('editDecision', decisionPayload);
+    trackPersonalizationDecision(ed, edit, decisionPayload);
     scheduleSmartQuotesNormalization(ed);
   }
 
@@ -1199,8 +1337,12 @@ export function rejectPendingEdit(ed: Editor, id: string): boolean {
   const state = getPendingEditsState(ed.state);
   const edit = getPendingEditById(state, id);
   if (!edit) return false;
+  const decisionPayload = editDecisionPayload(ed, edit, 'reject');
   const result = dispatchPendingEditAction(ed, { type: 'reject', id });
-  if (result) emitEditDecision(ed, edit, 'reject');
+  if (result) {
+    sendToSwift('editDecision', decisionPayload);
+    trackPersonalizationDecision(ed, edit, decisionPayload);
+  }
   return result;
 }
 
@@ -1254,7 +1396,10 @@ export function acceptAllPendingEdits(ed: Editor): boolean {
   const result = chain.run();
 
   if (result) {
-    decisionPayloads.forEach((payload) => sendToSwift('editDecision', payload));
+    decisionPayloads.forEach((payload, index) => {
+      sendToSwift('editDecision', payload);
+      trackPersonalizationDecision(ed, sorted[index], payload);
+    });
     scheduleSmartQuotesNormalization(ed);
   }
 
@@ -1264,10 +1409,19 @@ export function acceptAllPendingEdits(ed: Editor): boolean {
 export function rejectAllPendingEdits(ed: Editor, emitDecisions = true): boolean {
   const state = getPendingEditsState(ed.state);
   if (state.edits.length === 0) return false;
+  const decisionPayloads = emitDecisions
+    ? state.edits.map((edit) => ({ edit, payload: editDecisionPayload(ed, edit, 'reject') }))
+    : [];
   if (emitDecisions) {
-    state.edits.forEach((edit) => emitEditDecision(ed, edit, 'reject'));
+    decisionPayloads.forEach(({ payload }) => sendToSwift('editDecision', payload));
   }
-  return dispatchPendingEditAction(ed, { type: 'rejectAll' });
+  const result = dispatchPendingEditAction(ed, { type: 'rejectAll' });
+  if (result) {
+    decisionPayloads.forEach(({ edit, payload }) => {
+      trackPersonalizationDecision(ed, edit, payload);
+    });
+  }
+  return result;
 }
 
 export function pendingEditsSummaryJSON(state: PendingEditsPluginState): string {

@@ -14,7 +14,7 @@ Overall production-readiness score: **5/10**. Local editor: **8/10**. Hosted ser
 - API keys use the macOS Keychain with an owner-only development fallback.
 - Document packages enforce size limits, atomic writes, path/symlink checks, and custom-scheme image loading.
 - LLM edits remain reviewable proposals instead of silently mutating documents.
-- Train/evaluation splits are deterministic and document-separated; corpora with at least two documents now guarantee both sides.
+- Train/evaluation splits are deterministic and document-separated; ambiguous rejections are excluded, saved outcomes are linked immutably, and snapshots are bounded.
 - Service consent is distinct from local consent, and tenant identity comes only from a verified OIDC token.
 - PostgreSQL policies use both `ENABLE` and `FORCE ROW LEVEL SECURITY`; CI exercises them using a non-owner runtime role.
 - Event and training-run retries are idempotent, and model activation requires a passing evaluation.

@@ -2,7 +2,7 @@
 
 A focused writing app for macOS with an integrated writing assistant.
 
-Shakespeare pairs a TipTap rich-text editor with a native macOS workspace for drafting, rewriting, proofreading, versioning, and opt-in personal style training. Inference is runtime-selectable between Anthropic and Tinker's Inkling endpoint; the editor and document model remain independent of either provider.
+Shakespeare pairs a TipTap rich-text editor with a native macOS workspace for drafting, rewriting, proofreading, versioning, and opt-in personal style training. Inkling inference and Tinker post-training stay behind dedicated integration layers; the editor and document model do not depend on a particular checkpoint.
 
 The repository now also contains a provider-neutral hosted-personalization control plane. The intended product is hybrid: keep the native editor local-first, and use a web app for accounts, consent, training/evaluation status, rollback, billing, and support. See [Service architecture](docs/SERVICE_ARCHITECTURE.md) and the evidence-backed [production-readiness review](docs/PRODUCTION_READINESS.md).
 
@@ -32,10 +32,10 @@ open /Applications/Shakespeare.app
 
 The editor works without a model connection. To enable the writing assistant (`Cmd+\\`):
 
-1. Get an Anthropic or Tinker API key.
+1. Get a Tinker API key.
 2. In Shakespeare, open **Settings** (Cmd+,)
 3. Go to the **API Keys** tab
-4. Choose the inference provider, paste its key, and click **Save**
+4. Paste the key and click **Save**
 
 Your key is stored in the macOS Keychain. Locally built bundles use an owner-only
 file under `~/Library/Application Support/Shakespeare/` only when Keychain access
@@ -45,7 +45,7 @@ Tinker uses `thinkingmachines/Inkling` by default. When a personal checkpoint is
 
 ### Personalization
 
-Personalization collection is off by default. When enabled in **Settings → Personalization**, Shakespeare records an owner-only local event ledger containing review decisions and deduplicated saved-document snapshots. Nothing is submitted for training automatically.
+Personalization collection is off by default. When enabled in **Settings → My Style**, Shakespeare records raw review decisions, classifies what survived on the next successful save, and stores deduplicated document snapshots in one owner-only local ledger. Nothing is submitted for training automatically.
 
 The included Python tooling compiles document-separated SFT and DPO datasets, runs Inkling LoRA training through Tinker, and can promote the resulting sampler checkpoint for inference. See [Personal style training](docs/PERSONALIZATION.md) for the consent model, commands, evaluation gates, and rollback path.
 
@@ -54,7 +54,7 @@ The included Python tooling compiles document-separated SFT and DPO datasets, ru
 Shakespeare includes an editable editorial reference for drafting and rewriting. Ambient Review uses the same reference for voice suggestions, while the current document supplies topic, continuity, and edit-targeting context. Learned preferences are stored separately so the default reference remains stable and reviewable.
 
 1. Open **Settings** (Cmd+,)
-2. Go to **Style Context**
+2. Go to **My Style**
 
 The bundled reference lives at `Sources/WordProcessor/Resources/writing_style_reference.md`.
 

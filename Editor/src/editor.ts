@@ -95,6 +95,8 @@ import {
   PendingEditHighlight,
   acceptAllPendingEdits,
   acceptPendingEdit,
+  acknowledgePersonalizationOutcomes,
+  collectPersonalizationOutcomes,
   createPendingEdit,
   focusPendingEdit,
   focusRelativePendingEdit,
@@ -106,6 +108,7 @@ import {
   rangeFromSelectionTarget,
   rejectAllPendingEdits,
   rejectPendingEdit,
+  resetPersonalizationOutcomeTracking,
   replacementPendingEdits,
 } from './pendingEdits';
 import { buildEditContextSnapshot } from './editContext';
@@ -116,6 +119,7 @@ function resetEditorSyncState() {
   resetFootnotePanelState();
   resetCommentsSignature();
   pendingImageImports.clear();
+  resetPersonalizationOutcomeTracking();
 }
 
 interface PendingImageImport {
@@ -342,7 +346,11 @@ registerSwiftCallbacks({
       text: snapshot.plainText,
       words: snapshot.words,
       characters: snapshot.characters,
+      personalizationOutcomes: collectPersonalizationOutcomes(editor),
     };
+  },
+  acknowledgePersonalizationOutcomes(actionIds: string[]) {
+    acknowledgePersonalizationOutcomes(Array.isArray(actionIds) ? actionIds : []);
   },
   getPlainText(): string {
     return serializeDocumentPlainText(editor);

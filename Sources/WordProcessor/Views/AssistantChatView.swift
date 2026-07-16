@@ -278,13 +278,11 @@ private struct SelectionContextChip: View {
 }
 
 private enum AssistantChatFont {
-    static let familyName = "Anthropic Serif Web Text"
-
     static let input = text(size: 13.5)
     static let message = text(size: 13.5)
 
     static func text(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        .custom(familyName, size: size).weight(weight)
+        .system(size: size, weight: weight, design: .serif)
     }
 }
 

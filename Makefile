@@ -18,7 +18,7 @@ copy-assets: editor
 	cp Editor/dist/editor.js Sources/WordProcessor/Resources/editor.js
 	cp Editor/dist/editor.css Sources/WordProcessor/Resources/editor.css
 	cp Editor/dist/harper-runtime.js Sources/WordProcessor/Resources/harper-runtime.js
-	cp Editor/dist/harper_wasm_slim_bg.wasm Sources/WordProcessor/Resources/harper_wasm_slim_bg.wasm
+	cp Editor/dist/harper-wasm-data.js Sources/WordProcessor/Resources/harper-wasm-data.js
 	cp Editor/dist/Harper_LICENSE.txt Sources/WordProcessor/Resources/Harper_LICENSE.txt
 
 # Build Swift executable
@@ -69,4 +69,4 @@ install:
 # Clean everything
 clean:
 	rm -rf .build Editor/node_modules Editor/dist Service/.pytest_cache Service/.ruff_cache
-	rm -f Sources/WordProcessor/Resources/editor.js Sources/WordProcessor/Resources/editor.css Sources/WordProcessor/Resources/harper-runtime.js Sources/WordProcessor/Resources/harper_wasm_slim_bg.wasm Sources/WordProcessor/Resources/Harper_LICENSE.txt
+	rm -f Sources/WordProcessor/Resources/editor.js Sources/WordProcessor/Resources/editor.css Sources/WordProcessor/Resources/harper-runtime.js Sources/WordProcessor/Resources/harper-wasm-data.js Sources/WordProcessor/Resources/Harper_LICENSE.txt

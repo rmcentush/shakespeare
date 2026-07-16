@@ -619,7 +619,7 @@ final class AssistantChatViewModel {
     }
 
     private static func recentRejectedSuggestionsPrompt(limit: Int = 10) -> String {
-        let rejected = StyleFeedbackStore.shared.recentRejectedDecisions(limit: limit)
+        let rejected = TrainingEventStore.shared.recentRejectedDecisions(limit: limit)
         guard !rejected.isEmpty else { return "" }
 
         let lines = rejected.map { decision in

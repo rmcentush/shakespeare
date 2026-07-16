@@ -8,7 +8,7 @@ from shakespeare_service.models import TrainingEvent
 
 def test_service_model_and_canonical_event_schema_stay_aligned() -> None:
     schema_path = (
-        Path(__file__).resolve().parents[2] / "Contracts" / "training-event.v1.schema.json"
+        Path(__file__).resolve().parents[2] / "Contracts" / "training-event.v2.schema.json"
     )
     canonical = json.loads(schema_path.read_text(encoding="utf-8"))
     generated = TrainingEvent.model_json_schema(by_alias=True)

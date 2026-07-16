@@ -65,7 +65,6 @@ final class EditorViewModel {
         else { return "" }
         return content
     }()
-    @ObservationIgnored private let styleFeedbackStore = StyleFeedbackStore.shared
     @ObservationIgnored private let trainingEventStore = TrainingEventStore.shared
 
     struct SelectionState: Equatable {
@@ -335,7 +334,6 @@ final class EditorViewModel {
             pendingEdits = update.edits.map(PendingEdit.init)
 
         case .editDecision(let decision):
-            styleFeedbackStore.appendBridgeDecision(decision)
             trainingEventStore.appendEditDecision(
                 decision,
                 documentID: activeDocumentID,
@@ -785,7 +783,6 @@ final class EditorViewModel {
     func setCommentStatus(_ commentId: String, status: String) {
         if status == "dismissed",
            let comment = comments.first(where: { $0.id == commentId && $0.source == "agent" }) {
-            styleFeedbackStore.appendCommentDecision(decision: "reject", comment: comment)
             trainingEventStore.appendCommentDecision(
                 decision: "reject",
                 comment: comment,
@@ -798,7 +795,6 @@ final class EditorViewModel {
 
     func removeComment(_ commentId: String) {
         if let comment = comments.first(where: { $0.id == commentId && $0.source == "agent" && $0.status == "open" }) {
-            styleFeedbackStore.appendCommentDecision(decision: "reject", comment: comment)
             trainingEventStore.appendCommentDecision(
                 decision: "reject",
                 comment: comment,
@@ -1467,7 +1463,7 @@ final class EditorViewModel {
     }
 
     private func ambientRecentRejectedSuggestionsXML(limit: Int = 10) -> String {
-        let rejected = styleFeedbackStore.recentRejectedDecisions(limit: limit)
+        let rejected = trainingEventStore.recentRejectedDecisions(limit: limit)
         guard !rejected.isEmpty else {
             return "<recent_rejected_suggestions />"
         }
@@ -2060,6 +2056,14 @@ final class EditorViewModel {
             if createVersionSnapshot {
                 VersionStore.shared.saveVersion(filePath: url.path, snapshot: persistedSnapshot)
             }
+            let acknowledgedOutcomes = trainingEventStore.appendOutcomes(
+                request.snapshot.personalizationOutcomes,
+                documentID: persistedSnapshot.documentID,
+                runtime: ambientReviewService.currentRuntime
+            )
+            if !acknowledgedOutcomes.isEmpty {
+                callEditorAPI("acknowledgePersonalizationOutcomes", arguments: [acknowledgedOutcomes])
+            }
             trainingEventStore.appendDocumentSnapshot(persistedSnapshot)
 
             if !document.isDirty {
@@ -2103,7 +2107,8 @@ final class EditorViewModel {
                         documentID: currentSnapshot.documentID,
                         schemaVersion: currentSnapshot.schemaVersion,
                         createdAt: currentSnapshot.createdAt,
-                        modifiedAt: Date()
+                        modifiedAt: Date(),
+                        personalizationOutcomes: snapshot.personalizationOutcomes
                     )
                 )
             }
@@ -2115,6 +2120,23 @@ final class EditorViewModel {
         let plainText = dict["text"] as? String ?? ""
         let words = dict["words"] as? Int
         let characters = dict["characters"] as? Int
+        let personalizationOutcomes = (dict["personalizationOutcomes"] as? [[String: Any]] ?? [])
+            .compactMap { item -> PersonalizationOutcomeSnapshot? in
+                guard let actionID = item["actionId"] as? String,
+                      !actionID.isEmpty,
+                      let outcome = item["outcome"] as? String,
+                      let finalText = item["finalText"] as? String,
+                      let confidence = item["confidence"] as? Double,
+                      let trainingEligible = item["trainingEligible"] as? Bool
+                else { return nil }
+                return PersonalizationOutcomeSnapshot(
+                    actionID: actionID,
+                    outcome: outcome,
+                    finalText: finalText,
+                    confidence: confidence,
+                    trainingEligible: trainingEligible
+                )
+            }
 
         let canonicalJSON: String?
         if let jsonObject = dict["json"],
@@ -2130,7 +2152,8 @@ final class EditorViewModel {
             htmlContent: html,
             plainText: plainText,
             wordCount: words,
-            characterCount: characters
+            characterCount: characters,
+            personalizationOutcomes: personalizationOutcomes
         )
     }
 

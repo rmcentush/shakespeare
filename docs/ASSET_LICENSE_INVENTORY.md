@@ -15,7 +15,6 @@ This inventory is a release gate, not a statement that an asset is redistributab
 | Signifier test fonts | No font license or purchase record in repository | Blocked—evidence missing |
 | Quadraat | No font license or purchase record in repository | Blocked—evidence missing |
 | Edgar | No font license or purchase record in repository | Blocked—evidence missing |
-| Anthropic Serif Web | No font license file in repository | Blocked—evidence missing |
 | `AppIcon.icns` | No source/ownership record in repository | Blocked pending provenance confirmation |
 
 For each retained family, add the upstream or vendor license text, copyright notice, source/version, files covered, modification status, and proof that application redistribution is allowed. Keep purchase records outside Git and link them from the private release checklist. Update `THIRD_PARTY_NOTICES` in the app bundle whenever this inventory changes.

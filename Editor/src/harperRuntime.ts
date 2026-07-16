@@ -12,6 +12,7 @@ declare global {
       createWorkerLinter(wasmURL: string, dialect: number): Linter;
       createLocalLinter(wasmURL: string, dialect: number): Linter;
     };
+    harperWasmGzipBase64?: string;
   }
 }
 

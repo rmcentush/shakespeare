@@ -107,6 +107,7 @@ async def _train(args: argparse.Namespace) -> None:
     if not os.environ.get("TINKER_API_KEY"):
         raise RuntimeError("TINKER_API_KEY is required for training")
     train_file = args.dataset_dir / "sft_train.jsonl"
+    eval_file = args.dataset_dir / "sft_eval.jsonl"
     manifest = args.dataset_dir / "manifest.json"
     if not train_file.exists() or not manifest.exists():
         raise RuntimeError(
@@ -114,6 +115,11 @@ async def _train(args: argparse.Namespace) -> None:
         )
     if train_file.stat().st_size == 0:
         raise RuntimeError("sft_train.jsonl is empty")
+    if not eval_file.exists() or eval_file.stat().st_size == 0:
+        raise RuntimeError(
+            "sft_eval.jsonl is empty; collect enough material across at least two "
+            "documents before training"
+        )
 
     try:
         from tinker_cookbook import model_info
@@ -128,27 +134,50 @@ async def _train(args: argparse.Namespace) -> None:
         ) from error
 
     renderer = model_info.get_recommended_renderer_name(args.base_model)
-    builder = FromConversationFileBuilder(
+    common_config = ChatDatasetBuilderCommonConfig(
+        model_name_for_tokenizer=args.base_model,
+        renderer_name=renderer,
+        max_length=args.max_length,
+        batch_size=args.batch_size,
+    )
+    train_builder = FromConversationFileBuilder(
         file_path=str(train_file),
+        common_config=common_config,
+    )
+    eval_example_count = sum(
+        bool(line.strip())
+        for line in eval_file.read_text(encoding="utf-8").splitlines()
+    )
+    eval_builder = FromConversationFileBuilder(
+        file_path=str(eval_file),
         common_config=ChatDatasetBuilderCommonConfig(
             model_name_for_tokenizer=args.base_model,
             renderer_name=renderer,
             max_length=args.max_length,
-            batch_size=args.batch_size,
+            batch_size=eval_example_count,
         ),
     )
+
+    class DocumentSplitDatasetBuilder:
+        def __call__(self):
+            train_dataset, _ = train_builder()
+            eval_dataset, _ = eval_builder()
+            return train_dataset, eval_dataset
+
     config = train.Config(
         log_path=str(args.log_path),
         model_name=args.base_model,
         recipe_name="shakespeare_personal_sft",
         renderer_name=renderer,
-        dataset_builder=builder,
+        dataset_builder=DocumentSplitDatasetBuilder(),
+        load_checkpoint_path=args.load_checkpoint,
         learning_rate=args.learning_rate,
         num_epochs=args.epochs,
         lora_rank=args.lora_rank,
-        save_every=0,
-        eval_every=0,
+        save_every=args.save_every,
+        eval_every=args.eval_every,
         infrequent_eval_every=0,
+        ttl_seconds=args.checkpoint_ttl_seconds,
     )
     await train.main(config)
     checkpoint = _final_checkpoint(args.log_path)
@@ -167,7 +196,11 @@ def dpo_command(args: argparse.Namespace) -> int:
     eval_file = args.dataset_dir / "dpo_eval.jsonl"
     if not train_file.exists() or train_file.stat().st_size == 0:
         raise RuntimeError(
-            "dpo_train.jsonl is missing or empty; collect rejected edit decisions first"
+            "dpo_train.jsonl is missing or empty; collect rejected-then-rewritten outcomes first"
+        )
+    if not eval_file.exists() or eval_file.stat().st_size == 0:
+        raise RuntimeError(
+            "dpo_eval.jsonl is empty; preference training requires held-out rewrite pairs"
         )
 
     try:
@@ -188,9 +221,7 @@ def dpo_command(args: argparse.Namespace) -> int:
     renderer = model_info.get_recommended_renderer_name(args.base_model)
     comparisons = ComparisonBuilderFromJsonl(
         train_path=str(train_file),
-        test_path=str(eval_file)
-        if eval_file.exists() and eval_file.stat().st_size
-        else None,
+        test_path=str(eval_file),
     )
     builder = DPODatasetBuilderFromComparisons(
         comparison_builder=comparisons,
@@ -213,9 +244,10 @@ def dpo_command(args: argparse.Namespace) -> int:
         dpo_beta=args.beta,
         lora_rank=args.lora_rank,
         num_replicas=1,
-        save_every=0,
-        eval_every=0,
+        save_every=args.save_every,
+        eval_every=args.eval_every,
         infrequent_eval_every=0,
+        ttl_seconds=args.checkpoint_ttl_seconds,
     )
     train_dpo.main(config)
     checkpoint = _final_checkpoint(args.log_path)
@@ -266,10 +298,16 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--max-length", type=int, default=4096)
     train_parser.add_argument("--epochs", type=int, default=1)
     train_parser.add_argument("--lora-rank", type=int, default=32)
+    train_parser.add_argument(
+        "--load-checkpoint", help="Optional state_path for a resumed SFT run"
+    )
+    train_parser.add_argument("--save-every", type=int, default=20)
+    train_parser.add_argument("--eval-every", type=int, default=10)
+    train_parser.add_argument("--checkpoint-ttl-seconds", type=int, default=604800)
     train_parser.set_defaults(handler=train_command)
 
     dpo_parser = subparsers.add_parser(
-        "train-dpo", help="Run preference training from rejected edits"
+        "train-dpo", help="Run preference training from rejected-then-rewritten edits"
     )
     dpo_parser.add_argument(
         "--dataset-dir", type=Path, default=Path("Trainer/data/compiled")
@@ -278,13 +316,18 @@ def build_parser() -> argparse.ArgumentParser:
     dpo_parser.add_argument("--learning-rate", type=float, required=True)
     dpo_parser.add_argument("--base-model", default="thinkingmachines/Inkling")
     dpo_parser.add_argument(
-        "--load-checkpoint", help="Optional SFT state_path to continue from"
+        "--load-checkpoint",
+        required=True,
+        help="SFT state_path to continue from; DPO must start in-distribution",
     )
     dpo_parser.add_argument("--batch-size", type=int, default=2)
     dpo_parser.add_argument("--max-length", type=int, default=4096)
     dpo_parser.add_argument("--epochs", type=int, default=1)
     dpo_parser.add_argument("--lora-rank", type=int, default=32)
     dpo_parser.add_argument("--beta", type=float, default=0.1)
+    dpo_parser.add_argument("--save-every", type=int, default=20)
+    dpo_parser.add_argument("--eval-every", type=int, default=10)
+    dpo_parser.add_argument("--checkpoint-ttl-seconds", type=int, default=604800)
     dpo_parser.set_defaults(handler=dpo_command)
 
     promote_parser = subparsers.add_parser(

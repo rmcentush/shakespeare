@@ -40,6 +40,7 @@ export function registerSwiftCallbacks(callbacks: {
   loadJSONContent: (json: string) => void;
   getContent: () => string;
   getDocumentSnapshot: () => unknown;
+  acknowledgePersonalizationOutcomes: (actionIds: string[]) => void;
   getPlainText: () => string;
   getSelectionClipboardData: () => string;
   applyFormat: (command: string, value?: string) => void;

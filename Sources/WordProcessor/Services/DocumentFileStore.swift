@@ -20,6 +20,7 @@ actor DocumentFileStore {
         var schemaVersion: Int
         var createdAt: Date
         var modifiedAt: Date
+        var personalizationOutcomes: [PersonalizationOutcomeSnapshot]
 
         init(
             canonicalJSON: String? = nil,
@@ -30,7 +31,8 @@ actor DocumentFileStore {
             documentID: String = UUID().uuidString,
             schemaVersion: Int = DocumentFileStore.currentSchemaVersion,
             createdAt: Date = Date(),
-            modifiedAt: Date = Date()
+            modifiedAt: Date = Date(),
+            personalizationOutcomes: [PersonalizationOutcomeSnapshot] = []
         ) {
             let trimmedJSON = canonicalJSON?.trimmingCharacters(in: .whitespacesAndNewlines)
             self.canonicalJSON = trimmedJSON?.isEmpty == false ? trimmedJSON : nil
@@ -52,6 +54,7 @@ actor DocumentFileStore {
             self.schemaVersion = schemaVersion
             self.createdAt = createdAt
             self.modifiedAt = modifiedAt
+            self.personalizationOutcomes = personalizationOutcomes
         }
 
         static func empty(documentID: String = UUID().uuidString, at date: Date = Date()) -> Self {

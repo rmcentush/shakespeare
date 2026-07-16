@@ -268,8 +268,8 @@ private struct WordProcessorCommands: Commands {
         }
 
         CommandGroup(replacing: .appSettings) {
-            Button("Settings...") {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            SettingsLink {
+                Text("Settings…")
             }
             .keyboardShortcut(",")
         }
@@ -385,8 +385,6 @@ struct WordProcessorApp: App {
     @NSApplicationDelegateAdaptor(WordProcessorAppDelegate.self) private var appDelegate
 
     init() {
-        AppFontRegistry.registerBundledFonts()
-
         // Prevent multiple instances: if another WordProcessor is already running, activate it and quit
         let myPID = ProcessInfo.processInfo.processIdentifier
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: "com.shakespeare.app")

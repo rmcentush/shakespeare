@@ -9,7 +9,7 @@ const CHECK_DELAY_MS = 550;
 const WORKER_SETUP_TIMEOUT_MS = 8_000;
 const MAX_SUGGESTIONS = 5;
 const HARPER_RUNTIME_SCRIPT = 'harper-runtime.js';
-const HARPER_WASM_BINARY = 'harper_wasm_slim_bg.wasm';
+const HARPER_WASM_DATA_SCRIPT = 'harper-wasm-data.js';
 const SuggestionKind = {
   Replace: 0,
   Remove: 1,
@@ -105,23 +105,26 @@ function dialectValue(dialect: ProofreadingDialect): number {
 let harperRuntimePromise: Promise<NonNullable<Window['harperRuntime']>> | null = null;
 let harperWasmObjectURLPromise: Promise<string> | null = null;
 
+function loadBundledScript(filename: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = new URL(filename, document.baseURI).href;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error(`Unable to load bundled resource: ${filename}`));
+    document.head.appendChild(script);
+  });
+}
+
 function loadHarperRuntime(): Promise<NonNullable<Window['harperRuntime']>> {
   if (window.harperRuntime) return Promise.resolve(window.harperRuntime);
   if (harperRuntimePromise) return harperRuntimePromise;
 
-  harperRuntimePromise = new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = new URL(HARPER_RUNTIME_SCRIPT, document.baseURI).href;
-    script.async = true;
-    script.onload = () => {
-      if (window.harperRuntime) {
-        resolve(window.harperRuntime);
-      } else {
-        reject(new Error('Harper runtime loaded without registering its API.'));
-      }
-    };
-    script.onerror = () => reject(new Error('Unable to load the Harper runtime.'));
-    document.head.appendChild(script);
+  harperRuntimePromise = loadBundledScript(HARPER_RUNTIME_SCRIPT).then(() => {
+    if (!window.harperRuntime) {
+      throw new Error('Harper runtime loaded without registering its API.');
+    }
+    return window.harperRuntime;
   });
   return harperRuntimePromise;
 }
@@ -129,22 +132,25 @@ function loadHarperRuntime(): Promise<NonNullable<Window['harperRuntime']>> {
 function loadHarperWasmObjectURL(): Promise<string> {
   if (harperWasmObjectURLPromise) return harperWasmObjectURLPromise;
 
-  // WKWebView serves file:// WASM with the wrong MIME type. Read the resource
-  // as bytes and expose a correctly typed blob URL to Harper and its worker.
-  harperWasmObjectURLPromise = new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest();
-    request.open('GET', new URL(HARPER_WASM_BINARY, document.baseURI).href);
-    request.responseType = 'arraybuffer';
-    request.onload = () => {
-      if (request.status !== 0 && (request.status < 200 || request.status >= 300)) {
-        reject(new Error(`Unable to load Harper WASM (${request.status}).`));
-        return;
-      }
-      const blob = new Blob([request.response], { type: 'application/wasm' });
-      resolve(URL.createObjectURL(blob));
-    };
-    request.onerror = () => reject(new Error('Unable to read the Harper WASM resource.'));
-    request.send();
+  // WKWebView cannot reliably fetch a file:// WASM binary. The build emits a
+  // lazy JS resource containing gzip-compressed bytes, which file:// may load
+  // as a normal script. Decompress once and hand Harper a correctly typed blob.
+  harperWasmObjectURLPromise = loadBundledScript(HARPER_WASM_DATA_SCRIPT).then(async () => {
+    const base64 = window.harperWasmGzipBase64;
+    if (!base64) throw new Error('Harper WASM data loaded without registering its bytes.');
+
+    const encoded = window.atob(base64);
+    const compressed = new Uint8Array(encoded.length);
+    for (let index = 0; index < encoded.length; index += 1) {
+      compressed[index] = encoded.charCodeAt(index);
+    }
+    window.harperWasmGzipBase64 = undefined;
+
+    const decompressedStream = new Blob([compressed])
+      .stream()
+      .pipeThrough(new DecompressionStream('gzip'));
+    const wasm = await new Response(decompressedStream).arrayBuffer();
+    return URL.createObjectURL(new Blob([wasm], { type: 'application/wasm' }));
   });
   return harperWasmObjectURLPromise;
 }
