@@ -1060,7 +1060,6 @@ final class EditorViewModel {
         for try await chunk in service.streamMessage(
             messages: messages,
             systemPrompt: systemPrompt,
-            tools: nil,
             cacheControl: nil,
             outputFormat: outputFormat,
             temperature: temperature,
@@ -1151,7 +1150,6 @@ final class EditorViewModel {
         for try await chunk in grammarService.streamMessage(
             messages: messages,
             systemPrompt: systemPrompt,
-            tools: nil,
             cacheControl: nil,
             outputFormat: outputFormat,
             temperature: 0,
@@ -1399,7 +1397,6 @@ final class EditorViewModel {
         for try await chunk in ambientReviewService.streamMessage(
             messages: messages,
             systemPrompt: systemPrompt,
-            tools: nil,
             cacheControl: nil
         ) {
             if case .text(let delta) = chunk {

@@ -1,6 +1,6 @@
 import Foundation
 
-struct TinkerConnectionValidator: Sendable {
+struct OpenRouterConnectionValidator: Sendable {
     enum ValidationError: LocalizedError, Equatable {
         case emptyKey
         case invalidResponse
@@ -12,15 +12,15 @@ struct TinkerConnectionValidator: Sendable {
         var errorDescription: String? {
             switch self {
             case .emptyKey:
-                return "Paste a Tinker API key first."
+                return "Paste an OpenRouter API key first."
             case .invalidResponse:
-                return "Tinker returned an unexpected response. Try again."
+                return "OpenRouter returned an unexpected response. Try again."
             case .unauthorized:
-                return "Tinker rejected this key, or Inkling access is not enabled for this account."
+                return "OpenRouter rejected this API key. Create a new key and try again."
             case .billingRequired:
-                return "This Tinker key is valid, but the account's billing balance is blocking access. Add funds in Tinker, then try again."
+                return "This key is valid, but OpenRouter needs credits before research chat can run."
             case .unavailable:
-                return "Tinker is temporarily unavailable. Your existing connection was not changed."
+                return "OpenRouter is temporarily unavailable. Your existing connection was not changed."
             case .rejected(let message):
                 return message
             }
@@ -46,26 +46,10 @@ struct TinkerConnectionValidator: Sendable {
         let normalizedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedKey.isEmpty else { throw ValidationError.emptyKey }
 
-        let runtime = InferenceSettings.runtime(
-            purpose: .assistant,
-            modelOverride: InferenceSettings.defaultTinkerModel,
-            effortOverride: nil
-        )
-        let endpoint = runtime.messagesURL.appendingPathComponent("count_tokens")
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
+        var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/key")!)
+        request.httpMethod = "GET"
         request.timeoutInterval = 15
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.setValue(normalizedKey, forHTTPHeaderField: "x-api-key")
-        if let apiVersion = runtime.apiVersion {
-            request.setValue(apiVersion, forHTTPHeaderField: "anthropic-version")
-        }
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": InferenceSettings.defaultTinkerModel,
-            "messages": [
-                ["role": "user", "content": "Connection check"],
-            ],
-        ])
+        request.setValue("Bearer \(normalizedKey)", forHTTPHeaderField: "authorization")
 
         let data: Data
         let response: URLResponse
@@ -84,7 +68,7 @@ struct TinkerConnectionValidator: Sendable {
         switch httpResponse.statusCode {
         case 200..<300:
             guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  object["input_tokens"] is NSNumber
+                  object["data"] is [String: Any]
             else {
                 throw ValidationError.invalidResponse
             }
@@ -102,16 +86,15 @@ struct TinkerConnectionValidator: Sendable {
     private static func errorMessage(from data: Data) -> String {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
-            return "Tinker could not validate this connection."
+            return "OpenRouter could not validate this connection."
         }
 
         let nestedMessage = (object["error"] as? [String: Any])?["message"] as? String
         let topLevelMessage = object["message"] as? String
-        let detail = object["detail"] as? String
-        let message = (nestedMessage ?? topLevelMessage ?? detail ?? "Tinker could not validate this connection.")
+        let message = (nestedMessage ?? topLevelMessage ?? "OpenRouter could not validate this connection.")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard !message.isEmpty else { return "Tinker could not validate this connection." }
+        guard !message.isEmpty else { return "OpenRouter could not validate this connection." }
         return String(message.prefix(240))
     }
 }

@@ -8,7 +8,7 @@ struct AssistantChatView: View {
     @State private var inputText = ""
     @State private var pendingSelection: String?
     @State private var shouldFollowLatestMessage = true
-    @State private var hasInklingConnection = false
+    @State private var hasResearchConnection = false
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -19,7 +19,7 @@ struct AssistantChatView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         if chatViewModel.messages.isEmpty {
                             AssistantEmptyState(
-                                isConnected: hasInklingConnection,
+                                isConnected: hasResearchConnection,
                                 onChoosePrompt: chooseStarterPrompt
                             )
                         }
@@ -70,7 +70,7 @@ struct AssistantChatView: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
-                if hasInklingConnection {
+                if hasResearchConnection {
                     HStack(alignment: .bottom, spacing: 8) {
                         // Attach selected text as context
                         Button {
@@ -84,7 +84,7 @@ struct AssistantChatView: View {
                         .padding(.bottom, 3)
                         .help("Attach selected text")
 
-                        TextField("Ask the writing assistant...", text: smartQuotedInputText, axis: .vertical)
+                        TextField("Ask about the draft or research the web…", text: smartQuotedInputText, axis: .vertical)
                             .textFieldStyle(.plain)
                             .font(AssistantChatFont.input)
                             .lineLimit(1...5)
@@ -121,9 +121,9 @@ struct AssistantChatView: View {
                 } else {
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Connect Inkling to use the assistant")
+                            Text("Connect OpenRouter for research chat")
                                 .font(.caption.weight(.semibold))
-                            Text("Writing and local proofreading still work without it.")
+                            Text("Writing tools and local proofreading still work without it.")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -149,7 +149,7 @@ struct AssistantChatView: View {
         .onAppear {
             refreshConnectionStatus()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .inklingConnectionChanged)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .openRouterConnectionChanged)) { _ in
             refreshConnectionStatus()
         }
         .onDisappear {
@@ -188,7 +188,7 @@ struct AssistantChatView: View {
     }
 
     private func refreshConnectionStatus() {
-        hasInklingConnection = APIKeyStore.shared.getAPIKey(service: "tinker") != nil
+        hasResearchConnection = APIKeyStore.shared.getAPIKey(service: "openrouter") != nil
     }
 
     private func sendMessage() {
@@ -286,23 +286,23 @@ private struct AssistantEmptyState: View {
     let onChoosePrompt: (String) -> Void
 
     private let prompts = [
-        "Review this draft for clarity and flow.",
-        "Make the opening stronger without changing my voice.",
-        "Tighten this draft and explain the biggest cuts.",
+        "Fact-check the claims in this draft and cite sources.",
+        "Find current evidence that supports this argument.",
+        "What important context or counterarguments am I missing?",
     ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
-            Image(systemName: "sparkles")
+            Image(systemName: "globe.americas.fill")
                 .font(.system(size: 24))
                 .foregroundStyle(Color.accentColor)
 
             VStack(alignment: .leading, spacing: 5) {
-                Text("Writing Assistant")
+                Text("Research Chat")
                     .font(.headline)
                 Text(isConnected
-                    ? "Ask about the draft, or select text first for a focused revision. Every proposed change remains yours to review."
-                    : "Connect Inkling when you want help revising. The editor remains fully usable without it.")
+                    ? "Ask questions without leaving the draft. Sonar searches the live web and returns source links in its answer."
+                    : "Connect OpenRouter for fast, cited web research. The editor and Inkling writing tools remain independent.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

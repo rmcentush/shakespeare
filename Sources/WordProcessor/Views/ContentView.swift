@@ -63,7 +63,7 @@ struct ContentView: View {
                         } label: {
                             Image(systemName: "bubble.right")
                         }
-                        .help("Toggle Writing Assistant (Cmd+\\)")
+                        .help("Toggle Research Chat (Cmd+\\)")
                     }
                     ToolbarItem(placement: .automatic) {
                         Button {

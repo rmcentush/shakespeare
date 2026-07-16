@@ -1,4 +1,4 @@
-.PHONY: all build run clean editor typecheck swift install evals llm-edit-evals document-asset-evals api-key-store-evals tinker-connection-evals personalization-evals service-install service-test
+.PHONY: all build run clean editor typecheck swift install evals llm-edit-evals document-asset-evals api-key-store-evals tinker-connection-evals openrouter-connection-evals language-model-wire-evals personalization-evals service-install service-test
 
 all: build
 
@@ -41,6 +41,14 @@ tinker-connection-evals:
 	swiftc -parse-as-library Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/TinkerConnectionValidator.swift scripts/tinker-connection-evals.swift -o /tmp/tinker-connection-evals
 	/tmp/tinker-connection-evals
 
+openrouter-connection-evals:
+	swiftc -parse-as-library Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/OpenRouterConnectionValidator.swift scripts/openrouter-connection-evals.swift -o /tmp/openrouter-connection-evals
+	/tmp/openrouter-connection-evals
+
+language-model-wire-evals:
+	swiftc Sources/WordProcessor/Services/APIKeyStore.swift Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/LanguageModelService.swift scripts/language-model-wire-evals.swift -o /tmp/language-model-wire-evals
+	/tmp/language-model-wire-evals
+
 personalization-evals:
 	PYTHONPATH=Trainer python3 -m unittest discover -s Trainer/tests -v
 
@@ -52,7 +60,7 @@ service-test:
 	python3 -m ruff check Service Trainer
 	python3 -m ruff format --check Service Trainer
 
-evals: llm-edit-evals document-asset-evals api-key-store-evals tinker-connection-evals personalization-evals
+evals: llm-edit-evals document-asset-evals api-key-store-evals tinker-connection-evals openrouter-connection-evals language-model-wire-evals personalization-evals
 
 # Build release
 build: copy-assets

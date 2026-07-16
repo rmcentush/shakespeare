@@ -268,13 +268,6 @@ private struct WordProcessorCommands: Commands {
             .disabled(windowCommandContext == nil)
         }
 
-        CommandGroup(replacing: .appSettings) {
-            SettingsLink {
-                Text("Settings…")
-            }
-            .keyboardShortcut(",")
-        }
-
         CommandGroup(after: .help) {
             Button("Show Welcome to Shakespeare") {
                 windowCommandContext?.showOnboarding()

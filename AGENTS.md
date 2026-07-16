@@ -22,13 +22,13 @@ The build pipeline: `Editor/src/*.ts` → esbuild IIFE → `Editor/dist/` → co
 
 ## Writing Style Context
 
-The writing assistant uses a bundled editorial reference plus a separate file of reviewed, learned preferences.
+Inkling-powered writing features use a bundled editorial reference plus a separate file of reviewed, learned preferences.
 
 - Prompt reference resource: `Sources/WordProcessor/Resources/writing_style_reference.md`
 - Resource copy entry: `Package.swift`
-- Prompt injection points: `Sources/WordProcessor/ViewModels/AssistantChatViewModel.swift` and ambient review in `Sources/WordProcessor/ViewModels/EditorViewModel.swift`
+- Prompt injection point: ambient review in `Sources/WordProcessor/ViewModels/EditorViewModel.swift`
 
-Treat `writing_style_reference.md` as the high-priority voice reference for sidebar drafting and ambient voice suggestions. The current document supplies topic, continuity, and edit-targeting context. Personalized training data and Tinker integration stay in dedicated service and `Trainer/` layers rather than coupling them to document editing.
+Treat `writing_style_reference.md` as the high-priority voice reference for ambient voice suggestions. The current document supplies topic, continuity, and edit-targeting context. Personalized training data and Tinker integration stay in dedicated service and `Trainer/` layers rather than coupling them to document editing. OpenRouter research chat must not receive the style reference, learned preferences, or training ledger.
 
 ## Architecture
 
@@ -63,10 +63,12 @@ Content changes sent across the bridge are debounced for 1 second in the editor.
 | `Sources/WordProcessor/ViewModels/EditorViewModel.swift` | Central hub: webview ref, JS evaluation, file I/O, bridge dispatch |
 | `Sources/WordProcessor/Views/EditorWebView.swift` | NSViewRepresentable wrapping WKWebView, loads editor.html |
 | `Sources/WordProcessor/Views/ContentView.swift` | Main layout: editor + optional sidebars |
-| `Sources/WordProcessor/Views/OnboardingView.swift` | Versioned one-key first-run setup; personalization consent remains a separate progressive choice |
+| `Sources/WordProcessor/Views/OnboardingView.swift` | Versioned Tinker/OpenRouter first-run setup; personalization consent remains a separate progressive choice |
+| `Sources/WordProcessor/ViewModels/AssistantChatViewModel.swift` | Read-only, bounded-context OpenRouter research chat orchestration |
 | `Sources/WordProcessor/Services/LanguageModelService.swift` | Provider-configured Messages API client with SSE streaming |
-| `Sources/WordProcessor/Services/InferenceSettings.swift` | Inkling runtime configuration and promoted-checkpoint registry |
+| `Sources/WordProcessor/Services/InferenceSettings.swift` | Purpose-specific Tinker/OpenRouter runtime configuration and promoted-checkpoint registry |
 | `Sources/WordProcessor/Services/TinkerConnectionValidator.swift` | Data-free Inkling access check used before storing a new Tinker key |
+| `Sources/WordProcessor/Services/OpenRouterConnectionValidator.swift` | Data-free OpenRouter key check used before storing a research-chat key |
 | `Sources/WordProcessor/Services/TrainingEventStore.swift` | Opt-in, versioned, local personalization event ledger |
 | `Sources/WordProcessor/Services/APIKeyStore.swift` | Keychain-backed API keys with an owner-only development fallback |
 | `Sources/WordProcessor/Services/FontManager.swift` | Font config, @font-face CSS generation, UserDefaults persistence |
@@ -81,7 +83,7 @@ Views communicate via NotificationCenter, not direct bindings: `editorContentCha
 
 ### Model Provider Boundary
 
-`InferenceSettings` resolves an immutable Inkling runtime configuration for each request. `LanguageModelService` contains the remote Messages-compatible protocol boundary. Keep inference separate from document editing and keep training code in `TrainingEventStore` and `Trainer/`.
+`InferenceSettings` resolves an immutable runtime configuration for each request. Writing, grammar, proofing, and style updates use Tinker/Inkling; only `.chat` uses OpenRouter/Sonar. `LanguageModelService` contains the remote Messages-compatible protocol boundary. Keep research chat read-only, do not send permanent style-learning data to OpenRouter, keep inference separate from document editing, and keep training code in `TrainingEventStore` and `Trainer/`.
 
 Personalization collection must remain off by default. Raw edit decisions and save-time outcomes are separate immutable events. Never upload the raw ledger implicitly, weaken its owner-only permissions, train on ambiguous rejections, let snapshots dominate curated edit signals, mix one document across train/evaluation splits, or promote a checkpoint merely because a run completed.
 
@@ -100,4 +102,5 @@ The hosted service is not publicly launch-ready until the worker, inference gate
 - **BridgePayload parsing:** Uses manual JSON parsing (`[String: Any]`), not Codable.
 - **Provider API keys:** Stored in the macOS Keychain. A service-specific 0600 file under `~/Library/Application Support/Shakespeare/` is used only as a development fallback and is migrated when Keychain access succeeds.
 - **Tinker credentials:** Tinker and Inkling use the same `TINKER_API_KEY`. Do not introduce a second Inkling credential. Validate new keys with the token-count endpoint before replacing a working saved key.
+- **OpenRouter credentials:** Research chat uses a separate `OPENROUTER_API_KEY`, validated with `GET /api/v1/key`. The default model is `perplexity/sonar`; keep ordinary setup model-free and expose overrides only under Advanced.
 - **Onboarding changes:** Increment `OnboardingSettings.currentVersion` only when every existing writer should see a revised flow again. Copy and layout fixes should not reset completion.

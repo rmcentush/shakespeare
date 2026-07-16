@@ -78,7 +78,6 @@ final class StyleGuideUpdater {
         for try await chunk in apiService.streamMessage(
             messages: messages,
             systemPrompt: systemPrompt,
-            tools: nil,
             cacheControl: nil
         ) {
             if case .text(let text) = chunk {

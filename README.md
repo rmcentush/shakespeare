@@ -1,8 +1,8 @@
 # Shakespeare
 
-A focused writing app for macOS with an integrated writing assistant.
+A focused writing app for macOS with personalized writing tools and built-in web research.
 
-Shakespeare pairs a TipTap rich-text editor with a native macOS workspace for drafting, rewriting, proofreading, versioning, and opt-in personal style training. Inkling inference and Tinker post-training stay behind dedicated integration layers; the editor and document model do not depend on a particular checkpoint.
+Shakespeare pairs a TipTap rich-text editor with a native macOS workspace for drafting, rewriting, proofreading, versioning, source-backed research, and opt-in personal style training. Inkling inference and Tinker post-training power writing; OpenRouter powers a separate research chat. The editor and document model do not depend on either provider.
 
 The repository now also contains a provider-neutral hosted-personalization control plane. The intended product is hybrid: keep the native editor local-first, and use a web app for accounts, consent, training/evaluation status, rollback, billing, and support. See [Service architecture](docs/SERVICE_ARCHITECTURE.md) and the evidence-backed [production-readiness review](docs/PRODUCTION_READINESS.md).
 
@@ -28,19 +28,23 @@ Then open the app:
 open /Applications/Shakespeare.app
 ```
 
-On first launch, paste one Tinker API key and Shakespeare configures Inkling
-automatically. The key is validated before it is stored. This step can be deferred:
-drafting and local proofreading work without a model connection, and personalization
-remains a separate opt-in choice under **My Style**. Reopen the welcome screen
-anytime from **Help → Show Welcome to Shakespeare**.
+On first launch, Shakespeare offers two short, optional connection steps:
 
-### Writing assistant
+1. **Tinker** for Inkling writing help and later opt-in personal training.
+2. **OpenRouter** for fast, source-linked research chat through Perplexity Sonar.
 
-The editor works without a model connection. To enable the writing assistant (`Cmd+\\`):
+Each key is validated independently before it is stored in macOS Keychain. Either
+step can be skipped; drafting and local proofreading work without a model connection,
+and personalization remains a separate opt-in choice under **My Style**. Reopen the
+welcome screen anytime from **Help → Show Welcome to Shakespeare**.
+
+### Writing and personalization
+
+The editor works without a model connection. To enable Inkling-powered writing:
 
 1. Get a Tinker API key.
-2. Open the writing assistant (`Cmd+\`) and choose **Connect**, or open **Settings** (`Cmd+,`).
-3. Paste the key in **Inkling** and choose **Connect**.
+2. Open **Settings → Connections** (`Cmd+,`).
+3. Paste the key under **Writing Connection** and choose **Connect**.
 
 The same `TINKER_API_KEY` authenticates Inkling inference and Tinker training;
 there is no separate Inkling API key. Shakespeare checks access with a token-count
@@ -51,6 +55,22 @@ file under `~/Library/Application Support/Shakespeare/` only when Keychain acces
 is unavailable.
 
 Tinker uses `thinkingmachines/Inkling` by default. When a personal checkpoint is promoted by the training CLI, Shakespeare resolves it from the local model registry automatically.
+
+### Research chat
+
+Open the research sidebar with `Cmd+\`. It uses `perplexity/sonar` through
+OpenRouter by default, prioritizing low latency, low token cost, and web answers
+with source links.
+
+1. Create an OpenRouter API key.
+2. Open **Settings → Connections**.
+3. Paste the key under **Research Chat Connection** and choose **Connect**.
+
+Research chat receives the current question and a bounded excerpt of the open draft.
+It does not receive the local training ledger, learned style preferences, Tinker key,
+or personal checkpoint. It is deliberately read-only at the model boundary: useful
+response text can be inserted manually, while writing and personalization remain on
+the Tinker/Inkling path.
 
 ### Personalization
 
@@ -79,7 +99,7 @@ Shakespeare uses [Harper](https://writewithharper.com/) for fast, offline Englis
 | `make run` | Debug build + run immediately |
 | `make editor` | Build the TipTap JS bundle only |
 | `make typecheck` | Type-check the TypeScript editor |
-| `make evals` | Run editor, document, key-store, and personalization regression checks |
+| `make evals` | Run editor, document, provider-connection, key-store, and personalization regression checks |
 | `make service-test` | Run service API, tenancy, schema, and Python lint checks |
 | `make build` | Release build (no .app bundle) |
 | `make clean` | Remove all build artifacts |
@@ -88,7 +108,7 @@ Shakespeare uses [Harper](https://writewithharper.com/) for fast, offline Englis
 
 GitHub Actions validates every pull request and push to `main` by type-checking
 and bundling the TypeScript editor, compiling the Swift app in release mode, and
-running the edit-target, document-asset, key-store, and personalization evaluations. A separate Linux job validates the service API, pinned Python environment, PostgreSQL migration, and real row-level-security behavior. Dependabot checks npm, Python, Docker, and GitHub Actions dependencies weekly.
+running the edit-target, document-asset, provider-connection, key-store, and personalization evaluations. A separate Linux job validates the service API, pinned Python environment, PostgreSQL migration, and real row-level-security behavior. Dependabot checks npm, Python, Docker, and GitHub Actions dependencies weekly.
 
 Pushing a version tag such as `v0.1.0` builds an ad-hoc-signed `Shakespeare.app`
 with matching version metadata and attaches a ZIP archive to a GitHub Release.
