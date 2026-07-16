@@ -19,7 +19,7 @@ swift: copy-assets
 	swift build
 
 llm-edit-evals:
-	swiftc Sources/WordProcessor/Services/EditTargetResolver.swift scripts/llm-edit-evals.swift -o /tmp/llm-edit-evals
+	swiftc Sources/WordProcessor/Services/StringEscaping.swift Sources/WordProcessor/Services/EditTargetResolver.swift scripts/llm-edit-evals.swift -o /tmp/llm-edit-evals
 	/tmp/llm-edit-evals
 
 # Build release

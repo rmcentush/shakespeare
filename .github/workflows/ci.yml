@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and validate
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Editor/package-lock.json
+
+      - name: Install editor dependencies
+        working-directory: Editor
+        run: npm ci
+
+      - name: Type-check editor
+        working-directory: Editor
+        run: npm exec -- tsc --noEmit
+
+      - name: Build editor assets
+        working-directory: Editor
+        run: npm run build
+
+      - name: Copy editor assets into Swift resources
+        run: |
+          cp Editor/dist/editor.js Sources/WordProcessor/Resources/editor.js
+          cp Editor/dist/editor.css Sources/WordProcessor/Resources/editor.css
+          cp Editor/dist/harper-runtime.js Sources/WordProcessor/Resources/harper-runtime.js
+          cp Editor/dist/harper_wasm_slim_bg.wasm Sources/WordProcessor/Resources/harper_wasm_slim_bg.wasm
+          cp Editor/dist/Harper_LICENSE.txt Sources/WordProcessor/Resources/Harper_LICENSE.txt
+
+      - name: Build macOS app
+        run: swift build -c release
+
+      - name: Run LLM edit-target evaluations
+        run: make llm-edit-evals

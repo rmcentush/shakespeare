@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Package macOS app
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Editor/package-lock.json
+
+      - name: Install editor dependencies
+        working-directory: Editor
+        run: npm ci
+
+      - name: Build app bundle
+        run: bash scripts/bundle-app.sh
+
+      - name: Create release archive
+        id: archive
+        run: |
+          archive="Shakespeare-${GITHUB_REF_NAME}.zip"
+          ditto -c -k --sequesterRsrc --keepParent Shakespeare.app "$archive"
+          echo "path=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: Shakespeare-${{ github.ref_name }}
+          path: ${{ steps.archive.outputs.path }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE: ${{ steps.archive.outputs.path }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$ARCHIVE" \
+              --verify-tag \
+              --generate-notes \
+              --title "Shakespeare $GITHUB_REF_NAME"
+          fi

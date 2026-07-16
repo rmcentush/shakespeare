@@ -13,8 +13,8 @@ Shakespeare pairs a rich text editor (TipTap) with a Claude-powered sidebar for 
 ## Setup
 
 ```bash
-git clone https://github.com/davidoks0/WordProcessorNew.git
-cd WordProcessorNew
+git clone https://github.com/rmcentush/shakespeare.git
+cd shakespeare
 make install
 ```
 
@@ -59,6 +59,16 @@ Shakespeare uses [Harper](https://writewithharper.com/) for fast, offline Englis
 | `make editor` | Build the TipTap JS bundle only |
 | `make build` | Release build (no .app bundle) |
 | `make clean` | Remove all build artifacts |
+
+## Automation
+
+GitHub Actions validates every pull request and push to `main` by type-checking
+and bundling the TypeScript editor, compiling the Swift app in release mode, and
+running the edit-target evaluations.
+
+Pushing a version tag such as `v0.1.0` builds `Shakespeare.app` and attaches an
+unsigned ZIP archive to a GitHub Release. Code signing and Apple notarization
+must be configured before distributing builds outside the development team.
 
 ## Architecture
 
