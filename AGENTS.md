@@ -10,6 +10,7 @@ make install      # Build editor + Swift (release), create .app, copy to /Applic
 make editor       # Build TipTap bundle only (locked npm install + esbuild)
 make typecheck    # Type-check the TypeScript editor
 make evals        # Run edit-target, document-asset, key-store, and personalization checks
+make service-test # Run hosted-service contracts and Python lint checks
 make copy-assets  # Build editor + copy editor.js/editor.css to Swift Resources
 make build        # Build editor + Swift release binary
 make clean        # Remove .build, node_modules, dist, copied assets
@@ -39,6 +40,8 @@ macOS 14+ SwiftUI app with a TipTap rich text editor running inside a WKWebView.
 
 **Swift layer** (`Sources/WordProcessor/`): SwiftUI app using `@Observable` macro (not ObservableObject). SPM executable target, no external Swift dependencies.
 
+**Service layer** (`Service/`): FastAPI control plane with OIDC identity, PostgreSQL row-level security, idempotent training jobs, model lifecycle, and deletion contracts. Python 3.11+; production dependencies are fully pinned.
+
 ### JS↔Swift Bridge
 
 The bridge is the core integration point. All communication flows through a single WKScriptMessageHandler named `"editorBridge"`.
@@ -66,6 +69,9 @@ Content changes sent across the bridge are debounced for 1 second in the editor.
 | `Sources/WordProcessor/Services/APIKeyStore.swift` | Keychain-backed API keys with an owner-only development fallback |
 | `Sources/WordProcessor/Services/FontManager.swift` | Font config, @font-face CSS generation, UserDefaults persistence |
 | `Trainer/shakespeare_train/` | Deterministic SFT/DPO compiler and explicit Tinker training CLI |
+| `Service/shakespeare_service/` | Hosted API/auth/repository boundaries |
+| `Service/database/migrations/` | Versioned PostgreSQL schema and forced tenant RLS |
+| `Contracts/` | Versioned hosted wire contracts |
 
 ### Cross-View Communication
 
@@ -76,6 +82,12 @@ Views communicate via NotificationCenter, not direct bindings: `editorContentCha
 `InferenceSettings` resolves an immutable runtime configuration for each request. `LanguageModelService` sanitizes provider-specific features at the boundary. Keep provider selection separate from document editing and keep training code in `TrainingEventStore` and `Trainer/`.
 
 Personalization collection must remain off by default. Never upload the raw ledger implicitly, weaken its owner-only permissions, mix examples from one document across train/evaluation splits, or promote a checkpoint merely because a run completed.
+
+### Hosted Service Boundary
+
+The service and native app have separate consent scopes. The client never supplies a tenant ID; the API derives it from a verified OIDC issuer/subject and every tenant transaction sets `app.tenant_id` locally for PostgreSQL RLS. Never run the API with a superuser, schema-owner, or `BYPASSRLS` database role. Queue tables contain identifiers only; workers must set the transaction-local tenant before reading prose.
+
+The hosted service is not publicly launch-ready until the worker, inference gateway, cloud stack, observability, export/deletion completion, quotas, backup restore, asset licensing, and notarized release gates in `docs/PRODUCTION_READINESS.md` are closed.
 
 ## Gotchas
 

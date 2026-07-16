@@ -37,7 +37,9 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
             try:
                 value = json.loads(stripped)
             except json.JSONDecodeError as error:
-                raise ValueError(f"Invalid JSON at {path}:{line_number}: {error}") from error
+                raise ValueError(
+                    f"Invalid JSON at {path}:{line_number}: {error}"
+                ) from error
             if not isinstance(value, dict):
                 raise ValueError(f"Expected an object at {path}:{line_number}")
             records.append(value)
@@ -53,13 +55,51 @@ def _write_jsonl(path: Path, records: Iterable[dict[str, Any]]) -> int:
     return count
 
 
-def _is_eval_document(document_id: str, eval_fraction: float) -> bool:
-    bucket = int(hashlib.sha256(document_id.encode("utf-8")).hexdigest()[:8], 16) / 0xFFFFFFFF
-    return bucket < eval_fraction
+def _document_splits(document_ids: set[str], eval_fraction: float) -> dict[str, str]:
+    ordered = sorted(
+        document_ids,
+        key=lambda document_id: hashlib.sha256(document_id.encode("utf-8")).hexdigest(),
+    )
+    if eval_fraction == 0 or len(ordered) < 2:
+        return {document_id: "train" for document_id in ordered}
+    eval_count = max(1, min(len(ordered) - 1, int(len(ordered) * eval_fraction + 0.5)))
+    eval_documents = set(ordered[:eval_count])
+    return {
+        document_id: "eval" if document_id in eval_documents else "train"
+        for document_id in ordered
+    }
 
 
 def _clean(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def _valid_event(event: dict[str, Any]) -> bool:
+    consent = event.get("consent")
+    event_type = event.get("eventType")
+    if (
+        event.get("schemaVersion") != 1
+        or event_type not in {"edit_decision", "document_snapshot"}
+        or not isinstance(consent, dict)
+        or consent.get("collectionEnabled") is not True
+        or consent.get("scope") != "local_personalization"
+    ):
+        return False
+    if not _clean(event.get("id")) or not _clean(event.get("documentID")):
+        return False
+    limits = {
+        "instruction": 20_000,
+        "originalText": 250_000,
+        "proposedText": 250_000,
+        "finalText": 500_000,
+        "surroundingText": 250_000,
+        "rationale": 20_000,
+    }
+    for field, maximum in limits.items():
+        value = event.get(field)
+        if value is not None and (not isinstance(value, str) or len(value) > maximum):
+            return False
+    return True
 
 
 def _edit_prompt(event: dict[str, Any]) -> str:
@@ -79,7 +119,9 @@ def _edit_prompt(event: dict[str, Any]) -> str:
 def _snapshot_examples(event: dict[str, Any]) -> list[dict[str, Any]]:
     text = _clean(event.get("finalText"))
     paragraphs = [part.strip() for part in text.replace("\r\n", "\n").split("\n\n")]
-    paragraphs = [part for part in paragraphs if 20 <= len(part.split()) and len(part) <= 4_000]
+    paragraphs = [
+        part for part in paragraphs if 20 <= len(part.split()) and len(part) <= 4_000
+    ]
     examples: list[dict[str, Any]] = []
     for index in range(1, len(paragraphs)):
         context = "\n\n".join(paragraphs[max(0, index - 3) : index])[-4_000:]
@@ -89,7 +131,8 @@ def _snapshot_examples(event: dict[str, Any]) -> list[dict[str, Any]]:
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {
                         "role": "user",
-                        "content": "Continue this draft naturally in my established voice.\n\nDraft:\n" + context,
+                        "content": "Continue this draft naturally in my established voice.\n\nDraft:\n"
+                        + context,
                     },
                     {"role": "assistant", "content": paragraphs[index]},
                 ],
@@ -103,7 +146,9 @@ def _snapshot_examples(event: dict[str, Any]) -> list[dict[str, Any]]:
     return examples
 
 
-def compile_ledger(input_path: Path, output_dir: Path, eval_fraction: float = 0.15) -> CompileResult:
+def compile_ledger(
+    input_path: Path, output_dir: Path, eval_fraction: float = 0.15
+) -> CompileResult:
     if not 0 <= eval_fraction < 1:
         raise ValueError("eval_fraction must be in [0, 1)")
     events = _read_jsonl(input_path)
@@ -112,24 +157,25 @@ def compile_ledger(input_path: Path, output_dir: Path, eval_fraction: float = 0.
     sft: dict[str, list[dict[str, Any]]] = {"train": [], "eval": []}
     dpo: dict[str, list[dict[str, Any]]] = {"train": [], "eval": []}
     seen_event_ids: set[str] = set()
-    documents: dict[str, str] = {}
+    valid_events: list[dict[str, Any]] = []
     accepted = rejected = continuations = skipped = 0
 
     for event in events:
         event_id = _clean(event.get("id"))
-        document_id = _clean(event.get("documentID"))
-        if (
-            event.get("schemaVersion") != 1
-            or not event_id
-            or event_id in seen_event_ids
-            or not document_id
-            or event.get("consent", {}).get("collectionEnabled") is not True
-        ):
+        if not _valid_event(event) or event_id in seen_event_ids:
             skipped += 1
             continue
         seen_event_ids.add(event_id)
-        split = "eval" if _is_eval_document(document_id, eval_fraction) else "train"
-        documents[document_id] = split
+        valid_events.append(event)
+
+    documents = _document_splits(
+        {_clean(event.get("documentID")) for event in valid_events}, eval_fraction
+    )
+
+    for event in valid_events:
+        event_id = _clean(event.get("id"))
+        document_id = _clean(event.get("documentID"))
+        split = documents[document_id]
 
         if event.get("eventType") == "document_snapshot":
             examples = _snapshot_examples(event)
@@ -165,7 +211,12 @@ def compile_ledger(input_path: Path, output_dir: Path, eval_fraction: float = 0.
                 }
             )
             accepted += 1
-        elif event.get("decision") in {"reject", "dismiss"} and original and proposed and original != proposed:
+        elif (
+            event.get("decision") in {"reject", "dismiss"}
+            and original
+            and proposed
+            and original != proposed
+        ):
             dpo[split].append(
                 {
                     "comparison": {
@@ -185,9 +236,13 @@ def compile_ledger(input_path: Path, output_dir: Path, eval_fraction: float = 0.
             skipped += 1
 
     counts = {
-        "sft_train_examples": _write_jsonl(output_dir / "sft_train.jsonl", sft["train"]),
+        "sft_train_examples": _write_jsonl(
+            output_dir / "sft_train.jsonl", sft["train"]
+        ),
         "sft_eval_examples": _write_jsonl(output_dir / "sft_eval.jsonl", sft["eval"]),
-        "dpo_train_examples": _write_jsonl(output_dir / "dpo_train.jsonl", dpo["train"]),
+        "dpo_train_examples": _write_jsonl(
+            output_dir / "dpo_train.jsonl", dpo["train"]
+        ),
         "dpo_eval_examples": _write_jsonl(output_dir / "dpo_eval.jsonl", dpo["eval"]),
     }
     result = CompileResult(
@@ -205,7 +260,7 @@ def compile_ledger(input_path: Path, output_dir: Path, eval_fraction: float = 0.
         "source": str(input_path.resolve()),
         "source_sha256": hashlib.sha256(input_path.read_bytes()).hexdigest(),
         "eval_fraction": eval_fraction,
-        "split_strategy": "sha256(document_id)",
+        "split_strategy": "sha256_ranked_documents_v2",
         "result": asdict(result),
     }
     (output_dir / "manifest.json").write_text(

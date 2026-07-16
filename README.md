@@ -4,6 +4,8 @@ A focused writing app for macOS with an integrated writing assistant.
 
 Shakespeare pairs a TipTap rich-text editor with a native macOS workspace for drafting, rewriting, proofreading, versioning, and opt-in personal style training. Inference is runtime-selectable between Anthropic and Tinker's Inkling endpoint; the editor and document model remain independent of either provider.
 
+The repository now also contains a provider-neutral hosted-personalization control plane. The intended product is hybrid: keep the native editor local-first, and use a web app for accounts, consent, training/evaluation status, rollback, billing, and support. See [Service architecture](docs/SERVICE_ARCHITECTURE.md) and the evidence-backed [production-readiness review](docs/PRODUCTION_READINESS.md).
+
 ## Prerequisites
 
 - **macOS 14** (Sonoma) or later
@@ -69,6 +71,7 @@ Shakespeare uses [Harper](https://writewithharper.com/) for fast, offline Englis
 | `make editor` | Build the TipTap JS bundle only |
 | `make typecheck` | Type-check the TypeScript editor |
 | `make evals` | Run editor, document, key-store, and personalization regression checks |
+| `make service-test` | Run service API, tenancy, schema, and Python lint checks |
 | `make build` | Release build (no .app bundle) |
 | `make clean` | Remove all build artifacts |
 
@@ -76,8 +79,7 @@ Shakespeare uses [Harper](https://writewithharper.com/) for fast, offline Englis
 
 GitHub Actions validates every pull request and push to `main` by type-checking
 and bundling the TypeScript editor, compiling the Swift app in release mode, and
-running the edit-target, document-asset, key-store, and personalization evaluations. Dependabot checks npm and
-GitHub Actions dependencies weekly.
+running the edit-target, document-asset, key-store, and personalization evaluations. A separate Linux job validates the service API, pinned Python environment, PostgreSQL migration, and real row-level-security behavior. Dependabot checks npm, Python, Docker, and GitHub Actions dependencies weekly.
 
 Pushing a version tag such as `v0.1.0` builds an ad-hoc-signed `Shakespeare.app`
 with matching version metadata and attaches a ZIP archive to a GitHub Release.
@@ -91,5 +93,8 @@ Two layers communicating through a JS↔Swift bridge:
 - **TypeScript** (`Editor/src/`) — TipTap rich text editor, built as a single IIFE bundle targeting Safari 17
 - **Swift** (`Sources/WordProcessor/`) — SwiftUI app shell, file I/O, and model API integration
 - **Python** (`Trainer/`) — local dataset compiler and explicit Tinker SFT/DPO runner
+- **Service** (`Service/`) — OIDC-authenticated API, PostgreSQL tenant boundary, durable training jobs, model lifecycle, and deletion contract
+
+The service layer is infrastructure-ready but not publicly deployed. Training/cleanup workers, the inference gateway, cloud stack, telemetry, export, quotas, and public-release signing/notarization remain launch gates tracked in `docs/PRODUCTION_READINESS.md`.
 
 All JS↔Swift communication goes through a single `WKScriptMessageHandler`. The editor runs inside a `WKWebView`.

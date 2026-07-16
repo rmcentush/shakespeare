@@ -16,6 +16,10 @@ Trainer/data/
 Trainer/runs/
 Trainer/*.egg-info/
 Trainer/shakespeare_personalization.egg-info/
+Service/.venv/
+Service/.pytest_cache/
+Service/.ruff_cache/
+Service/*.egg-info/
 __pycache__/
 *.pyc
 *.swp

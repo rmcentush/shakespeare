@@ -35,6 +35,61 @@ const PASTE_PRESERVE_ATTRIBUTES_BY_TAG: Record<string, Set<string>> = {
   ol: new Set(['start', 'type']),
 };
 
+const DOCUMENT_IMAGE_PREFIX = 'shakespeare-document://asset/';
+
+export function isSafeDocumentImageSource(source: unknown): source is string {
+  return typeof source === 'string' && source.startsWith(DOCUMENT_IMAGE_PREFIX);
+}
+
+function stripUnsafeURLs(root: ParentNode): void {
+  root.querySelectorAll('img').forEach((image) => {
+    if (!isSafeDocumentImageSource(image.getAttribute('src'))) {
+      const alt = image.getAttribute('alt')?.trim();
+      image.replaceWith(document.createTextNode(alt ? `[Image: ${alt}]` : ''));
+    }
+  });
+  root.querySelectorAll('a[href]').forEach((link) => {
+    const href = link.getAttribute('href')?.trim() || '';
+    if (!/^(https?:|mailto:|#)/i.test(href)) {
+      link.removeAttribute('href');
+      link.removeAttribute('target');
+    }
+  });
+}
+
+export function sanitizeDocumentHTML(html: string): string {
+  const parsed = new DOMParser().parseFromString(stripGeneratedFootnotesSection(html), 'text/html');
+  parsed.querySelectorAll('script, noscript').forEach((element) => element.remove());
+  parsed.body.querySelectorAll('*').forEach((element) => {
+    Array.from(element.attributes).forEach((attribute) => {
+      if (attribute.name.toLowerCase().startsWith('on')) {
+        element.removeAttribute(attribute.name);
+      }
+    });
+  });
+  stripUnsafeURLs(parsed.body);
+  return parsed.body.innerHTML;
+}
+
+export function sanitizeDocumentJSON(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sanitizeDocumentJSON).filter((item) => item !== null);
+  }
+  if (!value || typeof value !== 'object') return value;
+
+  const node = value as Record<string, unknown>;
+  const attrs = node.attrs;
+  if (
+    node.type === 'image' &&
+    (!attrs || typeof attrs !== 'object' || !isSafeDocumentImageSource((attrs as Record<string, unknown>).src))
+  ) {
+    return null;
+  }
+  return Object.fromEntries(
+    Object.entries(node).map(([key, entry]) => [key, sanitizeDocumentJSON(entry)])
+  );
+}
+
 function shouldStripPastedAttribute(tagName: string, attrName: string): boolean {
   const lowered = attrName.toLowerCase();
   if (lowered.startsWith('on')) return true;
@@ -58,6 +113,8 @@ export function sanitizePastedHTML(html: string, contextBefore = ''): string {
       }
     });
   });
+
+  stripUnsafeURLs(parsed.body);
 
   smartifyDOMTextNodes(parsed.body, contextBefore);
 

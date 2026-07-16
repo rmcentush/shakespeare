@@ -49,14 +49,18 @@ enum AuthorStyleReference {
     static func writeLearnedPreferences(_ content: String) throws {
         ensureStyleDirectoryExists()
         try content.write(to: learnedPreferencesURL, atomically: true, encoding: .utf8)
+        try protectFile(at: learnedPreferencesURL)
         cachedLearnedPreferences = content
         cachedLearnedPreferencesModificationDate = modificationDate(for: learnedPreferencesURL)
     }
 
     private static func ensureWritableReferenceExists() {
         ensureStyleDirectoryExists()
-        guard !FileManager.default.fileExists(atPath: writableReferenceURL.path),
-              let bundledURL = Bundle.shakespeareResources.url(
+        if FileManager.default.fileExists(atPath: writableReferenceURL.path) {
+            try? protectFile(at: writableReferenceURL)
+            return
+        }
+        guard let bundledURL = Bundle.shakespeareResources.url(
                 forResource: "writing_style_reference",
                 withExtension: "md"
               )
@@ -64,15 +68,32 @@ enum AuthorStyleReference {
 
         do {
             try FileManager.default.copyItem(at: bundledURL, to: writableReferenceURL)
+            try protectFile(at: writableReferenceURL)
         } catch {
             print("AuthorStyleReference: failed to copy writable style guide: \(error)")
         }
     }
 
     private static func ensureStyleDirectoryExists() {
-        try? FileManager.default.createDirectory(
-            at: styleDirectoryURL,
-            withIntermediateDirectories: true
+        do {
+            try FileManager.default.createDirectory(
+                at: styleDirectoryURL,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: styleDirectoryURL.path
+            )
+        } catch {
+            print("AuthorStyleReference: failed to protect style directory: \(error)")
+        }
+    }
+
+    private static func protectFile(at url: URL) throws {
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: url.path
         )
     }
 

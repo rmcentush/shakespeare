@@ -47,6 +47,7 @@ final class StyleFeedbackStore {
             } else {
                 try line.write(to: feedbackLogURL, options: .atomic)
             }
+            try protectFile(at: feedbackLogURL)
         } catch {
             print("StyleFeedbackStore: failed to append feedback: \(error)")
         }
@@ -146,6 +147,7 @@ final class StyleFeedbackStore {
         ids.forEach { processed.insert($0) }
         let data = try encoder.encode(Array(processed).sorted())
         try data.write(to: processedIDsURL, options: .atomic)
+        try protectFile(at: processedIDsURL)
     }
 
     func learnedPreferences() -> String {
@@ -175,5 +177,12 @@ final class StyleFeedbackStore {
             withIntermediateDirectories: true
         )
         _ = AuthorStyleReference.content
+    }
+
+    private func protectFile(at url: URL) throws {
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: url.path
+        )
     }
 }

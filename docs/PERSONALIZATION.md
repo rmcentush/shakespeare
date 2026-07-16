@@ -9,7 +9,8 @@ Shakespeare has a local-first personalization pipeline for adapting Inkling to o
 3. A deduplicated final-text snapshot is recorded after a successful document save.
 4. The local compiler creates document-separated SFT and DPO train/evaluation files.
 5. An explicit CLI command submits a LoRA training run to Tinker.
-6. `--promote` writes the returned sampler checkpoint to the local model registry. Selecting **Tinker / Inkling** in Settings then uses that checkpoint for inference.
+6. A held-out evaluation produces a report tied to the exact dataset manifest.
+7. A separate `promote` command verifies the report and writes the passing checkpoint to the local model registry. Selecting **Tinker / Inkling** in Settings then uses that checkpoint for inference.
 
 Raw data lives at:
 
@@ -58,8 +59,7 @@ shakespeare-train train \
   --dataset-dir Trainer/data/compiled \
   --log-path Trainer/runs/inkling-sft-001 \
   --learning-rate <experiment-value> \
-  --epochs 1 \
-  --promote
+  --epochs 1
 ```
 
 Rejected edits can drive a separate DPO run. It can start from the base model or from the SFT run's `state_path`:
@@ -69,12 +69,37 @@ shakespeare-train train-dpo \
   --dataset-dir Trainer/data/compiled \
   --log-path Trainer/runs/inkling-dpo-001 \
   --learning-rate <experiment-value> \
-  --load-checkpoint '<sft-state-path>' \
-  --promote
+  --load-checkpoint '<sft-state-path>'
 ```
 
 Do not promote a checkpoint solely because training completed. Compare it with the base model on the held-out documents first: blind preference, instruction adherence, factual preservation, unwanted phrase copying, and regression on grammar/mechanical edits. Keep the base provider available as a rollback.
 
+The promotion report is a versioned JSON object. `dataset_manifest_sha256` must be the SHA-256 digest of the exact `manifest.json`, and `metrics` must contain the measured evaluation results:
+
+```json
+{
+  "schema_version": 1,
+  "status": "passed",
+  "dataset_manifest_sha256": "<sha256-of-manifest.json>",
+  "sampler_path": "<exact-final-sampler-path>",
+  "metrics": {
+    "blind_style_preference_win_rate": 0.72,
+    "factual_preservation_rate": 1.0
+  }
+}
+```
+
+After evaluating the final checkpoint, promote it explicitly:
+
+```bash
+shakespeare-train promote \
+  --dataset-dir Trainer/data/compiled \
+  --log-path Trainer/runs/inkling-sft-001 \
+  --evaluation-report Trainer/runs/inkling-sft-001/evaluation.json
+```
+
+The CLI binds the report to the exact dataset manifest and sampler path. Training and activation are separate actions, so a missing, failed, stale, or mismatched report cannot silently activate a checkpoint.
+
 ## Product boundary
 
-The editor should remain native and local-first. A web service is useful as an optional control plane for accounts, encrypted sync, scheduled training, experiment tracking, and multi-device checkpoint distribution. It should not become the source of truth for documents or raw writing events unless the writer explicitly opts into that separate sync boundary.
+The editor should remain native and local-first. A web service is useful as an optional control plane for accounts, scheduled training, experiment tracking, billing, and multi-device checkpoint distribution. It should not become the source of truth for documents or raw writing events unless the writer explicitly opts into that separate sync boundary. The hosted boundary is described in [Service architecture](SERVICE_ARCHITECTURE.md).

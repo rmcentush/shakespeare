@@ -1,4 +1,4 @@
-.PHONY: all build run clean editor typecheck swift install evals llm-edit-evals document-asset-evals api-key-store-evals personalization-evals
+.PHONY: all build run clean editor typecheck swift install evals llm-edit-evals document-asset-evals api-key-store-evals personalization-evals service-install service-test
 
 all: build
 
@@ -40,6 +40,14 @@ api-key-store-evals:
 personalization-evals:
 	PYTHONPATH=Trainer python3 -m unittest discover -s Trainer/tests -v
 
+service-install:
+	python3 -m pip install --requirement Service/requirements-dev.txt
+
+service-test:
+	PYTHONPATH=Service python3 -m pytest Service/tests
+	python3 -m ruff check Service Trainer
+	python3 -m ruff format --check Service Trainer
+
 evals: llm-edit-evals document-asset-evals api-key-store-evals personalization-evals
 
 # Build release
@@ -60,5 +68,5 @@ install:
 
 # Clean everything
 clean:
-	rm -rf .build Editor/node_modules Editor/dist
+	rm -rf .build Editor/node_modules Editor/dist Service/.pytest_cache Service/.ruff_cache
 	rm -f Sources/WordProcessor/Resources/editor.js Sources/WordProcessor/Resources/editor.css Sources/WordProcessor/Resources/harper-runtime.js Sources/WordProcessor/Resources/harper_wasm_slim_bg.wasm Sources/WordProcessor/Resources/Harper_LICENSE.txt

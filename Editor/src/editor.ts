@@ -1,4 +1,4 @@
-import { Editor, Extension } from '@tiptap/core';
+import { Editor, Extension, type JSONContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -38,7 +38,12 @@ import {
   runReplaceAll,
   runReplaceOne,
 } from './search';
-import { sanitizePastedHTML, stripGeneratedFootnotesSection } from './sanitize';
+import {
+  isSafeDocumentImageSource,
+  sanitizeDocumentHTML,
+  sanitizeDocumentJSON,
+  sanitizePastedHTML,
+} from './sanitize';
 import {
   attachSelectionChangeFallback,
   attachSmartQuotesNormalizationFallback,
@@ -156,7 +161,7 @@ function completeImageImport(requestId: string, source: string, errorMessage = '
   const pending = pendingImageImports.get(requestId);
   pendingImageImports.delete(requestId);
   if (!pending) return;
-  if (!source) {
+  if (!source || !isSafeDocumentImageSource(source)) {
     if (errorMessage) console.error('Image import failed:', errorMessage);
     return;
   }
@@ -303,7 +308,7 @@ registerSwiftCallbacks({
   loadContent(html: string) {
     resetEditorSyncState();
     rejectAllPendingEdits(editor, false);
-    editor.commands.setContent(stripGeneratedFootnotesSection(html), false);
+    editor.commands.setContent(sanitizeDocumentHTML(html), false);
     normalizeDocumentSmartQuotes(editor);
     renderFootnotesPanel(editor, true);
     emitSelectionUpdate(editor);
@@ -313,8 +318,11 @@ registerSwiftCallbacks({
     resetEditorSyncState();
     try {
       rejectAllPendingEdits(editor, false);
-      const parsed = JSON.parse(json);
-      editor.commands.setContent(parsed, false);
+      const parsed = sanitizeDocumentJSON(JSON.parse(json));
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('Document JSON must contain an object root');
+      }
+      editor.commands.setContent(parsed as JSONContent, false);
       normalizeDocumentSmartQuotes(editor);
       renderFootnotesPanel(editor, true);
       emitSelectionUpdate(editor);
