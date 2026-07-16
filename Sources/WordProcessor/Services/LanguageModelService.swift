@@ -1,39 +1,32 @@
 import Foundation
 
 final class LanguageModelService: Sendable {
-    struct Provider: Sendable {
-        let displayName: String
-        let messagesURL: URL
-        let apiKeyService: String
-        let anthropicVersion: String
-
-        static let anthropic = Provider(
-            displayName: "Anthropic",
-            messagesURL: URL(string: "https://api.anthropic.com/v1/messages")!,
-            apiKeyService: "anthropic",
-            anthropicVersion: "2023-06-01"
-        )
-    }
-
-    private let provider: Provider
-    // The default model keeps thinking enabled and rejects an explicit setting
-    // (sending `thinking` returns a 400). Depth is controlled via
-    // output_config.effort instead.
-    private let model: String
-    private let effort: String?
+    private let purpose: InferencePurpose
+    private let modelOverride: String?
+    private let effortOverride: String?
     private let session: URLSession
 
     init(
-        model: String = "claude-fable-5",
+        purpose: InferencePurpose = .assistant,
+        model: String? = nil,
         effort: String? = "low",
-        provider: Provider = .anthropic,
         session: URLSession = LanguageModelService.makeSession()
     ) {
-        self.model = model
-        self.effort = effort
-        self.provider = provider
+        self.purpose = purpose
+        self.modelOverride = model
+        self.effortOverride = effort
         self.session = session
     }
+
+    var currentRuntime: InferenceRuntime {
+        InferenceSettings.runtime(
+            purpose: purpose,
+            modelOverride: modelOverride,
+            effortOverride: effortOverride
+        )
+    }
+
+    var supportsServerWebSearch: Bool { currentRuntime.supportsServerWebSearch }
 
     // MARK: - Types
 
@@ -69,6 +62,15 @@ final class LanguageModelService: Sendable {
                     "html": [
                         "type": "string",
                         "description": "The HTML content to replace the selection with. Can include formatting like <b>, <i>, <u>, <span style='color: ...'>, etc. Use an empty string to suggest deleting the selection."
+                    ],
+                    "learning_category": [
+                        "type": "string",
+                        "enum": ["voice", "tone", "clarity", "structure", "concision", "style", "mechanics"],
+                        "description": "Optional editorial category that best explains the change."
+                    ],
+                    "rationale": [
+                        "type": "string",
+                        "description": "A short reason for the proposed change, suitable for learning from the writer's decision."
                     ]
                 ],
                 "required": ["html"]
@@ -83,6 +85,15 @@ final class LanguageModelService: Sendable {
                     "html": [
                         "type": "string",
                         "description": "The HTML content to insert at the cursor position."
+                    ],
+                    "learning_category": [
+                        "type": "string",
+                        "enum": ["voice", "tone", "clarity", "structure", "concision", "style", "mechanics"],
+                        "description": "Optional editorial category that best explains the insertion."
+                    ],
+                    "rationale": [
+                        "type": "string",
+                        "description": "A short reason for the proposed insertion."
                     ]
                 ],
                 "required": ["html"]
@@ -136,6 +147,15 @@ final class LanguageModelService: Sendable {
                     "replace_all": [
                         "type": "boolean",
                         "description": "Only true when the user explicitly asks to replace every matching occurrence. Defaults to false."
+                    ],
+                    "learning_category": [
+                        "type": "string",
+                        "enum": ["voice", "tone", "clarity", "structure", "concision", "style", "mechanics"],
+                        "description": "Optional editorial category that best explains the change."
+                    ],
+                    "rationale": [
+                        "type": "string",
+                        "description": "A short reason for the proposed change, suitable for learning from the writer's decision."
                     ]
                 ],
                 "required": ["target", "replacement_html"]
@@ -154,25 +174,26 @@ final class LanguageModelService: Sendable {
         temperature: Double? = nil,
         maxTokens: Int = 8192
     ) -> AsyncThrowingStream<StreamChunk, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task.detached(priority: .userInitiated) { [provider, model, effort, session] in
-                guard let apiKey = APIKeyStore.shared.getAPIKey(service: provider.apiKeyService) else {
-                    continuation.finish(throwing: APIError.noAPIKey(provider.displayName))
+        let runtime = currentRuntime
+        return AsyncThrowingStream { continuation in
+            let task = Task.detached(priority: .userInitiated) { [runtime, session] in
+                guard let apiKey = APIKeyStore.shared.getAPIKey(service: runtime.apiKeyService) else {
+                    continuation.finish(throwing: APIError.noAPIKey(runtime.providerName))
                     return
                 }
 
                 var body: [String: Any] = [
-                    "model": model,
+                    "model": runtime.model,
                     "max_tokens": maxTokens,
                     "stream": true,
-                    "messages": messages
+                    "messages": Self.sanitizedForProvider(messages, runtime: runtime)
                 ]
 
                 var outputConfig: [String: Any] = [:]
-                if let effort {
+                if let effort = runtime.effort {
                     outputConfig["effort"] = effort
                 }
-                if let outputFormat {
+                if runtime.supportsOutputFormat, let outputFormat {
                     outputConfig["format"] = outputFormat
                 }
                 if !outputConfig.isEmpty {
@@ -183,14 +204,16 @@ final class LanguageModelService: Sendable {
                 }
 
                 if let tools = tools, !tools.isEmpty {
-                    body["tools"] = tools
+                    body["tools"] = tools.filter { tool in
+                        runtime.supportsServerWebSearch || tool["name"] as? String != "web_search"
+                    }
                 }
 
                 if let systemPrompt = systemPrompt {
-                    body["system"] = systemPrompt
+                    body["system"] = Self.sanitizedForProvider(systemPrompt, runtime: runtime)
                 }
 
-                if let cacheControl = cacheControl {
+                if runtime.supportsPromptCaching, let cacheControl = cacheControl {
                     body["cache_control"] = cacheControl
                 }
 
@@ -202,12 +225,12 @@ final class LanguageModelService: Sendable {
                     // already-delivered text, so retries only happen before that.
                     var hasYieldedChunk = false
                     do {
-                        var request = URLRequest(url: provider.messagesURL)
+                        var request = URLRequest(url: runtime.messagesURL)
                         request.httpMethod = "POST"
                         request.timeoutInterval = 60
                         request.setValue("application/json", forHTTPHeaderField: "content-type")
                         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-                        request.setValue(provider.anthropicVersion, forHTTPHeaderField: "anthropic-version")
+                        request.setValue(runtime.apiVersion, forHTTPHeaderField: "anthropic-version")
                         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
                         let (bytes, response) = try await session.bytes(for: request)
@@ -309,7 +332,7 @@ final class LanguageModelService: Sendable {
                         }
 
                         if wasRefused {
-                            continuation.finish(throwing: APIError.refused(provider.displayName))
+                            continuation.finish(throwing: APIError.refused(runtime.providerName))
                         } else {
                             continuation.finish()
                         }
@@ -338,6 +361,20 @@ final class LanguageModelService: Sendable {
                 task.cancel()
             }
         }
+    }
+
+    private static func sanitizedForProvider(_ value: Any, runtime: InferenceRuntime) -> Any {
+        guard !runtime.supportsPromptCaching else { return value }
+        if let dictionary = value as? [String: Any] {
+            return dictionary.reduce(into: [String: Any]()) { result, entry in
+                guard entry.key != "cache_control" else { return }
+                result[entry.key] = sanitizedForProvider(entry.value, runtime: runtime)
+            }
+        }
+        if let array = value as? [Any] {
+            return array.map { sanitizedForProvider($0, runtime: runtime) }
+        }
+        return value
     }
 
     // MARK: - Retry

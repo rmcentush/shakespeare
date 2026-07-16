@@ -153,7 +153,10 @@ final class AssistantChatViewModel {
             var lastFlushTime = Date.distantPast
 
             do {
-                var allTools: [[String: Any]] = [LanguageModelService.webSearchTool]
+                var allTools: [[String: Any]] = []
+                if apiService.supportsServerWebSearch {
+                    allTools.append(LanguageModelService.webSearchTool)
+                }
                 if editorViewModel != nil {
                     allTools.append(contentsOf: LanguageModelService.documentTools)
                 }
@@ -255,6 +258,7 @@ final class AssistantChatViewModel {
                 let result = await executeTool(
                     name: tc.name,
                     inputJSON: tc.inputJSON,
+                    userInstruction: text,
                     editContext: contextForTool,
                     editorViewModel: editorViewModel
                 )
@@ -283,6 +287,7 @@ final class AssistantChatViewModel {
     private func executeTool(
         name: String,
         inputJSON: String,
+        userInstruction: String,
         editContext: EditorViewModel.EditContextSnapshot?,
         editorViewModel: EditorViewModel?
     ) async -> String {
@@ -294,6 +299,11 @@ final class AssistantChatViewModel {
         }
 
         let input = parseJSON(inputJSON)
+        let metadata: [String: Any] = [
+            "learningCategory": input["learning_category"] as? String ?? "",
+            "rationale": input["rationale"] as? String ?? "",
+            "instruction": userInstruction,
+        ]
         toolCallCounter += 1
         let editId = "edit_\(toolCallCounter)"
 
@@ -307,7 +317,8 @@ final class AssistantChatViewModel {
                 editor.pendingReplaceSelection(
                     id: editId,
                     html: html,
-                    target: selectionTarget(from: editContext)
+                    target: selectionTarget(from: editContext),
+                    metadata: metadata
                 ) { count in
                     if count > 0 {
                         cont.resume(returning: "\(Self.suggestionNoun(for: html).capitalized) suggested for selected text. User will review before applying.")
@@ -335,7 +346,8 @@ final class AssistantChatViewModel {
                 editor.pendingInsertAtCursor(
                     id: editId,
                     html: html,
-                    target: insertionTarget(from: editContext)
+                    target: insertionTarget(from: editContext),
+                    metadata: metadata
                 ) { count in
                     if count > 0 {
                         cont.resume(returning: "Edit suggested at cursor position. User will review before applying.")
@@ -368,7 +380,8 @@ final class AssistantChatViewModel {
                 id: editId,
                 target: normalizedProposedTarget(target, editContext: editContext),
                 replacementHTML: replacementHTML,
-                replaceAll: replaceAll
+                replaceAll: replaceAll,
+                metadata: metadata
             )
             let result = editToolResult(count: count, scopeDetail: nil, isDeletion: Self.isDeletionReplacement(replacementHTML))
             if count > 0,
@@ -877,14 +890,16 @@ final class AssistantChatViewModel {
         id: String,
         target: [String: Any],
         replacementHTML: String,
-        replaceAll: Bool
+        replaceAll: Bool,
+        metadata: [String: Any]
     ) async -> Int {
         await withCheckedContinuation { continuation in
             editor.pendingProposeEdit(
                 id: id,
                 target: target,
                 replacementHTML: replacementHTML,
-                replaceAll: replaceAll
+                replaceAll: replaceAll,
+                metadata: metadata
             ) { count in
                 continuation.resume(returning: count)
             }

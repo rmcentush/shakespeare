@@ -9,7 +9,7 @@ make run          # Build editor + Swift (debug), run immediately
 make install      # Build editor + Swift (release), create .app, copy to /Applications
 make editor       # Build TipTap bundle only (locked npm install + esbuild)
 make typecheck    # Type-check the TypeScript editor
-make evals        # Run edit-target, document-asset, and API-key-store checks
+make evals        # Run edit-target, document-asset, key-store, and personalization checks
 make copy-assets  # Build editor + copy editor.js/editor.css to Swift Resources
 make build        # Build editor + Swift release binary
 make clean        # Remove .build, node_modules, dist, copied assets
@@ -27,7 +27,7 @@ The writing assistant uses a bundled editorial reference plus a separate file of
 - Resource copy entry: `Package.swift`
 - Prompt injection points: `Sources/WordProcessor/ViewModels/AssistantChatViewModel.swift` and ambient review in `Sources/WordProcessor/ViewModels/EditorViewModel.swift`
 
-Treat `writing_style_reference.md` as the high-priority voice reference for sidebar drafting and ambient voice suggestions. The current document supplies topic, continuity, and edit-targeting context. Keep future personalized training data and Tinker integration in a dedicated service layer rather than coupling them to document editing.
+Treat `writing_style_reference.md` as the high-priority voice reference for sidebar drafting and ambient voice suggestions. The current document supplies topic, continuity, and edit-targeting context. Personalized training data and Tinker integration stay in dedicated service and `Trainer/` layers rather than coupling them to document editing.
 
 ## Architecture
 
@@ -61,8 +61,11 @@ Content changes sent across the bridge are debounced for 1 second in the editor.
 | `Sources/WordProcessor/Views/EditorWebView.swift` | NSViewRepresentable wrapping WKWebView, loads editor.html |
 | `Sources/WordProcessor/Views/ContentView.swift` | Main layout: editor + optional sidebars |
 | `Sources/WordProcessor/Services/LanguageModelService.swift` | Provider-configured Messages API client with SSE streaming |
+| `Sources/WordProcessor/Services/InferenceSettings.swift` | Runtime provider/model selection and promoted-checkpoint registry |
+| `Sources/WordProcessor/Services/TrainingEventStore.swift` | Opt-in, versioned, local personalization event ledger |
 | `Sources/WordProcessor/Services/APIKeyStore.swift` | Keychain-backed API keys with an owner-only development fallback |
 | `Sources/WordProcessor/Services/FontManager.swift` | Font config, @font-face CSS generation, UserDefaults persistence |
+| `Trainer/shakespeare_train/` | Deterministic SFT/DPO compiler and explicit Tinker training CLI |
 
 ### Cross-View Communication
 
@@ -70,7 +73,9 @@ Views communicate via NotificationCenter, not direct bindings: `editorContentCha
 
 ### Model Provider Boundary
 
-`LanguageModelService.Provider` supplies the Messages API endpoint, API-key storage service, and protocol version. Keep provider selection separate from document editing and keep future Tinker training and fine-tuning code in its own service layer.
+`InferenceSettings` resolves an immutable runtime configuration for each request. `LanguageModelService` sanitizes provider-specific features at the boundary. Keep provider selection separate from document editing and keep training code in `TrainingEventStore` and `Trainer/`.
+
+Personalization collection must remain off by default. Never upload the raw ledger implicitly, weaken its owner-only permissions, mix examples from one document across train/evaluation splits, or promote a checkpoint merely because a run completed.
 
 ## Gotchas
 
@@ -79,4 +84,4 @@ Views communicate via NotificationCenter, not direct bindings: `editorContentCha
 - **Bundle resource paths:** Access bundled files via `Bundle.shakespeareResources`; release packaging places the SwiftPM resource bundle under `Contents/Resources` so code signing can seal it.
 - **Font injection timing:** EditorWebView injects @font-face CSS after a 500ms delay to ensure the webview is ready.
 - **BridgePayload parsing:** Uses manual JSON parsing (`[String: Any]`), not Codable.
-- **Anthropic API key:** Stored in the macOS Keychain. A 0600 file at `~/Library/Application Support/Shakespeare/.anthropic.key` is used only as a development fallback and is migrated when Keychain access succeeds.
+- **Provider API keys:** Stored in the macOS Keychain. A service-specific 0600 file under `~/Library/Application Support/Shakespeare/` is used only as a development fallback and is migrated when Keychain access succeeds.

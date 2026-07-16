@@ -3,8 +3,16 @@ import SwiftUI
 
 struct SettingsView: View {
     @State private var anthropicKey = ""
+    @State private var tinkerKey = ""
     @State private var showKey = false
     @State private var saved = false
+    @State private var tinkerSaved = false
+    @AppStorage(InferenceSettings.providerDefaultsKey) private var inferenceProvider = InferenceProviderID.anthropic.rawValue
+    @AppStorage(InferenceSettings.anthropicModelDefaultsKey) private var anthropicModel = InferenceSettings.defaultAnthropicModel
+    @AppStorage(InferenceSettings.tinkerModelDefaultsKey) private var tinkerModel = InferenceSettings.defaultTinkerModel
+    @AppStorage(PersonalizationSettings.enabledDefaultsKey) private var personalizationEnabled = false
+    @State private var trainingEventCount = 0
+    @State private var showDeleteEventsConfirmation = false
     @State private var pendingStyleDecisionCount = 0
     @State private var learnedPreferencesPreview = ""
     @State private var proposedLearnedPreferences = ""
@@ -23,6 +31,33 @@ struct SettingsView: View {
         TabView {
             // API Keys tab
             Form {
+                Section("Inference") {
+                    Picker("Provider", selection: $inferenceProvider) {
+                        ForEach(InferenceProviderID.allCases) { provider in
+                            Text(provider.displayName).tag(provider.rawValue)
+                        }
+                    }
+
+                    if inferenceProvider == InferenceProviderID.anthropic.rawValue {
+                        TextField("Assistant model", text: $anthropicModel)
+                            .textFieldStyle(.roundedBorder)
+                    } else {
+                        TextField("Base model", text: $tinkerModel)
+                            .textFieldStyle(.roundedBorder)
+                        if let checkpoint = PersonalizationModelRegistry.activeSamplerPath {
+                            LabeledContent("Active checkpoint") {
+                                Text(checkpoint)
+                                    .font(.caption2)
+                                    .lineLimit(2)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        Text("A promoted personal checkpoint overrides the base model automatically.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("Anthropic API Key") {
                     HStack {
                         if showKey {
@@ -51,6 +86,33 @@ struct SettingsView: View {
                             saveAnthropicKey()
                         }
                         if saved {
+                            Text("Saved!")
+                                .foregroundStyle(.green)
+                                .font(.caption)
+                        }
+                    }
+                }
+
+                Section("Tinker API Key") {
+                    HStack {
+                        if showKey {
+                            TextField("TINKER_API_KEY", text: $tinkerKey)
+                                .textFieldStyle(.roundedBorder)
+                        } else {
+                            SecureField("TINKER_API_KEY", text: $tinkerKey)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        Button {
+                            pasteTinkerKeyFromClipboard()
+                        } label: {
+                            Image(systemName: "doc.on.clipboard")
+                        }
+                        .help("Paste from Clipboard")
+                    }
+
+                    HStack {
+                        Button("Save") { saveTinkerKey() }
+                        if tinkerSaved {
                             Text("Saved!")
                                 .foregroundStyle(.green)
                                 .font(.caption)
@@ -124,6 +186,45 @@ struct SettingsView: View {
                 }
             }
             .tabItem { Label("Style Context", systemImage: "text.book.closed") }
+
+            Form {
+                Section("Personal Style Training") {
+                    Toggle("Collect local training events", isOn: $personalizationEnabled)
+
+                    Text("Off by default. When enabled, accepted/rejected assistant edits and deduplicated document snapshots are recorded locally. Nothing is uploaded until you deliberately run the trainer.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    LabeledContent("Events") {
+                        Text("\(trainingEventCount)")
+                            .font(.caption)
+                    }
+
+                    LabeledContent("Local ledger") {
+                        Text(TrainingEventStore.shared.eventLogURL.path)
+                            .font(.caption2)
+                            .lineLimit(2)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                Section("Data Controls") {
+                    HStack {
+                        Button("Reveal in Finder") {
+                            revealPersonalizationData()
+                        }
+                        Button("Delete All Events", role: .destructive) {
+                            showDeleteEventsConfirmation = true
+                        }
+                        .disabled(trainingEventCount == 0)
+                    }
+
+                    Text("The training CLI compiles this ledger into document-separated train/evaluation datasets and can promote a trained Tinker checkpoint for inference.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .tabItem { Label("Personalization", systemImage: "person.crop.circle.badge.checkmark") }
 
             // Typography tab
             Form {
@@ -213,12 +314,27 @@ struct SettingsView: View {
             }
             .tabItem { Label("Editing", systemImage: "checkmark.circle") }
         }
-        .frame(width: 500, height: 420)
+        .frame(width: 560, height: 520)
         .onAppear {
             if let key = APIKeyStore.shared.getAPIKey(service: "anthropic") {
                 anthropicKey = key
             }
+            if let key = APIKeyStore.shared.getAPIKey(service: "tinker") {
+                tinkerKey = key
+            }
             refreshStyleContext()
+            trainingEventCount = TrainingEventStore.shared.eventCount()
+        }
+        .onChange(of: personalizationEnabled) { _, enabled in
+            PersonalizationSettings.isEnabled = enabled
+        }
+        .confirmationDialog(
+            "Delete every locally collected training event?",
+            isPresented: $showDeleteEventsConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete All Events", role: .destructive) { deleteTrainingEvents() }
+            Button("Cancel", role: .cancel) {}
         }
         .sheet(isPresented: $showStyleProposal) {
             styleProposalSheet
@@ -284,6 +400,35 @@ struct SettingsView: View {
         saved = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             saved = false
+        }
+    }
+
+    private func pasteTinkerKeyFromClipboard() {
+        guard let clipboardString = NSPasteboard.general.string(forType: .string) else { return }
+        tinkerKey = clipboardString.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func saveTinkerKey() {
+        tinkerKey = tinkerKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard APIKeyStore.shared.setAPIKey(tinkerKey, service: "tinker") else { return }
+        tinkerSaved = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            tinkerSaved = false
+        }
+    }
+
+    private func revealPersonalizationData() {
+        let url = PersonalizationStorage.directoryURL
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    private func deleteTrainingEvents() {
+        do {
+            try TrainingEventStore.shared.deleteAll()
+            trainingEventCount = 0
+        } catch {
+            styleUpdateError = error.localizedDescription
         }
     }
 

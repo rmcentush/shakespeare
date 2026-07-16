@@ -14,6 +14,7 @@ import {
   AMBIGUOUS_EDIT_TARGET,
   INVALID_EDIT_TARGET,
   MAX_PENDING_FIND_REPLACE_MATCHES,
+  PendingEditMetadata,
   ProposedEditTarget,
   STALE_EDIT_TARGET,
   SelectionEditTarget,
@@ -552,16 +553,31 @@ registerSwiftCallbacks({
   },
 
   // --- Pending Edits API (Cursor-like diff review) ---
-  pendingReplaceSelection(id: string, newHtml: string, target?: SelectionEditTarget): number {
+  pendingReplaceSelection(
+    id: string,
+    newHtml: string,
+    target?: SelectionEditTarget,
+    metadata?: PendingEditMetadata
+  ): number {
     const targetedRange = rangeFromSelectionTarget(editor, target ?? null);
     if (typeof targetedRange === 'number') return targetedRange;
 
     const { from, to } = targetedRange ?? editor.state.selection;
     if (from === to) return 0;
-    const edits = replacementPendingEdits(editor, id, { from, to }, newHtml, 'selection');
+    const edits = replacementPendingEdits(editor, id, { from, to }, newHtml, 'selection').map((edit) => ({
+      ...edit,
+      learningCategory: metadata?.learningCategory ?? '',
+      rationale: metadata?.rationale ?? '',
+      instruction: metadata?.instruction ?? '',
+    }));
     return queuePendingEdits(editor, edits, edits[0]?.id ?? null);
   },
-  pendingInsertAtCursor(id: string, newHtml: string, target?: SelectionEditTarget): number {
+  pendingInsertAtCursor(
+    id: string,
+    newHtml: string,
+    target?: SelectionEditTarget,
+    metadata?: PendingEditMetadata
+  ): number {
     const targetedPosition = positionFromInsertionTarget(editor, target ?? null);
     if (targetedPosition === STALE_EDIT_TARGET || targetedPosition === INVALID_EDIT_TARGET) {
       return targetedPosition;
@@ -576,6 +592,7 @@ registerSwiftCallbacks({
         from,
         to: from,
         newHtml,
+        metadata,
       }),
     ], id);
   },
@@ -600,9 +617,10 @@ registerSwiftCallbacks({
     id: string,
     target: ProposedEditTarget,
     replaceHtml: string,
-    replaceAll: boolean
+    replaceAll: boolean,
+    metadata?: PendingEditMetadata
   ): number {
-    return queueProposedEdit(editor, id, target ?? {}, replaceHtml, replaceAll);
+    return queueProposedEdit(editor, id, target ?? {}, replaceHtml, replaceAll, metadata);
   },
   acceptAllPendingEdits() { acceptAllPendingEdits(editor); },
   rejectAllPendingEdits() { rejectAllPendingEdits(editor); },

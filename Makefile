@@ -1,4 +1,4 @@
-.PHONY: all build run clean editor typecheck swift install evals llm-edit-evals document-asset-evals api-key-store-evals
+.PHONY: all build run clean editor typecheck swift install evals llm-edit-evals document-asset-evals api-key-store-evals personalization-evals
 
 all: build
 
@@ -37,7 +37,10 @@ api-key-store-evals:
 	swiftc Sources/WordProcessor/Services/APIKeyStore.swift scripts/api-key-store-evals.swift -o /tmp/api-key-store-evals
 	/tmp/api-key-store-evals
 
-evals: llm-edit-evals document-asset-evals api-key-store-evals
+personalization-evals:
+	PYTHONPATH=Trainer python3 -m unittest discover -s Trainer/tests -v
+
+evals: llm-edit-evals document-asset-evals api-key-store-evals personalization-evals
 
 # Build release
 build: copy-assets

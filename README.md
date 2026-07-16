@@ -2,7 +2,7 @@
 
 A focused writing app for macOS with an integrated writing assistant.
 
-Shakespeare pairs a TipTap rich-text editor with a native macOS workspace for drafting, rewriting, proofreading, and versioning. Anthropic is the current model provider, isolated behind a provider boundary so the editor and document model remain independent of any one inference service.
+Shakespeare pairs a TipTap rich-text editor with a native macOS workspace for drafting, rewriting, proofreading, versioning, and opt-in personal style training. Inference is runtime-selectable between Anthropic and Tinker's Inkling endpoint; the editor and document model remain independent of either provider.
 
 ## Prerequisites
 
@@ -30,14 +30,22 @@ open /Applications/Shakespeare.app
 
 The editor works without a model connection. To enable the writing assistant (`Cmd+\\`):
 
-1. Get an API key from [console.anthropic.com](https://console.anthropic.com/)
+1. Get an Anthropic or Tinker API key.
 2. In Shakespeare, open **Settings** (Cmd+,)
 3. Go to the **API Keys** tab
-4. Paste your key and click **Save**
+4. Choose the inference provider, paste its key, and click **Save**
 
 Your key is stored in the macOS Keychain. Locally built bundles use an owner-only
 file under `~/Library/Application Support/Shakespeare/` only when Keychain access
 is unavailable.
+
+Tinker uses `thinkingmachines/Inkling` by default. When a personal checkpoint is promoted by the training CLI, Shakespeare resolves it from the local model registry automatically.
+
+### Personalization
+
+Personalization collection is off by default. When enabled in **Settings → Personalization**, Shakespeare records an owner-only local event ledger containing review decisions and deduplicated saved-document snapshots. Nothing is submitted for training automatically.
+
+The included Python tooling compiles document-separated SFT and DPO datasets, runs Inkling LoRA training through Tinker, and can promote the resulting sampler checkpoint for inference. See [Personal style training](docs/PERSONALIZATION.md) for the consent model, commands, evaluation gates, and rollback path.
 
 ### Style context
 
@@ -60,7 +68,7 @@ Shakespeare uses [Harper](https://writewithharper.com/) for fast, offline Englis
 | `make run` | Debug build + run immediately |
 | `make editor` | Build the TipTap JS bundle only |
 | `make typecheck` | Type-check the TypeScript editor |
-| `make evals` | Run edit-target, document-asset, and API-key-store regression checks |
+| `make evals` | Run editor, document, key-store, and personalization regression checks |
 | `make build` | Release build (no .app bundle) |
 | `make clean` | Remove all build artifacts |
 
@@ -68,7 +76,7 @@ Shakespeare uses [Harper](https://writewithharper.com/) for fast, offline Englis
 
 GitHub Actions validates every pull request and push to `main` by type-checking
 and bundling the TypeScript editor, compiling the Swift app in release mode, and
-running the edit-target, document-asset, and API-key-store evaluations. Dependabot checks npm and
+running the edit-target, document-asset, key-store, and personalization evaluations. Dependabot checks npm and
 GitHub Actions dependencies weekly.
 
 Pushing a version tag such as `v0.1.0` builds an ad-hoc-signed `Shakespeare.app`
@@ -82,5 +90,6 @@ Two layers communicating through a JS↔Swift bridge:
 
 - **TypeScript** (`Editor/src/`) — TipTap rich text editor, built as a single IIFE bundle targeting Safari 17
 - **Swift** (`Sources/WordProcessor/`) — SwiftUI app shell, file I/O, and model API integration
+- **Python** (`Trainer/`) — local dataset compiler and explicit Tinker SFT/DPO runner
 
 All JS↔Swift communication goes through a single `WKScriptMessageHandler`. The editor runs inside a `WKWebView`.

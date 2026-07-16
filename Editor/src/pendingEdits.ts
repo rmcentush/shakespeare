@@ -12,6 +12,7 @@ import {
   MAX_PENDING_FIND_REPLACE_MATCHES,
   PendingEdit,
   PendingEditKind,
+  PendingEditMetadata,
   ProposedEditTarget,
   STALE_EDIT_TARGET,
   SearchMatch,
@@ -107,6 +108,7 @@ export function createPendingEdit(
     from: number;
     to: number;
     newHtml: string;
+    metadata?: PendingEditMetadata;
   }
 ): PendingEdit {
   const source = inferPendingEditSource(options.groupId);
@@ -135,6 +137,9 @@ export function createPendingEdit(
     createdAt: Date.now(),
     status: 'pending',
     conflictReason: null,
+    learningCategory: options.metadata?.learningCategory ?? '',
+    rationale: options.metadata?.rationale ?? '',
+    instruction: options.metadata?.instruction ?? '',
   };
 }
 
@@ -1026,7 +1031,8 @@ export function queueProposedEdit(
   id: string,
   target: ProposedEditTarget,
   replaceHtml: string,
-  replaceAll: boolean
+  replaceAll: boolean,
+  metadata?: PendingEditMetadata
 ): number {
   const resolved = resolveProposedEditMatches(ed, target, replaceAll);
   if (typeof resolved === 'number') return resolved;
@@ -1035,7 +1041,12 @@ export function queueProposedEdit(
   const edits: PendingEdit[] = [];
   resolved.forEach((match, matchIndex) => {
     const groupId = replaceAll ? `${id}_${matchIndex}` : id;
-    edits.push(...replacementPendingEdits(ed, groupId, match, replaceHtml, 'findReplace'));
+    edits.push(...replacementPendingEdits(ed, groupId, match, replaceHtml, 'findReplace').map((edit) => ({
+      ...edit,
+      learningCategory: metadata?.learningCategory ?? '',
+      rationale: metadata?.rationale ?? '',
+      instruction: metadata?.instruction ?? '',
+    })));
   });
 
   return queuePendingEdits(ed, edits, edits[0]?.id ?? null);
@@ -1140,6 +1151,9 @@ function editDecisionPayload(ed: Editor, edit: PendingEdit, decision: 'accept' |
     replacementText: edit.replacementText,
     surroundingSentence: surroundingSentenceForEdit(ed, edit),
     groupId: edit.groupId,
+    learningCategory: edit.learningCategory,
+    rationale: edit.rationale,
+    instruction: edit.instruction,
     timestamp: Date.now(),
   };
 }

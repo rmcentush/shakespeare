@@ -66,10 +66,10 @@ export function registerSwiftCallbacks(callbacks: {
   replaceSelectionHTML: (html: string) => void;
   insertHTMLAtCursor: (html: string) => void;
   findAndReplaceText: (find: string, replaceHtml: string, replaceAllOccurrences: boolean) => number;
-  pendingReplaceSelection: (id: string, html: string, target?: any) => number;
-  pendingInsertAtCursor: (id: string, html: string, target?: any) => number;
+  pendingReplaceSelection: (id: string, html: string, target?: any, metadata?: import('./types').PendingEditMetadata) => number;
+  pendingInsertAtCursor: (id: string, html: string, target?: any, metadata?: import('./types').PendingEditMetadata) => number;
   pendingFindAndReplace: (id: string, find: string, replaceHtml: string, replaceAll: boolean) => number;
-  pendingProposeEdit: (id: string, target: any, replaceHtml: string, replaceAll: boolean) => number;
+  pendingProposeEdit: (id: string, target: any, replaceHtml: string, replaceAll: boolean, metadata?: import('./types').PendingEditMetadata) => number;
   acceptAllPendingEdits: () => void;
   rejectAllPendingEdits: () => void;
   acceptPendingEdit: (id: string) => boolean;

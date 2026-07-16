@@ -17,7 +17,7 @@ Run `make install` when `/Applications/Shakespeare.app` should be updated.
 ## Architecture guardrails
 
 - Preserve the single JavaScript-to-Swift bridge described in `AGENTS.md`.
-- Keep inference providers behind `LanguageModelService.Provider`.
-- Keep personalized training and fine-tuning in a dedicated service layer.
+- Keep inference providers behind `InferenceSettings` and `LanguageModelService`.
+- Keep personalized event capture in `TrainingEventStore` and remote training in `Trainer/`.
 - Access packaged resources through `Bundle.shakespeareResources`.
 - Preserve user documents, settings, and unrelated worktree changes.

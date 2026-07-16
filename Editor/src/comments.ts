@@ -655,6 +655,11 @@ export function pendingReplaceComment(editor: Editor, commentId: string, editId:
     from: comment.rangeStart,
     to: comment.rangeEnd,
     newHtml: html,
+    metadata: {
+      learningCategory: comment.kind,
+      rationale: comment.text,
+      instruction: 'Apply the editorial suggestion while preserving the writer\'s intent.',
+    },
   });
 
   return queuePendingEdits(editor, [edit], edit.id);

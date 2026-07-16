@@ -12,6 +12,12 @@ scripts/.havelock_cache/
 
 # macOS
 .DS_Store
+Trainer/data/
+Trainer/runs/
+Trainer/*.egg-info/
+Trainer/shakespeare_personalization.egg-info/
+__pycache__/
+*.pyc
 *.swp
 
 # IDE

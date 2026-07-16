@@ -45,11 +45,11 @@ final class EditorViewModel {
     private let autoSaveCheckpointInterval: TimeInterval = 60
     @ObservationIgnored private let ambientReviewService = LanguageModelService()
     @ObservationIgnored private let grammarService = LanguageModelService(
-        model: "claude-haiku-4-5-20251001",
+        purpose: .grammar,
         effort: nil
     )
     @ObservationIgnored private let thoroughGrammarService = LanguageModelService(
-        model: "claude-sonnet-5",
+        purpose: .proofread,
         effort: "low"
     )
     /// Incremented each time the editor signals ready (supports detecting web process restarts).
@@ -66,6 +66,7 @@ final class EditorViewModel {
         return content
     }()
     @ObservationIgnored private let styleFeedbackStore = StyleFeedbackStore.shared
+    @ObservationIgnored private let trainingEventStore = TrainingEventStore.shared
 
     struct SelectionState: Equatable {
         var isBold = false
@@ -335,6 +336,11 @@ final class EditorViewModel {
 
         case .editDecision(let decision):
             styleFeedbackStore.appendBridgeDecision(decision)
+            trainingEventStore.appendEditDecision(
+                decision,
+                documentID: activeDocumentID,
+                runtime: ambientReviewService.currentRuntime
+            )
 
         case .commentsChanged(let newComments, let documentChanged):
             comments = newComments.sorted {
@@ -653,13 +659,10 @@ final class EditorViewModel {
         id: String,
         html: String,
         target: [String: Any]? = nil,
+        metadata: [String: Any] = [:],
         completion: @escaping (Int) -> Void
     ) {
-        var arguments: [Any] = [id, html]
-        if let target {
-            arguments.append(target)
-        }
-        callEditorAPI("pendingReplaceSelection", arguments: arguments) { result in
+        callEditorAPI("pendingReplaceSelection", arguments: [id, html, target ?? [:], metadata]) { result in
             completion(result as? Int ?? 0)
         }
     }
@@ -668,13 +671,10 @@ final class EditorViewModel {
         id: String,
         html: String,
         target: [String: Any]? = nil,
+        metadata: [String: Any] = [:],
         completion: @escaping (Int) -> Void
     ) {
-        var arguments: [Any] = [id, html]
-        if let target {
-            arguments.append(target)
-        }
-        callEditorAPI("pendingInsertAtCursor", arguments: arguments) { result in
+        callEditorAPI("pendingInsertAtCursor", arguments: [id, html, target ?? [:], metadata]) { result in
             completion(result as? Int ?? 0)
         }
     }
@@ -690,9 +690,10 @@ final class EditorViewModel {
         target: [String: Any],
         replacementHTML: String,
         replaceAll: Bool,
+        metadata: [String: Any] = [:],
         completion: @escaping (Int) -> Void
     ) {
-        callEditorAPI("pendingProposeEdit", arguments: [id, target, replacementHTML, replaceAll]) { result in
+        callEditorAPI("pendingProposeEdit", arguments: [id, target, replacementHTML, replaceAll, metadata]) { result in
             completion(result as? Int ?? 0)
         }
     }
@@ -785,6 +786,12 @@ final class EditorViewModel {
         if status == "dismissed",
            let comment = comments.first(where: { $0.id == commentId && $0.source == "agent" }) {
             styleFeedbackStore.appendCommentDecision(decision: "reject", comment: comment)
+            trainingEventStore.appendCommentDecision(
+                decision: "reject",
+                comment: comment,
+                documentID: activeDocumentID,
+                runtime: ambientReviewService.currentRuntime
+            )
         }
         callEditorAPI("setCommentStatus", arguments: [commentId, status])
     }
@@ -792,6 +799,12 @@ final class EditorViewModel {
     func removeComment(_ commentId: String) {
         if let comment = comments.first(where: { $0.id == commentId && $0.source == "agent" && $0.status == "open" }) {
             styleFeedbackStore.appendCommentDecision(decision: "reject", comment: comment)
+            trainingEventStore.appendCommentDecision(
+                decision: "reject",
+                comment: comment,
+                documentID: activeDocumentID,
+                runtime: ambientReviewService.currentRuntime
+            )
         }
         callEditorAPI("removeComment", arguments: [commentId])
     }
@@ -804,10 +817,6 @@ final class EditorViewModel {
     func pendingReplaceComment(_ comment: BridgePayload.CommentData) {
         let replacement = comment.suggestedReplacement.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !replacement.isEmpty else { return }
-
-        if comment.source == "agent" {
-            styleFeedbackStore.appendCommentDecision(decision: "accept", comment: comment)
-        }
 
         callEditorAPI(
             "pendingReplaceComment",
@@ -1066,7 +1075,7 @@ final class EditorViewModel {
             }
         }
 
-        guard let data = responseText.data(using: .utf8) else {
+        guard let data = jsonObjectData(from: responseText) else {
             throw LanguageModelService.APIError.invalidResponse
         }
         return try JSONDecoder().decode(GrammarCheckResponse.self, from: data)
@@ -1157,7 +1166,7 @@ final class EditorViewModel {
             }
         }
 
-        guard let data = responseText.data(using: .utf8) else {
+        guard let data = jsonObjectData(from: responseText) else {
             throw LanguageModelService.APIError.invalidResponse
         }
         let verification = try JSONDecoder().decode(GrammarVerificationResponse.self, from: data)
@@ -1504,6 +1513,15 @@ final class EditorViewModel {
         }
 
         return []
+    }
+
+    private func jsonObjectData(from responseText: String) -> Data? {
+        let trimmed = responseText
+            .replacingOccurrences(of: "```json", with: "")
+            .replacingOccurrences(of: "```", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidate = jsonSubstring(in: trimmed, opening: "{", closing: "}") ?? trimmed
+        return candidate.data(using: .utf8)
     }
 
     private func addAmbientReviewComments(
@@ -2042,6 +2060,7 @@ final class EditorViewModel {
             if createVersionSnapshot {
                 VersionStore.shared.saveVersion(filePath: url.path, snapshot: persistedSnapshot)
             }
+            trainingEventStore.appendDocumentSnapshot(persistedSnapshot)
 
             if !document.isDirty {
                 try? await RecoveryDraftStore.shared.deleteDraft(documentID: persistedSnapshot.documentID)

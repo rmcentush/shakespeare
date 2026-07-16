@@ -108,6 +108,8 @@ enum BridgePayload: Codable {
         let surroundingSentence: String
         let groupID: String
         let rationale: String
+        let learningCategory: String
+        let instruction: String
         let timestamp: Double
     }
 
@@ -205,6 +207,8 @@ enum BridgePayload: Codable {
                     surroundingSentence: payload["surroundingSentence"] as? String ?? "",
                     groupID: payload["groupId"] as? String ?? "",
                     rationale: payload["rationale"] as? String ?? "",
+                    learningCategory: payload["learningCategory"] as? String ?? "",
+                    instruction: payload["instruction"] as? String ?? "",
                     timestamp: timestamp
                 )
             )

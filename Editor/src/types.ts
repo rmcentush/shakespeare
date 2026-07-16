@@ -160,6 +160,12 @@ export interface SentenceRange {
 export type PendingEditKind = 'selection' | 'insert' | 'findReplace' | 'delete';
 export type PendingEditStatus = 'pending' | 'conflicted';
 
+export interface PendingEditMetadata {
+  learningCategory?: string;
+  rationale?: string;
+  instruction?: string;
+}
+
 export interface PendingEdit {
   id: string;
   groupId: string;
@@ -174,6 +180,9 @@ export interface PendingEdit {
   createdAt: number;
   status: PendingEditStatus;
   conflictReason: string | null;
+  learningCategory: string;
+  rationale: string;
+  instruction: string;
 }
 
 // --- Limits ---

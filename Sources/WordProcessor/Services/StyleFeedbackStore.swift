@@ -58,7 +58,7 @@ final class StyleFeedbackStore {
                 id: data.eventID.isEmpty ? UUID().uuidString : data.eventID,
                 decision: data.decision,
                 source: data.source,
-                kind: data.kind,
+                kind: data.learningCategory.isEmpty ? data.kind : data.learningCategory,
                 originalText: data.originalText,
                 replacementText: data.replacementText,
                 surroundingSentence: data.surroundingSentence,
