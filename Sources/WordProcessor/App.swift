@@ -224,12 +224,12 @@ private struct WordProcessorCommands: Commands {
                     set: { textCheckingSettings.continuousSpellCheckingEnabled = $0 }
                 ))
 
-                Toggle("Check Grammar With Haiku", isOn: Binding(
+                Toggle("Check Grammar While Typing", isOn: Binding(
                     get: { textCheckingSettings.grammarCheckingEnabled },
                     set: { textCheckingSettings.grammarCheckingEnabled = $0 }
                 ))
 
-                Button("Thorough Proofread with Sonnet") {
+                Button("Run Thorough Proofread") {
                     windowCommandContext?.thoroughProofread()
                 }
                 .disabled(windowCommandContext == nil)

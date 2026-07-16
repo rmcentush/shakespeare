@@ -1,31 +1,33 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file is the canonical contributor guide for automated and human development work in this repository.
 
 ## Build Commands
 
 ```bash
 make run          # Build editor + Swift (debug), run immediately
 make install      # Build editor + Swift (release), create .app, copy to /Applications
-make editor       # Build TipTap bundle only (npm install + esbuild)
+make editor       # Build TipTap bundle only (locked npm install + esbuild)
+make typecheck    # Type-check the TypeScript editor
+make evals        # Run edit-target, document-asset, and API-key-store checks
 make copy-assets  # Build editor + copy editor.js/editor.css to Swift Resources
 make build        # Build editor + Swift release binary
 make clean        # Remove .build, node_modules, dist, copied assets
 ```
 
-**After every code change, run `make install`** to keep `/Applications/WordProcessor.app` current.
+Before handing off a change, run `make typecheck`, `make evals`, and the appropriate Swift build. Run `make install` when an updated `/Applications/Shakespeare.app` is needed.
 
-The build pipeline: `Editor/src/*.ts` → esbuild IIFE → `Editor/dist/` → copied to `Sources/WordProcessor/Resources/` → bundled via SPM `.copy("Resources")`.
+The build pipeline: `Editor/src/*.ts` → esbuild IIFE → `Editor/dist/` → copied to `Sources/WordProcessor/Resources/` → bundled via the explicit SPM resource entries in `Package.swift`.
 
-## LLM Style Context
+## Writing Style Context
 
-The Codex sidebar uses a bundled style reference instead of a synced corpus of David's published posts.
+The writing assistant uses a bundled editorial reference plus a separate file of reviewed, learned preferences.
 
-- Prompt reference resource: `Sources/WordProcessor/Resources/david_oks_style_guide.md`
+- Prompt reference resource: `Sources/WordProcessor/Resources/writing_style_reference.md`
 - Resource copy entry: `Package.swift`
-- Prompt injection points: `Sources/WordProcessor/ViewModels/ClaudeChatViewModel.swift` and ambient review in `Sources/WordProcessor/ViewModels/EditorViewModel.swift`
+- Prompt injection points: `Sources/WordProcessor/ViewModels/AssistantChatViewModel.swift` and ambient review in `Sources/WordProcessor/ViewModels/EditorViewModel.swift`
 
-When working on prose features or prompting, treat `david_oks_style_guide.md` as the high-priority voice reference for both sidebar drafting and ambient voice suggestions. The current document is still sent to Codex for topic, continuity, and edit targeting, but not as the primary voice corpus.
+Treat `writing_style_reference.md` as the high-priority voice reference for sidebar drafting and ambient voice suggestions. The current document supplies topic, continuity, and edit-targeting context. Keep future personalized training data and Tinker integration in a dedicated service layer rather than coupling them to document editing.
 
 ## Architecture
 
@@ -45,7 +47,7 @@ The bridge is the core integration point. All communication flows through a sing
 
 **Swift → JS:** `EditorViewModel` calls `evaluateJavaScript("window.editorAPI.methodName(args)")`. Available methods registered in `bridge.ts`: `loadContent`, `getContent`, `applyFormat`, `focus`, `setEditable`, `getSelectedText`, `setThemeCSS`.
 
-**Message types from JS:** `editorReady`, `contentChanged`, `selectionChanged`, `wordCount`. Content changes are debounced 300ms in the editor.
+Content changes sent across the bridge are debounced for 1 second in the editor.
 
 ### Key Files
 
@@ -58,19 +60,23 @@ The bridge is the core integration point. All communication flows through a sing
 | `Sources/WordProcessor/ViewModels/EditorViewModel.swift` | Central hub: webview ref, JS evaluation, file I/O, bridge dispatch |
 | `Sources/WordProcessor/Views/EditorWebView.swift` | NSViewRepresentable wrapping WKWebView, loads editor.html |
 | `Sources/WordProcessor/Views/ContentView.swift` | Main layout: editor + optional sidebars |
-| `Sources/WordProcessor/Services/ClaudeAPIService.swift` | Anthropic Messages API with SSE streaming |
+| `Sources/WordProcessor/Services/LanguageModelService.swift` | Provider-configured Messages API client with SSE streaming |
+| `Sources/WordProcessor/Services/APIKeyStore.swift` | Keychain-backed API keys with an owner-only development fallback |
 | `Sources/WordProcessor/Services/FontManager.swift` | Font config, @font-face CSS generation, UserDefaults persistence |
-| `Sources/WordProcessor/Services/KeychainService.swift` | macOS Keychain wrapper (service prefix: `com.wordprocessor.*`) |
 
 ### Cross-View Communication
 
-Views communicate via NotificationCenter, not direct bindings: `editorContentChanged`, `wordCountChanged`, `fontSettingsChanged`, `toggleFocusMode`. The editor auto-saves every 30 seconds when dirty.
+Views communicate via NotificationCenter, not direct bindings: `editorContentChanged`, `wordCountChanged`, `fontSettingsChanged`, `toggleFocusMode`. The editor checkpoints dirty documents every 60 seconds.
+
+### Model Provider Boundary
+
+`LanguageModelService.Provider` supplies the Messages API endpoint, API-key storage service, and protocol version. Keep provider selection separate from document editing and keep future Tinker training and fine-tuning code in its own service layer.
 
 ## Gotchas
 
 - **String escaping for JS evaluation:** When passing strings to `evaluateJavaScript()`, backslashes, quotes, and newlines must be escaped properly.
 - **`.accentColor` vs `.foregroundColor`:** Can't use `.accentColor` with `.foregroundStyle` ternary expressions; use `.foregroundColor` instead.
-- **Bundle resource paths:** Access bundled files via `Bundle.module.url(forResource: "editor", withExtension: "html")` or `Bundle.module.resourceURL`.
+- **Bundle resource paths:** Access bundled files via `Bundle.shakespeareResources`; release packaging places the SwiftPM resource bundle under `Contents/Resources` so code signing can seal it.
 - **Font injection timing:** EditorWebView injects @font-face CSS after a 500ms delay to ensure the webview is ready.
 - **BridgePayload parsing:** Uses manual JSON parsing (`[String: Any]`), not Codable.
-- **Anthropic API key:** Stored in macOS Keychain with service `"com.wordprocessor.anthropic"`, not in config files.
+- **Anthropic API key:** Stored in the macOS Keychain. A 0600 file at `~/Library/Application Support/Shakespeare/.anthropic.key` is used only as a development fallback and is migrated when Keychain access succeeds.

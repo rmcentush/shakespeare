@@ -20,24 +20,22 @@ struct EditorWebView: NSViewRepresentable {
         config.setURLSchemeHandler(assetSchemeHandler, forURLScheme: DocumentAssetReference.scheme)
         config.preferences.isTextInteractionEnabled = true
 
-        // Allow file access for local resources
-        config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
-
         let webView = WKWebView(frame: .zero, configuration: config)
-        webView.setValue(false, forKey: "drawsBackground")
+        webView.underPageBackgroundColor = .clear
         webView.navigationDelegate = context.coordinator
         TextCheckingSettings.shared.bind(webView: webView)
 
         // Load the editor HTML
-        let bundleRootURL = Bundle.module.bundleURL
-        if let htmlURL = Bundle.module.url(forResource: "editor", withExtension: "html") {
+        let resourceBundle = Bundle.shakespeareResources
+        let bundleRootURL = resourceBundle.bundleURL
+        if let htmlURL = resourceBundle.url(forResource: "editor", withExtension: "html") {
             // The editor HTML lives under Resources/, while copied Fonts live beside it at the
             // bundle root. Grant access to the whole bundle so WKWebView can read both.
             webView.loadFileURL(htmlURL, allowingReadAccessTo: bundleRootURL)
         }
 
         // Prepare @font-face CSS (cached for later injection on editorReady)
-        let _ = FontManager.shared.fontFaceCSS(bundle: .module)
+        let _ = FontManager.shared.fontFaceCSS(bundle: .shakespeareResources)
 
         viewModel.webView = webView
         return webView
@@ -73,8 +71,9 @@ struct EditorWebView: NSViewRepresentable {
                 bridge?.viewModel?.isEditorReady = false
             }
             // Reload the editor HTML to recover
-            if let htmlURL = Bundle.module.url(forResource: "editor", withExtension: "html") {
-                webView.loadFileURL(htmlURL, allowingReadAccessTo: Bundle.module.bundleURL)
+            let resourceBundle = Bundle.shakespeareResources
+            if let htmlURL = resourceBundle.url(forResource: "editor", withExtension: "html") {
+                webView.loadFileURL(htmlURL, allowingReadAccessTo: resourceBundle.bundleURL)
             }
         }
     }

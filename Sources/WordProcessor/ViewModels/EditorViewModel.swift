@@ -43,12 +43,12 @@ final class EditorViewModel {
     /// Set when the most recent snapshot capture fell back to last-synced state.
     private var lastSnapshotCaptureFailed = false
     private let autoSaveCheckpointInterval: TimeInterval = 60
-    @ObservationIgnored private let ambientReviewService = ClaudeAPIService()
-    @ObservationIgnored private let grammarService = ClaudeAPIService(
+    @ObservationIgnored private let ambientReviewService = LanguageModelService()
+    @ObservationIgnored private let grammarService = LanguageModelService(
         model: "claude-haiku-4-5-20251001",
         effort: nil
     )
-    @ObservationIgnored private let thoroughGrammarService = ClaudeAPIService(
+    @ObservationIgnored private let thoroughGrammarService = LanguageModelService(
         model: "claude-sonnet-5",
         effort: "low"
     )
@@ -60,7 +60,7 @@ final class EditorViewModel {
     private static let defaultZoomScale = 1.0
     private static let zoomStep = 0.1
     private static let aiTropesGuidance: String = {
-        guard let resourceURL = Bundle.module.url(forResource: "ai_tropes", withExtension: "md"),
+        guard let resourceURL = Bundle.shakespeareResources.url(forResource: "ai_tropes", withExtension: "md"),
               let content = try? String(contentsOf: resourceURL, encoding: .utf8)
         else { return "" }
         return content
@@ -478,6 +478,17 @@ final class EditorViewModel {
         }
     }
 
+    func importImage(from fileURL: URL) async throws {
+        guard !activeDocumentID.isEmpty else { return }
+        let staged = try await DocumentFileStore.shared.stageImageAsset(
+            from: fileURL,
+            documentID: activeDocumentID,
+            sourceDocumentURL: assetBaseURL
+        )
+        assetBaseURL = staged.baseURL
+        applyFormat("insertImage", value: staged.source)
+    }
+
     func getPlainText(completion: @escaping (String) -> Void) {
         callEditorAPI("getPlainText") { result in
             completion(result as? String ?? "")
@@ -616,7 +627,7 @@ final class EditorViewModel {
         callEditorAPI("setThemeCSS", arguments: [css])
     }
 
-    // MARK: - Document Editing (for Claude tool use)
+    // MARK: - Document Editing (for assistant tool use)
 
     func replaceSelectionHTML(_ html: String) {
         callEditorAPI("replaceSelectionHTML", arguments: [html])
@@ -860,7 +871,7 @@ final class EditorViewModel {
     }
 
     private func runGrammarCheck(
-        using service: ClaudeAPIService,
+        using service: LanguageModelService,
         temperature: Double?,
         requiresEnabledSetting: Bool,
         verifiesCandidates: Bool
@@ -949,7 +960,7 @@ final class EditorViewModel {
 
     private func collectGrammarResponse(
         blocks: [GrammarContextSnapshot.Block],
-        using service: ClaudeAPIService,
+        using service: LanguageModelService,
         temperature: Double?
     ) async throws -> GrammarCheckResponse {
         let dialect = TextCheckingSettings.shared.dialect
@@ -960,7 +971,7 @@ final class EditorViewModel {
               let blockData = try? JSONSerialization.data(withJSONObject: blockPayload),
               let blockJSON = String(data: blockData, encoding: .utf8)
         else {
-            throw ClaudeAPIService.APIError.invalidResponse
+            throw LanguageModelService.APIError.invalidResponse
         }
 
         let systemPrompt = """
@@ -1056,12 +1067,12 @@ final class EditorViewModel {
         }
 
         guard let data = responseText.data(using: .utf8) else {
-            throw ClaudeAPIService.APIError.invalidResponse
+            throw LanguageModelService.APIError.invalidResponse
         }
         return try JSONDecoder().decode(GrammarCheckResponse.self, from: data)
     }
 
-    /// Haiku's detector is intentionally followed by a separate, conservative
+    /// The first-pass detector is intentionally followed by a separate, conservative
     /// adjudication pass. A candidate must survive both passes before it is shown.
     private func verifyGrammarResponse(
         _ response: GrammarCheckResponse,
@@ -1147,7 +1158,7 @@ final class EditorViewModel {
         }
 
         guard let data = responseText.data(using: .utf8) else {
-            throw ClaudeAPIService.APIError.invalidResponse
+            throw LanguageModelService.APIError.invalidResponse
         }
         let verification = try JSONDecoder().decode(GrammarVerificationResponse.self, from: data)
         let acceptedIDs = Set(
@@ -1325,7 +1336,7 @@ final class EditorViewModel {
                 {"comments":[{"block_id":"...","exact_original":"exact current text span","comment":"short rationale","kind":"clarity|structure|tone|voice|concision|grammar|accuracy","severity":"low|medium|high","suggested_replacement":"optional replacement HTML or plain text"}]}
                 If there is nothing worth saying, return {"comments":[]}.
                 """,
-                "cache_control": ClaudeAPIService.oneHourPromptCacheControl
+                "cache_control": LanguageModelService.oneHourPromptCacheControl
             ]
         ]
 
@@ -1339,7 +1350,7 @@ final class EditorViewModel {
                 \(AuthorStyleReference.content)
                 </author_voice_reference>
                 """,
-                "cache_control": ClaudeAPIService.oneHourPromptCacheControl
+                "cache_control": LanguageModelService.oneHourPromptCacheControl
             ])
         }
 
@@ -1353,7 +1364,7 @@ final class EditorViewModel {
                 \(Self.aiTropesGuidance)
                 </writing_style_guidance>
                 """,
-                "cache_control": ClaudeAPIService.oneHourPromptCacheControl
+                "cache_control": LanguageModelService.oneHourPromptCacheControl
             ])
         }
 
@@ -1368,7 +1379,7 @@ final class EditorViewModel {
                 \(learnedPreferences)
                 </learned_style_preferences>
                 """,
-                "cache_control": ClaudeAPIService.oneHourPromptCacheControl
+                "cache_control": LanguageModelService.oneHourPromptCacheControl
             ])
         }
 

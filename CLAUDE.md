@@ -1,76 +1,23 @@
-# CLAUDE.md
+# Repository contributor guide
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+`AGENTS.md` is the canonical source of repository instructions. Read it before making changes and keep this compatibility file intentionally brief so guidance cannot drift between tools.
 
-## Build Commands
+## Required validation
+
+Before handing off a change, run:
 
 ```bash
-make run          # Build editor + Swift (debug), run immediately
-make install      # Build editor + Swift (release), create .app, copy to /Applications
-make editor       # Build TipTap bundle only (npm install + esbuild)
-make copy-assets  # Build editor + copy editor.js/editor.css to Swift Resources
-make build        # Build editor + Swift release binary
-make clean        # Remove .build, node_modules, dist, copied assets
+make typecheck
+make evals
+swift build -Xswiftc -warnings-as-errors
 ```
 
-**After every code change, run `make install`** to keep `/Applications/WordProcessor.app` current.
+Run `make install` when `/Applications/Shakespeare.app` should be updated.
 
-The build pipeline: `Editor/src/*.ts` → esbuild IIFE → `Editor/dist/` → copied to `Sources/WordProcessor/Resources/` → bundled via SPM `.copy("Resources")`.
+## Architecture guardrails
 
-## LLM Style Context
-
-The Claude sidebar uses a bundled style reference instead of a synced corpus of David's published posts.
-
-- Prompt reference resource: `Sources/WordProcessor/Resources/david_oks_style_guide.md`
-- Resource copy entry: `Package.swift`
-- Prompt injection points: `Sources/WordProcessor/ViewModels/ClaudeChatViewModel.swift` and ambient review in `Sources/WordProcessor/ViewModels/EditorViewModel.swift`
-
-When working on prose features or prompting, treat `david_oks_style_guide.md` as the high-priority voice reference for both sidebar drafting and ambient voice suggestions. The current document is still sent to Claude for topic, continuity, and edit targeting, but not as the primary voice corpus.
-
-## Architecture
-
-macOS 14+ SwiftUI app with a TipTap rich text editor running inside a WKWebView. Two codebases communicate through a JS↔Swift bridge.
-
-### Two-Layer Structure
-
-**TypeScript layer** (`Editor/src/`): TipTap editor with extensions (StarterKit, Underline, Placeholder, TextAlign, Typography, FontFamily, TextStyle). Built as a single IIFE bundle targeting Safari 17.
-
-**Swift layer** (`Sources/WordProcessor/`): SwiftUI app using `@Observable` macro (not ObservableObject). SPM executable target, no external Swift dependencies.
-
-### JS↔Swift Bridge
-
-The bridge is the core integration point. All communication flows through a single WKScriptMessageHandler named `"editorBridge"`.
-
-**JS → Swift:** `sendToSwift(type, payload)` in `bridge.ts` serializes to JSON string → `window.webkit.messageHandlers.editorBridge.postMessage()` → `EditorBridge.swift` deserializes → `BridgePayload.parse()` → `EditorViewModel.handleBridgeMessage()` → posts to NotificationCenter.
-
-**Swift → JS:** `EditorViewModel` calls `evaluateJavaScript("window.editorAPI.methodName(args)")`. Available methods registered in `bridge.ts`: `loadContent`, `getContent`, `applyFormat`, `focus`, `setEditable`, `getSelectedText`, `setThemeCSS`.
-
-**Message types from JS:** `editorReady`, `contentChanged`, `selectionChanged`, `wordCount`. Content changes are debounced 300ms in the editor.
-
-### Key Files
-
-| File | Role |
-|------|------|
-| `Editor/src/editor.ts` | TipTap initialization, format commands, event handlers |
-| `Editor/src/bridge.ts` | JS side of bridge: `sendToSwift()` + `window.editorAPI` registration |
-| `Sources/WordProcessor/Bridge/EditorBridge.swift` | WKScriptMessageHandler receiving JS messages |
-| `Sources/WordProcessor/Bridge/BridgeMessage.swift` | Bridge payload enum with manual JSON parsing |
-| `Sources/WordProcessor/ViewModels/EditorViewModel.swift` | Central hub: webview ref, JS evaluation, file I/O, bridge dispatch |
-| `Sources/WordProcessor/Views/EditorWebView.swift` | NSViewRepresentable wrapping WKWebView, loads editor.html |
-| `Sources/WordProcessor/Views/ContentView.swift` | Main layout: editor + optional sidebars |
-| `Sources/WordProcessor/Services/ClaudeAPIService.swift` | Anthropic Messages API with SSE streaming |
-| `Sources/WordProcessor/Services/FontManager.swift` | Font config, @font-face CSS generation, UserDefaults persistence |
-| `Sources/WordProcessor/Services/KeychainService.swift` | API key storage as 0600 files in `~/Library/Application Support/Shakespeare/` (avoids Keychain prompts on unsigned app) |
-
-### Cross-View Communication
-
-Views communicate via NotificationCenter, not direct bindings: `editorContentChanged`, `wordCountChanged`, `fontSettingsChanged`, `toggleFocusMode`. The editor auto-saves every 30 seconds when dirty.
-
-## Gotchas
-
-- **String escaping for JS evaluation:** When passing strings to `evaluateJavaScript()`, backslashes, quotes, and newlines must be escaped properly.
-- **`.accentColor` vs `.foregroundColor`:** Can't use `.accentColor` with `.foregroundStyle` ternary expressions; use `.foregroundColor` instead.
-- **Bundle resource paths:** Access bundled files via `Bundle.module.url(forResource: "editor", withExtension: "html")` or `Bundle.module.resourceURL`.
-- **Font injection timing:** EditorWebView injects @font-face CSS after a 500ms delay to ensure the webview is ready.
-- **BridgePayload parsing:** Uses manual JSON parsing (`[String: Any]`), not Codable.
-- **Anthropic API key:** Despite the `KeychainService` name, the key is stored as an owner-only (0600) file at `~/Library/Application Support/Shakespeare/.anthropic.key`, not in the macOS Keychain (which prompts for passwords on unsigned apps).
+- Preserve the single JavaScript-to-Swift bridge described in `AGENTS.md`.
+- Keep inference providers behind `LanguageModelService.Provider`.
+- Keep personalized training and fine-tuning in a dedicated service layer.
+- Access packaged resources through `Bundle.shakespeareResources`.
+- Preserve user documents, settings, and unrelated worktree changes.

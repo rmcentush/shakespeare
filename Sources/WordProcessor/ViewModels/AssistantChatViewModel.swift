@@ -3,13 +3,13 @@ import SwiftUI
 
 @Observable
 @MainActor
-final class ClaudeChatViewModel {
+final class AssistantChatViewModel {
     var messages: [ChatMessage] = []
     var isStreaming = false
     var streamingMessageID: UUID?
     var streamingContentLength = 0
 
-    @ObservationIgnored private let apiService = ClaudeAPIService()
+    @ObservationIgnored private let apiService = LanguageModelService()
     /// Full API conversation history (supports content blocks for tool use).
     /// Trimmed to the most recent messages when it grows too large.
     @ObservationIgnored private var apiMessages: [[String: Any]] = []
@@ -49,7 +49,7 @@ final class ClaudeChatViewModel {
 
     /// AI writing tropes guidance loaded from bundled resource.
     private static let aiTropesGuidance: String = {
-        guard let resourceURL = Bundle.module.url(forResource: "ai_tropes", withExtension: "md"),
+        guard let resourceURL = Bundle.shakespeareResources.url(forResource: "ai_tropes", withExtension: "md"),
               let content = try? String(contentsOf: resourceURL, encoding: .utf8)
         else { return "" }
         return content
@@ -133,7 +133,7 @@ final class ClaudeChatViewModel {
 
         let systemPrompt = await buildSystemPrompt(documentContent: documentContent, editContext: editContext)
 
-        // Tool use loop: keep calling API until Claude stops using tools
+        // Tool use loop: keep calling the provider until it stops using tools.
         var loopCount = 0
         let maxLoops = 10
 
@@ -153,16 +153,16 @@ final class ClaudeChatViewModel {
             var lastFlushTime = Date.distantPast
 
             do {
-                var allTools: [[String: Any]] = [ClaudeAPIService.webSearchTool]
+                var allTools: [[String: Any]] = [LanguageModelService.webSearchTool]
                 if editorViewModel != nil {
-                    allTools.append(contentsOf: ClaudeAPIService.documentTools)
+                    allTools.append(contentsOf: LanguageModelService.documentTools)
                 }
                 let tools: [[String: Any]]? = allTools
                 for try await chunk in apiService.streamMessage(
                     messages: apiMessages,
                     systemPrompt: systemPrompt,
                     tools: tools,
-                    cacheControl: ClaudeAPIService.ephemeralPromptCacheControl
+                    cacheControl: LanguageModelService.ephemeralPromptCacheControl
                 ) {
                     switch chunk {
                     case .textBlockStart(let afterNonText):
@@ -270,7 +270,7 @@ final class ClaudeChatViewModel {
             apiMessages.append(["role": "user", "content": toolResultBlocks])
             trimAPIHistory()
 
-            // Continue loop — Claude will respond to the tool results
+            // Continue the loop so the provider can respond to the tool results.
         }
 
         if loopCount >= maxLoops {
@@ -631,7 +631,7 @@ final class ClaudeChatViewModel {
         [
             "type": "text",
             "text": text,
-            "cache_control": ClaudeAPIService.oneHourPromptCacheControl
+            "cache_control": LanguageModelService.oneHourPromptCacheControl
         ]
     }
 

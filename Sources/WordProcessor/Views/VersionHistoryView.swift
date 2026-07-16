@@ -1,11 +1,32 @@
 import SwiftUI
 
 struct VersionHistoryView: View {
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    private static let dateTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
     @Environment(DocumentModel.self) private var document
     @Environment(EditorViewModel.self) private var editorViewModel
-    @State private var versions: [VersionStore.Version] = []
+    @State private var versions: [VersionStore.VersionSummary] = []
     @State private var selectedVersionID: Int64?
-    @State private var previewHTML: String?
+    @State private var refreshTask: Task<Void, Never>?
     @State private var renamingVersionID: Int64?
     @State private var renameText = ""
     @State private var showSaveNamedAlert = false
@@ -27,6 +48,7 @@ struct VersionHistoryView: View {
         .background(.background)
         .onAppear { refreshVersions() }
         .onChange(of: document.fileURL) { refreshVersions() }
+        .onDisappear { refreshTask?.cancel() }
         .alert("Save Named Version", isPresented: $showSaveNamedAlert) {
             TextField("Version name", text: $namedVersionName)
             Button("Save") { saveNamedVersion() }
@@ -96,7 +118,7 @@ struct VersionHistoryView: View {
         }
     }
 
-    private func versionRow(_ version: VersionStore.Version) -> some View {
+    private func versionRow(_ version: VersionStore.VersionSummary) -> some View {
         let isSelected = selectedVersionID == version.id
         return VStack(alignment: .leading, spacing: 4) {
             HStack {
@@ -191,15 +213,26 @@ struct VersionHistoryView: View {
     // MARK: - Actions
 
     private func refreshVersions() {
+        refreshTask?.cancel()
         guard let url = document.fileURL else {
             versions = []
             return
         }
-        versions = VersionStore.shared.versions(forFile: url.path, documentID: document.documentID)
+        let filePath = url.path
+        let documentID = document.documentID
+        refreshTask = Task {
+            let loaded = await VersionStore.shared.versionSummaries(
+                forFile: filePath,
+                documentID: documentID
+            )
+            guard !Task.isCancelled, document.fileURL?.path == filePath else { return }
+            versions = loaded
+        }
     }
 
-    private func restoreVersion(_ version: VersionStore.Version) {
+    private func restoreVersion(_ summary: VersionStore.VersionSummary) {
         Task { @MainActor in
+            guard let version = await VersionStore.shared.version(id: summary.id) else { return }
             let currentSnapshot = await editorViewModel.latestSnapshot(for: document)
 
             // Save current state as a version first (so nothing is lost)
@@ -241,12 +274,12 @@ struct VersionHistoryView: View {
         namedVersionName = ""
     }
 
-    private func nameUnnamedVersion(_ version: VersionStore.Version) {
+    private func nameUnnamedVersion(_ version: VersionStore.VersionSummary) {
         renamingVersionID = version.id
         renameText = ""
     }
 
-    private func commitRename(_ version: VersionStore.Version) {
+    private func commitRename(_ version: VersionStore.VersionSummary) {
         let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
         if name.isEmpty {
             VersionStore.shared.nameVersion(id: version.id, name: nil)
@@ -271,23 +304,14 @@ struct VersionHistoryView: View {
         let cal = Calendar.current
         if cal.isDateInToday(date) { return "Today" }
         if cal.isDateInYesterday(date) { return "Yesterday" }
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .none
-        return formatter.string(from: date)
+        return Self.dateFormatter.string(from: date)
     }
 
     private func formattedTime(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        Self.timeFormatter.string(from: date)
     }
 
     private func formattedDateTime(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        Self.dateTimeFormatter.string(from: date)
     }
 }

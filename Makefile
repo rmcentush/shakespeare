@@ -1,10 +1,17 @@
-.PHONY: all build run clean editor swift install llm-edit-evals
+.PHONY: all build run clean editor typecheck swift install evals llm-edit-evals document-asset-evals api-key-store-evals
 
 all: build
 
+# Install exact editor dependencies only when the lockfile changes.
+Editor/node_modules/.package-lock.json: Editor/package.json Editor/package-lock.json
+	cd Editor && npm ci
+
 # Build TipTap editor bundle
-editor:
-	cd Editor && npm install && node esbuild.config.mjs
+editor: Editor/node_modules/.package-lock.json
+	cd Editor && npm run build
+
+typecheck: Editor/node_modules/.package-lock.json
+	cd Editor && npm run typecheck
 
 # Copy editor bundles to Swift resources
 copy-assets: editor
@@ -22,6 +29,16 @@ llm-edit-evals:
 	swiftc Sources/WordProcessor/Services/StringEscaping.swift Sources/WordProcessor/Services/EditTargetResolver.swift scripts/llm-edit-evals.swift -o /tmp/llm-edit-evals
 	/tmp/llm-edit-evals
 
+document-asset-evals:
+	swiftc Sources/WordProcessor/Services/DocumentAssetReference.swift scripts/document-asset-evals.swift -o /tmp/document-asset-evals
+	/tmp/document-asset-evals
+
+api-key-store-evals:
+	swiftc Sources/WordProcessor/Services/APIKeyStore.swift scripts/api-key-store-evals.swift -o /tmp/api-key-store-evals
+	/tmp/api-key-store-evals
+
+evals: llm-edit-evals document-asset-evals api-key-store-evals
+
 # Build release
 build: copy-assets
 	swift build -c release
@@ -31,7 +48,7 @@ run: copy-assets
 	swift build && .build/debug/WordProcessor
 
 # Build release .app and install to /Applications
-install: build
+install:
 	bash scripts/bundle-app.sh
 	rm -rf /Applications/Shakespeare.app
 	cp -R Shakespeare.app /Applications/

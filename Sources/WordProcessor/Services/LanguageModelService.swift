@@ -1,8 +1,22 @@
 import Foundation
 
-final class ClaudeAPIService: Sendable {
-    private let baseURL = "https://api.anthropic.com/v1/messages"
-    // Fable 5: thinking is always on and must not be configured explicitly
+final class LanguageModelService: Sendable {
+    struct Provider: Sendable {
+        let displayName: String
+        let messagesURL: URL
+        let apiKeyService: String
+        let anthropicVersion: String
+
+        static let anthropic = Provider(
+            displayName: "Anthropic",
+            messagesURL: URL(string: "https://api.anthropic.com/v1/messages")!,
+            apiKeyService: "anthropic",
+            anthropicVersion: "2023-06-01"
+        )
+    }
+
+    private let provider: Provider
+    // The default model keeps thinking enabled and rejects an explicit setting
     // (sending `thinking` returns a 400). Depth is controlled via
     // output_config.effort instead.
     private let model: String
@@ -12,10 +26,12 @@ final class ClaudeAPIService: Sendable {
     init(
         model: String = "claude-fable-5",
         effort: String? = "low",
-        session: URLSession = ClaudeAPIService.makeSession()
+        provider: Provider = .anthropic,
+        session: URLSession = LanguageModelService.makeSession()
     ) {
         self.model = model
         self.effort = effort
+        self.provider = provider
         self.session = session
     }
 
@@ -28,8 +44,10 @@ final class ClaudeAPIService: Sendable {
     }
 
     static let webSearchTool: [String: Any] = [
-        "type": "web_search_20260209",
-        "name": "web_search"
+        "type": "web_search_20260318",
+        "name": "web_search",
+        "max_uses": 5,
+        "response_inclusion": "excluded",
     ]
 
     static let ephemeralPromptCacheControl: [String: Any] = [
@@ -137,9 +155,9 @@ final class ClaudeAPIService: Sendable {
         maxTokens: Int = 8192
     ) -> AsyncThrowingStream<StreamChunk, Error> {
         AsyncThrowingStream { continuation in
-            let task = Task.detached(priority: .userInitiated) { [baseURL, model, effort, session] in
-                guard let apiKey = KeychainService.shared.getAPIKey(service: "anthropic") else {
-                    continuation.finish(throwing: APIError.noAPIKey)
+            let task = Task.detached(priority: .userInitiated) { [provider, model, effort, session] in
+                guard let apiKey = APIKeyStore.shared.getAPIKey(service: provider.apiKeyService) else {
+                    continuation.finish(throwing: APIError.noAPIKey(provider.displayName))
                     return
                 }
 
@@ -184,12 +202,12 @@ final class ClaudeAPIService: Sendable {
                     // already-delivered text, so retries only happen before that.
                     var hasYieldedChunk = false
                     do {
-                        var request = URLRequest(url: URL(string: baseURL)!)
+                        var request = URLRequest(url: provider.messagesURL)
                         request.httpMethod = "POST"
                         request.timeoutInterval = 60
                         request.setValue("application/json", forHTTPHeaderField: "content-type")
                         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-                        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+                        request.setValue(provider.anthropicVersion, forHTTPHeaderField: "anthropic-version")
                         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
                         let (bytes, response) = try await session.bytes(for: request)
@@ -291,7 +309,7 @@ final class ClaudeAPIService: Sendable {
                         }
 
                         if wasRefused {
-                            continuation.finish(throwing: APIError.refused)
+                            continuation.finish(throwing: APIError.refused(provider.displayName))
                         } else {
                             continuation.finish()
                         }
@@ -359,24 +377,24 @@ final class ClaudeAPIService: Sendable {
     // MARK: - Errors
 
     enum APIError: LocalizedError {
-        case noAPIKey
+        case noAPIKey(String)
         case invalidResponse
         case httpError(Int, String)
         case streamError(String)
-        case refused
+        case refused(String)
 
         var errorDescription: String? {
             switch self {
-            case .noAPIKey:
-                return "No Anthropic API key found. Please set it in Settings."
+            case .noAPIKey(let provider):
+                return "No \(provider) API key found. Please set it in Settings."
             case .invalidResponse:
                 return "Invalid response from API"
             case .httpError(let code, let body):
                 return "HTTP \(code): \(body)"
             case .streamError(let msg):
                 return "Stream error: \(msg)"
-            case .refused:
-                return "Claude declined this request. Try rephrasing."
+            case .refused(let provider):
+                return "\(provider) declined this request. Try rephrasing."
             }
         }
     }

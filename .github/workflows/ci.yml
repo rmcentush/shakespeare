@@ -37,7 +37,7 @@ jobs:
 
       - name: Type-check editor
         working-directory: Editor
-        run: npm exec -- tsc --noEmit
+        run: npm run typecheck
 
       - name: Build editor assets
         working-directory: Editor
@@ -52,7 +52,17 @@ jobs:
           cp Editor/dist/Harper_LICENSE.txt Sources/WordProcessor/Resources/Harper_LICENSE.txt
 
       - name: Build macOS app
-        run: swift build -c release
+        run: swift build -c release -Xswiftc -warnings-as-errors
 
-      - name: Run LLM edit-target evaluations
-        run: make llm-edit-evals
+      - name: Package and verify app bundle
+        env:
+          APP_VERSION: 0.0.0
+          BUILD_NUMBER: ${{ github.run_number }}
+          SKIP_BUILD: 1
+        run: |
+          bash scripts/bundle-app.sh
+          test -f Shakespeare.app/Contents/Resources/WordProcessor_WordProcessor.bundle/editor.html
+          test ! -e Shakespeare.app/WordProcessor_WordProcessor.bundle
+
+      - name: Run regression evaluations
+        run: make evals

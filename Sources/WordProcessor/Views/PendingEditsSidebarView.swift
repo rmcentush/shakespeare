@@ -21,7 +21,7 @@ struct PendingEditsSidebarView: View {
                 ContentUnavailableView(
                     "No Suggestions",
                     systemImage: "square.and.pencil",
-                    description: Text("Claude suggestions will appear here once they are queued.")
+                    description: Text("Writing suggestions will appear here once they are queued.")
                 )
             } else {
                 ScrollViewReader { proxy in

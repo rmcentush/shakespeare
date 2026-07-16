@@ -7,6 +7,8 @@ actor DocumentFileStore {
     static let shared = DocumentFileStore()
     static let documentPackageExtension = "shkdoc"
     static let currentSchemaVersion = 1
+    static let maximumImportedImageBytes = 25 * 1024 * 1024
+    static let maximumPackageAssetBytes = 250 * 1024 * 1024
 
     struct FileSnapshot: Sendable {
         var canonicalJSON: String?
@@ -143,6 +145,9 @@ actor DocumentFileStore {
         case missingPackageManifest
         case unsupportedPackageContentFormat
         case invalidDataURL
+        case invalidPackagePath(String)
+        case assetTooLarge(maximumMegabytes: Int)
+        case packageAssetsTooLarge(maximumMegabytes: Int)
         case incompletePackageWrite(String)
 
         var errorDescription: String? {
@@ -153,6 +158,12 @@ actor DocumentFileStore {
                 return "The document package uses an unsupported content format."
             case .invalidDataURL:
                 return "The document contains an invalid embedded asset."
+            case .invalidPackagePath(let filename):
+                return "The document package contains an unsafe file path (\(filename))."
+            case .assetTooLarge(let maximumMegabytes):
+                return "Images must be \(maximumMegabytes) MB or smaller."
+            case .packageAssetsTooLarge(let maximumMegabytes):
+                return "Document assets must total \(maximumMegabytes) MB or less."
             case .incompletePackageWrite(let detail):
                 return "The document was not saved completely (\(detail))."
             }
@@ -208,7 +219,10 @@ actor DocumentFileStore {
                 return html
             }
 
-            let assets = try existingAssets(from: sourceDocumentURL)
+            let assets = try referencedAssets(
+                in: html,
+                sourceDocumentURL: sourceDocumentURL
+            )
             guard !assets.isEmpty else { return html }
 
             return assets.reduce(into: html) { rewrittenHTML, entry in
@@ -226,7 +240,10 @@ actor DocumentFileStore {
 
         return try withSecurityScopedAccess(to: accessURLs) {
             if source.hasPrefix("data:") {
-                let payload = try dataFromDataURL(source)
+                let payload = try dataFromDataURL(
+                    source,
+                    maximumBytes: Self.maximumImportedImageBytes
+                )
                 let type = UTType(mimeType: payload.mimeType) ?? UTType(filenameExtension: payload.fileExtension)
                 return ClipboardImageAsset(
                     data: payload.data,
@@ -247,7 +264,7 @@ actor DocumentFileStore {
             if let fileURL = URL(string: source),
                fileURL.isFileURL,
                FileManager.default.fileExists(atPath: fileURL.path) {
-                let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
+                let data = try imageAssetData(contentsOf: fileURL)
                 let type = UTType(filenameExtension: fileURL.pathExtension)
                 return ClipboardImageAsset(
                     data: data,
@@ -264,8 +281,45 @@ actor DocumentFileStore {
         documentID: String,
         sourceDocumentURL: URL?
     ) throws -> StagedImageAsset {
-        let payload = try dataFromDataURL(dataURL)
-        let filename = assetFilename(for: payload.data, fileExtension: payload.fileExtension)
+        let payload = try dataFromDataURL(
+            dataURL,
+            maximumBytes: Self.maximumImportedImageBytes
+        )
+        return try stageImageAsset(
+            data: payload.data,
+            fileExtension: payload.fileExtension,
+            documentID: documentID,
+            sourceDocumentURL: sourceDocumentURL
+        )
+    }
+
+    func stageImageAsset(
+        from fileURL: URL,
+        documentID: String,
+        sourceDocumentURL: URL?
+    ) throws -> StagedImageAsset {
+        guard let type = UTType(filenameExtension: fileURL.pathExtension),
+              type.conforms(to: .image)
+        else {
+            throw FileStoreError.invalidDataURL
+        }
+        let data = try imageAssetData(contentsOf: fileURL)
+        let fileExtension = type.preferredFilenameExtension ?? fileURL.pathExtension.lowercased()
+        return try stageImageAsset(
+            data: data,
+            fileExtension: fileExtension,
+            documentID: documentID,
+            sourceDocumentURL: sourceDocumentURL
+        )
+    }
+
+    private func stageImageAsset(
+        data: Data,
+        fileExtension: String,
+        documentID: String,
+        sourceDocumentURL: URL?
+    ) throws -> StagedImageAsset {
+        let filename = assetFilename(for: data, fileExtension: fileExtension)
         let baseURL = try workingDocumentURL(for: documentID)
         let assetsURL = baseURL.appendingPathComponent(
             DocumentAssetReference.assetsDirectoryName,
@@ -277,7 +331,7 @@ actor DocumentFileStore {
 
         let destinationURL = assetsURL.appendingPathComponent(filename)
         if !FileManager.default.fileExists(atPath: destinationURL.path) {
-            try payload.data.write(to: destinationURL, options: .atomic)
+            try data.write(to: destinationURL, options: .atomic)
         }
 
         return StagedImageAsset(
@@ -294,8 +348,10 @@ actor DocumentFileStore {
     }
 
     private func loadPackage(from url: URL) throws -> FileSnapshot {
-        let manifestURL = url.appendingPathComponent("manifest.json")
-        guard FileManager.default.fileExists(atPath: manifestURL.path) else {
+        guard let manifestURL = DocumentAssetReference.containedFileURL(
+            named: "manifest.json",
+            in: url
+        ), FileManager.default.fileExists(atPath: manifestURL.path) else {
             throw FileStoreError.missingPackageManifest
         }
 
@@ -307,13 +363,23 @@ actor DocumentFileStore {
 
         let plainText: String
         if let plainTextFileName = manifest.plainTextFileName {
-            let plainTextURL = url.appendingPathComponent(plainTextFileName)
+            guard let plainTextURL = DocumentAssetReference.containedFileURL(
+                named: plainTextFileName,
+                in: url
+            ) else {
+                throw FileStoreError.invalidPackagePath(plainTextFileName)
+            }
             plainText = (try? String(contentsOf: plainTextURL, encoding: .utf8)) ?? ""
         } else {
             plainText = ""
         }
 
-        let contentURL = url.appendingPathComponent(manifest.contentFileName)
+        guard let contentURL = DocumentAssetReference.containedFileURL(
+            named: manifest.contentFileName,
+            in: url
+        ) else {
+            throw FileStoreError.invalidPackagePath(manifest.contentFileName)
+        }
         switch manifest.contentFormat {
         case .prosemirrorJSON:
             let canonicalJSON = try String(contentsOf: contentURL, encoding: .utf8)
@@ -347,7 +413,10 @@ actor DocumentFileStore {
 
     private func preparePackage(from snapshot: FileSnapshot, sourceDocumentURL: URL?) throws -> PreparedPackage {
         var updated = snapshot
-        var assets = try existingAssets(from: sourceDocumentURL)
+        var assets = try referencedAssets(
+            in: updated.htmlContent,
+            sourceDocumentURL: sourceDocumentURL
+        )
 
         if let canonicalJSON = updated.canonicalJSON {
             updated.canonicalJSON = try rewriteDocumentJSON(
@@ -356,6 +425,8 @@ actor DocumentFileStore {
                 sourceDocumentURL: sourceDocumentURL
             )
         }
+
+        try validatePackageAssetTotal(assets)
 
         return PreparedPackage(snapshot: updated, assets: assets)
     }
@@ -485,7 +556,10 @@ actor DocumentFileStore {
         sourceDocumentURL: URL?
     ) throws -> String {
         if source.hasPrefix("data:") {
-            let payload = try dataFromDataURL(source)
+            let payload = try dataFromDataURL(
+                source,
+                maximumBytes: Self.maximumImportedImageBytes
+            )
             let filename = assetFilename(for: payload.data, fileExtension: payload.fileExtension)
             assets[filename] = payload.data
             return DocumentAssetReference.urlString(for: filename)
@@ -502,24 +576,34 @@ actor DocumentFileStore {
         return source
     }
 
-    private func existingAssets(from sourceDocumentURL: URL?) throws -> [String: Data] {
+    private func referencedAssets(
+        in html: String,
+        sourceDocumentURL: URL?
+    ) throws -> [String: Data] {
         guard let sourceDocumentURL,
               Self.isNativeDocumentURL(sourceDocumentURL)
         else {
             return [:]
         }
 
-        let assetsURL = sourceDocumentURL.appendingPathComponent(DocumentAssetReference.assetsDirectoryName, isDirectory: true)
-        guard FileManager.default.fileExists(atPath: assetsURL.path) else { return [:] }
+        var result: [String: Data] = [:]
+        for filename in DocumentAssetReference.filenames(in: html) {
+            if let data = try existingAssetData(named: filename, from: sourceDocumentURL) {
+                result[filename] = data
+            }
+        }
+        try validatePackageAssetTotal(result)
+        return result
+    }
 
-        let assetURLs = try FileManager.default.contentsOfDirectory(
-            at: assetsURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )
-
-        return try assetURLs.reduce(into: [String: Data]()) { result, assetURL in
-            result[assetURL.lastPathComponent] = try Data(contentsOf: assetURL, options: .mappedIfSafe)
+    private func validatePackageAssetTotal(_ assets: [String: Data]) throws {
+        let totalBytes = assets.values.reduce(0) { partialResult, data in
+            partialResult + data.count
+        }
+        guard totalBytes <= Self.maximumPackageAssetBytes else {
+            throw FileStoreError.packageAssetsTooLarge(
+                maximumMegabytes: Self.maximumPackageAssetBytes / 1024 / 1024
+            )
         }
     }
 
@@ -552,18 +636,23 @@ actor DocumentFileStore {
         else { return }
 
         try withSecurityScopedAccess(to: [sourceDocumentURL]) {
-            let source = sourceDocumentURL.appendingPathComponent(
-                DocumentAssetReference.assetsDirectoryName,
-                isDirectory: true
-            )
+            guard let source = DocumentAssetReference.containedFileURL(
+                named: DocumentAssetReference.assetsDirectoryName,
+                in: sourceDocumentURL
+            ) else { return }
             guard FileManager.default.fileExists(atPath: source.path) else { return }
             let files = try FileManager.default.contentsOfDirectory(
                 at: source,
                 includingPropertiesForKeys: nil,
                 options: [.skipsHiddenFiles]
             )
-            for file in files {
-                let target = destination.appendingPathComponent(file.lastPathComponent)
+            for listedURL in files {
+                let filename = listedURL.lastPathComponent
+                guard let file = DocumentAssetReference.containedFileURL(
+                    named: filename,
+                    in: source
+                ) else { continue }
+                let target = destination.appendingPathComponent(filename)
                 guard !FileManager.default.fileExists(atPath: target.path) else { continue }
                 do {
                     try FileManager.default.linkItem(at: file, to: target)
@@ -585,15 +674,41 @@ actor DocumentFileStore {
             return nil
         }
 
-        let assetURL = sourceDocumentURL
-            .appendingPathComponent(DocumentAssetReference.assetsDirectoryName, isDirectory: true)
-            .appendingPathComponent(filename)
+        guard let assetsDirectory = DocumentAssetReference.containedFileURL(
+            named: DocumentAssetReference.assetsDirectoryName,
+            in: sourceDocumentURL
+        ), let assetURL = DocumentAssetReference.containedFileURL(
+            named: filename,
+            in: assetsDirectory
+        ) else {
+            return nil
+        }
 
         guard FileManager.default.fileExists(atPath: assetURL.path) else { return nil }
-        return try Data(contentsOf: assetURL, options: .mappedIfSafe)
+        return try imageAssetData(contentsOf: assetURL)
     }
 
-    private func dataFromDataURL(_ source: String) throws -> (data: Data, mimeType: String, fileExtension: String) {
+    private func imageAssetData(contentsOf url: URL) throws -> Data {
+        let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard values.isRegularFile == true else {
+            throw CocoaError(.fileReadUnsupportedScheme)
+        }
+        if let fileSize = values.fileSize, fileSize > Self.maximumImportedImageBytes {
+            throw FileStoreError.assetTooLarge(
+                maximumMegabytes: Self.maximumImportedImageBytes / 1024 / 1024
+            )
+        }
+        return try Data(contentsOf: url, options: .mappedIfSafe)
+    }
+
+    private func dataFromDataURL(
+        _ source: String,
+        maximumBytes: Int? = nil
+    ) throws -> (data: Data, mimeType: String, fileExtension: String) {
+        if let maximumBytes, source.utf8.count > maximumBytes * 2 {
+            throw FileStoreError.assetTooLarge(maximumMegabytes: maximumBytes / 1024 / 1024)
+        }
+
         guard let commaIndex = source.firstIndex(of: ",") else {
             throw FileStoreError.invalidDataURL
         }
@@ -603,6 +718,9 @@ actor DocumentFileStore {
         let metadata = String(header.dropFirst("data:".count))
         let parts = metadata.split(separator: ";")
         let mimeType = parts.first.map(String.init) ?? "application/octet-stream"
+        guard mimeType.lowercased().hasPrefix("image/") else {
+            throw FileStoreError.invalidDataURL
+        }
 
         let data: Data
         if metadata.contains("base64") {
@@ -614,6 +732,10 @@ actor DocumentFileStore {
             data = Data(decodedPayload.utf8)
         } else {
             throw FileStoreError.invalidDataURL
+        }
+
+        if let maximumBytes, data.count > maximumBytes {
+            throw FileStoreError.assetTooLarge(maximumMegabytes: maximumBytes / 1024 / 1024)
         }
 
         let fileExtension = UTType(mimeType: mimeType)?.preferredFilenameExtension ?? fileExtension(forMIMEType: mimeType)

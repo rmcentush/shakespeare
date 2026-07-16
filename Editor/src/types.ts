@@ -185,7 +185,7 @@ export const MAX_EDIT_CONTEXT_BLOCK_TEXT = 900;
 export const NEARBY_EDIT_CONTEXT_CHARS = 900;
 
 // Tool execution result codes returned to Swift from the editorAPI edit
-// methods. Must match ToolExecutionResult in ClaudeChatViewModel.swift.
+// methods. Must match ToolExecutionResult in AssistantChatViewModel.swift.
 export const TOO_MANY_MATCHES = -1;
 export const TOO_MANY_PENDING_EDITS = -2;
 export const AMBIGUOUS_EDIT_TARGET = -3;

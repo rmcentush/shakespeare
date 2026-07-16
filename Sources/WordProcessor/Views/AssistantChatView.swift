@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-struct ClaudeChatView: View {
-    @State private var chatViewModel = ClaudeChatViewModel()
+struct AssistantChatView: View {
+    @State private var chatViewModel = AssistantChatViewModel()
     @Environment(EditorViewModel.self) private var editorViewModel
     @Environment(DocumentModel.self) private var document
     @State private var inputText = ""
@@ -75,9 +75,9 @@ struct ClaudeChatView: View {
                     .padding(.bottom, 3)
                     .help("Attach selected text")
 
-                    TextField("Ask Claude...", text: smartQuotedInputText, axis: .vertical)
+                    TextField("Ask the writing assistant...", text: smartQuotedInputText, axis: .vertical)
                         .textFieldStyle(.plain)
-                        .font(ClaudeChatFont.input)
+                        .font(AssistantChatFont.input)
                         .lineLimit(1...5)
                         .padding(.vertical, 2)
                         .focused($isInputFocused)
@@ -225,7 +225,7 @@ struct ClaudeChatView: View {
     private func insertAssistantMessageIntoDocument(_ text: String) {
         guard editorViewModel.isEditorReady else { return }
 
-        let html = ClaudeMessageBlock.htmlFragment(from: text)
+        let html = AssistantMessageBlock.htmlFragment(from: text)
         guard !html.isEmpty else { return }
 
         editorViewModel.insertHTMLAtCursor(html)
@@ -251,7 +251,7 @@ private struct SelectionContextChip: View {
                     .foregroundStyle(.tertiary)
 
                 Text(verbatim: text)
-                    .font(ClaudeChatFont.text(size: 12))
+                    .font(AssistantChatFont.text(size: 12))
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -277,7 +277,7 @@ private struct SelectionContextChip: View {
     }
 }
 
-private enum ClaudeChatFont {
+private enum AssistantChatFont {
     static let familyName = "Anthropic Serif Web Text"
 
     static let input = text(size: 13.5)
@@ -488,7 +488,7 @@ struct MessageBubble: View, Equatable {
                             .clipShape(Capsule())
 
                         Text(verbatim: SmartQuotes.smarten(quote))
-                            .font(ClaudeChatFont.text(size: 12))
+                            .font(AssistantChatFont.text(size: 12))
                             .foregroundStyle(.secondary)
                             .lineLimit(5)
                             .fixedSize(horizontal: false, vertical: true)
@@ -496,7 +496,7 @@ struct MessageBubble: View, Equatable {
                 }
 
                 Text(verbatim: SmartQuotes.smarten(message.content))
-                    .font(ClaudeChatFont.message)
+                    .font(AssistantChatFont.message)
                     .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -539,13 +539,13 @@ private struct SystemMessageRow: View {
                         .font(.system(size: 11, weight: .semibold))
 
                     Text(verbatim: SmartQuotes.smarten(message.content))
-                        .font(ClaudeChatFont.text(size: 12.5, weight: .semibold))
+                        .font(AssistantChatFont.text(size: 12.5, weight: .semibold))
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if let detail = message.detail, !detail.isEmpty {
                     Text(verbatim: SmartQuotes.smarten(detail))
-                        .font(ClaudeChatFont.text(size: 11.5))
+                        .font(AssistantChatFont.text(size: 11.5))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -603,8 +603,8 @@ private struct AssistantMessageContent: View {
     let content: String
     let isStreaming: Bool
 
-    private var blocks: [ClaudeMessageBlock] {
-        ClaudeMessageBlock.parse(content)
+    private var blocks: [AssistantMessageBlock] {
+        AssistantMessageBlock.parse(content)
     }
 
     var body: some View {
@@ -613,7 +613,7 @@ private struct AssistantMessageContent: View {
                 Text(verbatim: content)
                     .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .font(ClaudeChatFont.message)
+                    .font(AssistantChatFont.message)
                     .lineSpacing(3)
             } else {
                 VStack(alignment: .leading, spacing: 10) {
@@ -627,7 +627,7 @@ private struct AssistantMessageContent: View {
     }
 
     @ViewBuilder
-    private func blockView(_ block: ClaudeMessageBlock) -> some View {
+    private func blockView(_ block: AssistantMessageBlock) -> some View {
         switch block {
         case .markdown(let text):
             MarkdownText(content: text)
@@ -654,7 +654,7 @@ private struct MarkdownText: View {
         }
         .foregroundStyle(.primary)
         .fixedSize(horizontal: false, vertical: true)
-        .font(ClaudeChatFont.message)
+        .font(AssistantChatFont.message)
         .lineSpacing(3)
     }
 
@@ -675,7 +675,7 @@ private struct MarkdownText: View {
                 ForEach(Array(items.enumerated()), id: \.offset) { entry in
                     HStack(alignment: .firstTextBaseline, spacing: 7) {
                         Text("•")
-                            .font(ClaudeChatFont.text(size: 13.5, weight: .semibold))
+                            .font(AssistantChatFont.text(size: 13.5, weight: .semibold))
                         InlineMarkdownText(content: entry.element)
                     }
                 }
@@ -686,7 +686,7 @@ private struct MarkdownText: View {
                 ForEach(Array(items.enumerated()), id: \.offset) { entry in
                     HStack(alignment: .firstTextBaseline, spacing: 7) {
                         Text("\(entry.offset + 1).")
-                            .font(ClaudeChatFont.text(size: 13.5, weight: .medium))
+                            .font(AssistantChatFont.text(size: 13.5, weight: .medium))
                             .foregroundStyle(.secondary)
                         InlineMarkdownText(content: entry.element)
                     }
@@ -711,11 +711,11 @@ private struct MarkdownText: View {
     private func headingFont(for level: Int) -> Font {
         switch level {
         case 1:
-            return ClaudeChatFont.text(size: 15.5, weight: .semibold)
+            return AssistantChatFont.text(size: 15.5, weight: .semibold)
         case 2:
-            return ClaudeChatFont.text(size: 14.5, weight: .semibold)
+            return AssistantChatFont.text(size: 14.5, weight: .semibold)
         default:
-            return ClaudeChatFont.text(size: 13.5, weight: .semibold)
+            return AssistantChatFont.text(size: 13.5, weight: .semibold)
         }
     }
 }
@@ -894,7 +894,7 @@ private struct ToolActionView: View {
                 .font(.system(size: 12, weight: .semibold))
 
             Text(verbatim: SmartQuotes.smarten(text))
-                .font(ClaudeChatFont.text(size: 12.5, weight: .medium))
+                .font(AssistantChatFont.text(size: 12.5, weight: .medium))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .foregroundStyle(.secondary)
@@ -904,14 +904,14 @@ private struct ToolActionView: View {
     }
 }
 
-private enum ClaudeMessageBlock {
+private enum AssistantMessageBlock {
     case markdown(String)
     case code(language: String?, content: String)
     case toolAction(String)
 
-    static func parse(_ content: String) -> [ClaudeMessageBlock] {
+    static func parse(_ content: String) -> [AssistantMessageBlock] {
         let normalizedContent = content.replacingOccurrences(of: "\r\n", with: "\n")
-        var blocks: [ClaudeMessageBlock] = []
+        var blocks: [AssistantMessageBlock] = []
         var markdownLines: [String] = []
         var codeLines: [String] = []
         var codeLanguage: String?

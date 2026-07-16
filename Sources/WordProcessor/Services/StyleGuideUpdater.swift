@@ -20,7 +20,7 @@ final class StyleGuideUpdater {
         }
     }
 
-    private let apiService = ClaudeAPIService()
+    private let apiService = LanguageModelService()
     private let store: StyleFeedbackStore
 
     init(store: StyleFeedbackStore = .shared) {
@@ -55,7 +55,7 @@ final class StyleGuideUpdater {
                 - Merge duplicates, prune contradicted rules, and keep the whole file under 30 rules and 1,500 words.
                 - The input has already been filtered to style-relevant categories, but rejections may still mean bad targeting rather than bad style; infer conservatively from context and rationale.
                 """,
-                "cache_control": ClaudeAPIService.oneHourPromptCacheControl
+                "cache_control": LanguageModelService.oneHourPromptCacheControl
             ]
         ]
 

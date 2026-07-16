@@ -11,7 +11,7 @@ final class VersionStore: @unchecked Sendable {
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "com.shakespeare.versionstore")
 
-    struct Version: Identifiable {
+    struct Version: Identifiable, Sendable {
         let id: Int64
         let filePath: String
         let documentID: String?
@@ -19,6 +19,17 @@ final class VersionStore: @unchecked Sendable {
         let canonicalJSON: String?
         let htmlContent: String
         let plainText: String
+        let wordCount: Int
+        let characterCount: Int
+        let createdAt: Date
+        let isNamed: Bool
+    }
+
+    struct VersionSummary: Identifiable, Sendable {
+        let id: Int64
+        let filePath: String
+        let documentID: String?
+        let versionName: String?
         let wordCount: Int
         let characterCount: Int
         let createdAt: Date
@@ -56,7 +67,11 @@ final class VersionStore: @unchecked Sendable {
         if sqlite3_open(dbPath, &db) != SQLITE_OK {
             print("VersionStore: failed to open database at \(dbPath)")
             db = nil
+            return
         }
+
+        sqlite3_busy_timeout(db, 5_000)
+        sqlite3_exec(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;", nil, nil, nil)
     }
 
     private func createTable() {
@@ -76,6 +91,10 @@ final class VersionStore: @unchecked Sendable {
         );
         CREATE INDEX IF NOT EXISTS idx_versions_file_path ON versions(file_path);
         CREATE INDEX IF NOT EXISTS idx_versions_created_at ON versions(created_at);
+        CREATE INDEX IF NOT EXISTS idx_versions_file_created
+            ON versions(file_path, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_versions_document_created
+            ON versions(document_id, created_at DESC);
         """
         sqlite3_exec(db, sql, nil, nil, nil)
 
@@ -174,27 +193,27 @@ final class VersionStore: @unchecked Sendable {
 
     // MARK: - Query Versions
 
-    func versions(forFile filePath: String) -> [Version] {
-        versions(forFile: filePath, documentID: nil)
+    func versionSummaries(forFile filePath: String, documentID: String?) async -> [VersionSummary] {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                continuation.resume(returning: _versionSummaries(forFile: filePath, documentID: documentID))
+            }
+        }
     }
 
-    func versions(forFile filePath: String, documentID: String?) -> [Version] {
-        queue.sync { [self] in
-            guard let db else { return [] }
+    private func _versionSummaries(forFile filePath: String, documentID: String?) -> [VersionSummary] {
+        guard let db else { return [] }
 
-            let hasDocumentID = documentID?.isEmpty == false
-            let whereClause = hasDocumentID
-                ? "WHERE document_id = ? OR (document_id IS NULL AND file_path = ?)"
-                : "WHERE file_path = ?"
-            let sql = """
+        let hasDocumentID = documentID?.isEmpty == false
+        let whereClause = hasDocumentID
+            ? "WHERE document_id = ? OR (document_id IS NULL AND file_path = ?)"
+            : "WHERE file_path = ?"
+        let sql = """
             SELECT
                 id,
                 file_path,
                 document_id,
                 version_name,
-                json_content,
-                html_content,
-                plain_text,
                 word_count,
                 character_count,
                 created_at,
@@ -203,31 +222,22 @@ final class VersionStore: @unchecked Sendable {
             \(whereClause)
             ORDER BY created_at DESC
             """
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-            defer { sqlite3_finalize(stmt) }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
 
-            if let documentID, hasDocumentID {
-                sqlite3_bind_text(stmt, 1, (documentID as NSString).utf8String, -1, nil)
-                sqlite3_bind_text(stmt, 2, (filePath as NSString).utf8String, -1, nil)
-            } else {
-                sqlite3_bind_text(stmt, 1, (filePath as NSString).utf8String, -1, nil)
-            }
-
-            var results: [Version] = []
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                results.append(versionFromStatement(stmt))
-            }
-            return results
+        if let documentID, hasDocumentID {
+            sqlite3_bind_text(stmt, 1, (documentID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 2, (filePath as NSString).utf8String, -1, nil)
+        } else {
+            sqlite3_bind_text(stmt, 1, (filePath as NSString).utf8String, -1, nil)
         }
-    }
 
-    func latestVersion(forFile filePath: String) -> Version? {
-        queue.sync { [self] in _latestVersion(forFile: filePath, documentID: nil) }
-    }
-
-    func latestVersion(forFile filePath: String, documentID: String?) -> Version? {
-        queue.sync { [self] in _latestVersion(forFile: filePath, documentID: documentID) }
+        var results: [VersionSummary] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            results.append(versionSummaryFromStatement(stmt))
+        }
+        return results
     }
 
     private func _latestVersion(forFile filePath: String, documentID: String?) -> Version? {
@@ -272,11 +282,18 @@ final class VersionStore: @unchecked Sendable {
         return nil
     }
 
-    func version(id: Int64) -> Version? {
-        queue.sync { [self] in
-            guard let db else { return nil }
+    func version(id: Int64) async -> Version? {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                continuation.resume(returning: _version(id: id))
+            }
+        }
+    }
 
-            let sql = """
+    private func _version(id: Int64) -> Version? {
+        guard let db else { return nil }
+
+        let sql = """
             SELECT
                 id,
                 file_path,
@@ -292,17 +309,16 @@ final class VersionStore: @unchecked Sendable {
             FROM versions
             WHERE id = ?
             """
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
-            defer { sqlite3_finalize(stmt) }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
 
-            sqlite3_bind_int64(stmt, 1, id)
+        sqlite3_bind_int64(stmt, 1, id)
 
-            if sqlite3_step(stmt) == SQLITE_ROW {
-                return versionFromStatement(stmt)
-            }
-            return nil
+        if sqlite3_step(stmt) == SQLITE_ROW {
+            return versionFromStatement(stmt)
         }
+        return nil
     }
 
     // MARK: - Name / Rename
@@ -449,6 +465,19 @@ final class VersionStore: @unchecked Sendable {
             characterCount: characterCount,
             createdAt: createdAt,
             isNamed: isNamed
+        )
+    }
+
+    private func versionSummaryFromStatement(_ stmt: OpaquePointer?) -> VersionSummary {
+        VersionSummary(
+            id: sqlite3_column_int64(stmt, 0),
+            filePath: stringValue(stmt, column: 1) ?? "",
+            documentID: stringValue(stmt, column: 2),
+            versionName: stringValue(stmt, column: 3),
+            wordCount: Int(sqlite3_column_int(stmt, 4)),
+            characterCount: Int(sqlite3_column_int(stmt, 5)),
+            createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 6)),
+            isNamed: sqlite3_column_int(stmt, 7) != 0
         )
     }
 

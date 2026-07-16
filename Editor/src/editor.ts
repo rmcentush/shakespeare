@@ -119,8 +119,14 @@ interface PendingImageImport {
 }
 
 const pendingImageImports = new Map<string, PendingImageImport>();
+const MAX_IMAGE_IMPORT_BYTES = 25 * 1024 * 1024;
 
 function requestImageImport(file: File, from: number, to: number) {
+  if (file.size > MAX_IMAGE_IMPORT_BYTES) {
+    window.alert('Images must be 25 MB or smaller.');
+    return;
+  }
+
   const requestId = crypto.randomUUID();
   pendingImageImports.set(requestId, {
     from,

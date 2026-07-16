@@ -198,19 +198,17 @@ struct ToolbarView: View {
         panel.canChooseDirectories = false
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            guard let imageData = try? Data(contentsOf: url) else { return }
-
-            let mimeType: String
-            switch url.pathExtension.lowercased() {
-            case "png": mimeType = "image/png"
-            case "gif": mimeType = "image/gif"
-            case "webp": mimeType = "image/webp"
-            default: mimeType = "image/jpeg"
+            Task { @MainActor in
+                do {
+                    try await viewModel.importImage(from: url)
+                } catch {
+                    let alert = NSAlert()
+                    alert.alertStyle = .warning
+                    alert.messageText = "Couldn’t Import Image"
+                    alert.informativeText = error.localizedDescription
+                    alert.runModal()
+                }
             }
-
-            let base64 = imageData.base64EncodedString()
-            let dataURL = "data:\(mimeType);base64,\(base64)"
-            viewModel.applyFormat("insertImage", value: dataURL)
         }
     }
 

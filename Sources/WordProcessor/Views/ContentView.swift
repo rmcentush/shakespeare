@@ -60,7 +60,7 @@ struct ContentView: View {
                         } label: {
                             Image(systemName: "bubble.right")
                         }
-                        .help("Toggle Claude (Cmd+\\)")
+                        .help("Toggle Writing Assistant (Cmd+\\)")
                     }
                     ToolbarItem(placement: .automatic) {
                         Button {
@@ -255,7 +255,7 @@ struct ContentView: View {
     private func sidebarView(for panel: SidebarPanel) -> some View {
         switch panel {
         case .chat:
-            ClaudeChatView()
+            AssistantChatView()
         case .suggestions:
             PendingEditsSidebarView()
         case .comments:

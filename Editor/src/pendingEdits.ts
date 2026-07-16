@@ -81,7 +81,7 @@ function notifyPendingEditState(state: PendingEditsPluginState) {
 
 
 function inferPendingEditSource(id: string): string {
-  if (id.startsWith('edit_')) return 'Claude';
+  if (id.startsWith('edit_')) return 'Assistant';
   return 'Suggestion';
 }
 
@@ -194,7 +194,7 @@ function createPendingEditWidget(edit: PendingEdit, isActive: boolean): HTMLElem
   if (edit.status === 'conflicted') {
     previewContent.textContent = 'Conflict';
   } else if (edit.newHtml.trim().length > 0) {
-    previewContent.innerHTML = edit.newHtml;
+    previewContent.textContent = edit.replacementText || 'Rich content';
   } else {
     previewContent.textContent = 'Delete';
     previewContent.classList.add('pending-edit-placeholder');
@@ -583,7 +583,7 @@ function resolveProposedEditMatches(
   // Content-addressed targets locate text by exact_original plus
   // prefix/suffix context, so a stale document_revision/document_hash is not
   // a failure: we simply re-resolve against the current document. This lets
-  // the user keep typing while Claude's edits stream in.
+  // the user keep typing while assistant edits stream in.
   const exactOriginal = target.exact_original ?? '';
   if (!normalizeSearchQuery(exactOriginal)) return INVALID_EDIT_TARGET;
 
@@ -1066,7 +1066,7 @@ export function focusRelativePendingEdit(ed: Editor, delta: 1 | -1): boolean {
 }
 
 function isLLMEdit(edit: PendingEdit): boolean {
-  return edit.source === 'Claude' || edit.groupId.startsWith('edit_') || edit.id.startsWith('edit_');
+  return edit.source === 'Assistant' || edit.groupId.startsWith('edit_') || edit.id.startsWith('edit_');
 }
 
 function colorizeHTMLTextNodes(html: string, color: string): string {
@@ -1414,7 +1414,7 @@ export const PendingEditHighlight = Extension.create({
             return pendingEditPluginKey.getState(state)?.decorations ?? DecorationSet.empty;
           },
         },
-        view(view) {
+        view(_view) {
           return {
             update(updatedView, previousState) {
               const previousPendingState = getPendingEditsState(previousState);

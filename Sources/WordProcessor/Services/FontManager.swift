@@ -92,7 +92,7 @@ final class FontManager {
     /// Generate @font-face CSS for all bundled font families.
     /// The SPM bundle may place the copied Fonts directory either under the bundle root
     /// or under the Resources directory, so we resolve both layouts.
-    func fontFaceCSS(bundle: Bundle = .module) -> String {
+    func fontFaceCSS(bundle: Bundle = .shakespeareResources) -> String {
         let fileManager = FileManager.default
         let candidateDirectories = [
             bundle.url(forResource: "GentiumPlus-Regular", withExtension: "ttf", subdirectory: "Fonts")?.deletingLastPathComponent(),

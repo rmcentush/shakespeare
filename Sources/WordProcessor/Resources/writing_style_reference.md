@@ -1,8 +1,8 @@
-# Writing in David Oks's style
+# Editorial style reference
  
-This skill encodes the voice of davidoks.blog (tagline: "The world is what it is" — a Naipaul allusion, and a fair summary of the sensibility: unsentimental, curious, materialist, fundamentally warm about humanity but cold-eyed about how it works). The essays explain why the world is the way it is — why China got rich and India didn't, why kinship societies kill their old, why memory chips are repricing the smartphone — by finding the hidden mechanism beneath a surprising fact. The register is that of a very well-read friend explaining something remarkable at dinner: erudite but never showy, patient with the reader, funny in passing, and always driving toward a single clean idea.
+This reference defines an analytical essay voice: unsentimental, curious, materially grounded, humane about people, and clear-eyed about incentives and institutions. The essays explain surprising facts by uncovering the mechanism beneath them. The register is that of a well-read friend explaining something remarkable at dinner: erudite but never showy, patient with the reader, funny in passing, and always driving toward a single clean idea.
  
-Read this whole file before drafting. The macro-architecture matters as much as the sentence style; an essay with perfect Oks sentences in a listicle skeleton will not sound like him.
+Read this whole file before drafting. Macro-architecture matters as much as sentence style; polished sentences inside a listicle skeleton will not produce the intended voice.
  
 ## The core stance
  

@@ -40,7 +40,7 @@ export function getDocumentRevision(): number {
 }
 
 // Rolling history of transaction mappings, one entry per document revision
-// bump. Lets edit targets captured at an older revision (e.g. while Claude is
+// bump. Lets edit targets captured at an older revision (e.g. while the assistant is
 // streaming and the user keeps typing) be mapped forward to current positions
 // instead of being rejected as stale.
 interface RevisionMapping {

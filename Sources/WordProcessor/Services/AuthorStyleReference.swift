@@ -32,7 +32,7 @@ enum AuthorStyleReference {
     }
 
     static var writableReferenceURL: URL {
-        styleDirectoryURL.appendingPathComponent("david_oks_style_guide.md")
+        styleDirectoryURL.appendingPathComponent("writing_style_reference.md")
     }
 
     static var learnedPreferencesURL: URL {
@@ -56,7 +56,10 @@ enum AuthorStyleReference {
     private static func ensureWritableReferenceExists() {
         ensureStyleDirectoryExists()
         guard !FileManager.default.fileExists(atPath: writableReferenceURL.path),
-              let bundledURL = Bundle.module.url(forResource: "david_oks_style_guide", withExtension: "md")
+              let bundledURL = Bundle.shakespeareResources.url(
+                forResource: "writing_style_reference",
+                withExtension: "md"
+              )
         else { return }
 
         do {
@@ -74,7 +77,10 @@ enum AuthorStyleReference {
     }
 
     private static func bundledContent() -> String {
-        guard let resourceURL = Bundle.module.url(forResource: "david_oks_style_guide", withExtension: "md"),
+        guard let resourceURL = Bundle.shakespeareResources.url(
+                forResource: "writing_style_reference",
+                withExtension: "md"
+              ),
               let content = try? String(contentsOf: resourceURL, encoding: .utf8)
         else { return "" }
         return content

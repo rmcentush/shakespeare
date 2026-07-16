@@ -2,7 +2,7 @@ import CoreText
 import Foundation
 
 enum AppFontRegistry {
-    static func registerBundledFonts(bundle: Bundle = .module) {
+    static func registerBundledFonts(bundle: Bundle = .shakespeareResources) {
         for fontName in [
             "AnthropicSerifWebVariable-TextRegular",
             "AnthropicSerifWebVariable-TextRegularItalic",

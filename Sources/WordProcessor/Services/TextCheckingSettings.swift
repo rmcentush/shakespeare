@@ -1,6 +1,5 @@
 import AppKit
 import Observation
-import ObjectiveC.runtime
 import WebKit
 
 @MainActor
@@ -27,6 +26,7 @@ final class TextCheckingSettings {
     private let baselineAutomaticSpellingCorrectionEnabled: Bool
     private let baselineAutomaticTextReplacementEnabled: Bool
     private var didApplyAutomaticCorrectionToCurrentWebView = false
+    private var didApplyAutomaticTextReplacementToCurrentWebView = false
 
     weak var webView: WKWebView?
 
@@ -68,7 +68,7 @@ final class TextCheckingSettings {
         didSet {
             guard automaticTextReplacementEnabled != oldValue else { return }
             persist(automaticTextReplacementEnabled, key: Keys.automaticTextReplacement)
-            applyAutomaticTextReplacement()
+            applyAutomaticTextReplacement(previousValue: oldValue)
         }
     }
 
@@ -96,11 +96,11 @@ final class TextCheckingSettings {
     func bind(webView: WKWebView) {
         self.webView = webView
         didApplyAutomaticCorrectionToCurrentWebView = false
-        applyAutomaticTextReplacement()
+        didApplyAutomaticTextReplacementToCurrentWebView = false
     }
 
     func editorDidBecomeReady() {
-        // Harper and Haiku supply the visible spelling/grammar marks. Disabling WebKit's
+        // The local and remote checkers supply the visible spelling/grammar marks. Disabling WebKit's
         // checker avoids duplicate, conflicting underlines and context menus.
         setEditorBoolOption(callback: "setSpellcheckEnabled", value: false)
         setEditorBoolOption(callback: "setAutocorrectEnabled", value: automaticSpellingCorrectionEnabled)
@@ -112,7 +112,12 @@ final class TextCheckingSettings {
                 #selector(NSTextView.toggleAutomaticSpellingCorrection(_:))
             )
         }
-        applyAutomaticTextReplacement()
+        if !didApplyAutomaticTextReplacementToCurrentWebView,
+           automaticTextReplacementEnabled != baselineAutomaticTextReplacementEnabled {
+            didApplyAutomaticTextReplacementToCurrentWebView = performAction(
+                #selector(NSTextView.toggleAutomaticTextReplacement(_:))
+            )
+        }
     }
 
     func resetDictionary() {
@@ -140,14 +145,10 @@ final class TextCheckingSettings {
         }
     }
 
-    private func applyAutomaticTextReplacement() {
-        guard let webView else { return }
-        if !setBoolSelector(
-            "setAutomaticTextReplacementEnabled:",
-            on: webView,
-            value: automaticTextReplacementEnabled
-        ), automaticTextReplacementEnabled != baselineAutomaticTextReplacementEnabled {
-            performAction(#selector(NSTextView.toggleAutomaticTextReplacement(_:)))
+    private func applyAutomaticTextReplacement(previousValue: Bool) {
+        guard previousValue != automaticTextReplacementEnabled else { return }
+        if performAction(#selector(NSTextView.toggleAutomaticTextReplacement(_:))) {
+            didApplyAutomaticTextReplacementToCurrentWebView = true
         }
     }
 
@@ -180,15 +181,5 @@ final class TextCheckingSettings {
         case "IN": return "indian"
         default: return "american"
         }
-    }
-
-    private func setBoolSelector(_ selectorName: String, on target: AnyObject, value: Bool) -> Bool {
-        let selector = Selector(selectorName)
-        guard let method = class_getInstanceMethod(type(of: target), selector) else { return false }
-
-        typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
-        let implementation = method_getImplementation(method)
-        unsafeBitCast(implementation, to: Setter.self)(target, selector, value)
-        return true
     }
 }

@@ -2,7 +2,8 @@
   "name": "wordprocessor-editor",
   "private": true,
   "scripts": {
-    "build": "node esbuild.config.mjs"
+    "build": "node esbuild.config.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@tiptap/core": "^2.11.0",
@@ -20,7 +21,7 @@
     "harper.js": "^2.4.0"
   },
   "devDependencies": {
-    "esbuild": "^0.24.0",
-    "typescript": "^5.7.0"
+    "esbuild": "^0.28.1",
+    "typescript": "^7.0.2"
   }
 }

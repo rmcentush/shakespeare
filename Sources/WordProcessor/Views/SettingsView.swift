@@ -59,7 +59,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Text("Your API key is stored securely in the macOS Keychain.")
+                    Text("Your API key is stored in the macOS Keychain, with an owner-only local fallback for development builds.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -68,7 +68,7 @@ struct SettingsView: View {
 
             Form {
                 Section("Style Reference") {
-                    Text("Claude uses a fixed David Oks sentence and paragraph style guide as its voice reference when drafting or rewriting. The current document is still sent for topic, continuity, and edit targeting.")
+                    Text("The writing assistant uses an editable editorial reference and learned preferences when drafting or rewriting. The current document supplies topic, continuity, and edit context.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -174,7 +174,7 @@ struct SettingsView: View {
                         set: { textCheckingSettings.continuousSpellCheckingEnabled = $0 }
                     ))
 
-                    Toggle("Check grammar with Haiku", isOn: Binding(
+                    Toggle("Check grammar while typing", isOn: Binding(
                         get: { textCheckingSettings.grammarCheckingEnabled },
                         set: { textCheckingSettings.grammarCheckingEnabled = $0 }
                     ))
@@ -206,7 +206,7 @@ struct SettingsView: View {
                         textCheckingSettings.resetDictionary()
                     }
 
-                    Text("Spelling is checked locally by Harper. When grammar checking is enabled, changed paragraphs are sent to Claude Haiku using your Anthropic API key. A Sonnet proofread is available from the Spelling and Grammar menu.")
+                    Text("Spelling is checked locally by Harper. When grammar checking is enabled, changed paragraphs are sent to the configured language-model provider. An on-demand thorough proofread is available from the Spelling and Grammar menu.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -215,7 +215,7 @@ struct SettingsView: View {
         }
         .frame(width: 500, height: 420)
         .onAppear {
-            if let key = KeychainService.shared.getAPIKey(service: "anthropic") {
+            if let key = APIKeyStore.shared.getAPIKey(service: "anthropic") {
                 anthropicKey = key
             }
             refreshStyleContext()
@@ -280,7 +280,7 @@ struct SettingsView: View {
 
     private func saveAnthropicKey() {
         anthropicKey = normalizedAnthropicKey(from: anthropicKey)
-        guard KeychainService.shared.setAPIKey(anthropicKey, service: "anthropic") else { return }
+        guard APIKeyStore.shared.setAPIKey(anthropicKey, service: "anthropic") else { return }
         saved = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             saved = false

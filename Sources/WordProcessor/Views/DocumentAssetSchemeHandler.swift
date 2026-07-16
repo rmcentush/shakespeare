@@ -21,11 +21,24 @@ final class DocumentAssetSchemeHandler: NSObject, WKURLSchemeHandler {
             }
         }
 
-        let assetURL = documentURL
-            .appendingPathComponent(DocumentAssetReference.assetsDirectoryName, isDirectory: true)
-            .appendingPathComponent(filename)
+        guard let assetsDirectory = DocumentAssetReference.containedFileURL(
+            named: DocumentAssetReference.assetsDirectoryName,
+            in: documentURL
+        ), let assetURL = DocumentAssetReference.containedFileURL(
+            named: filename,
+            in: assetsDirectory
+        ) else {
+            urlSchemeTask.didFailWithError(CocoaError(.fileReadNoPermission))
+            return
+        }
 
         do {
+            let values = try assetURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            guard values.isRegularFile == true,
+                  (values.fileSize ?? 0) <= DocumentFileStore.maximumImportedImageBytes
+            else {
+                throw CocoaError(.fileReadTooLarge)
+            }
             let data = try Data(contentsOf: assetURL, options: .mappedIfSafe)
             let mimeType = UTType(filenameExtension: assetURL.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
             let response = URLResponse(

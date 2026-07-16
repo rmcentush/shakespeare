@@ -4,14 +4,33 @@ set -euo pipefail
 APP_NAME="WordProcessor"
 DISPLAY_NAME="Shakespeare"
 BUILD_DIR=".build/release"
+RESOURCE_BUNDLE="${APP_NAME}_${APP_NAME}.bundle"
 APP_BUNDLE="$DISPLAY_NAME.app"
 CONTENTS="$APP_BUNDLE/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
+APP_VERSION="${APP_VERSION:-1.0.0}"
+APP_VERSION="${APP_VERSION#v}"
+BUILD_NUMBER="${BUILD_NUMBER:-1}"
 
-echo "Building release..."
+if [[ ! "$APP_VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
+    echo "Invalid APP_VERSION: $APP_VERSION" >&2
+    exit 1
+fi
+
+if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+    echo "Invalid BUILD_NUMBER: $BUILD_NUMBER" >&2
+    exit 1
+fi
+
 cd "$(dirname "$0")/.."
-make build
+if [ "${SKIP_BUILD:-0}" != "1" ]; then
+    echo "Building release..."
+    # SwiftPM does not always remove resources deleted from Package.swift during
+    # incremental builds. Recreate the bundle so retired files cannot ship.
+    rm -rf "$BUILD_DIR/$RESOURCE_BUNDLE"
+    make build
+fi
 
 echo "Creating app bundle..."
 rm -rf "$APP_BUNDLE"
@@ -20,14 +39,12 @@ mkdir -p "$MACOS" "$RESOURCES"
 # Copy executable
 cp "$BUILD_DIR/$APP_NAME" "$MACOS/$APP_NAME"
 
-# Copy the SwiftPM resource bundle. The synthesized Bundle.module accessor looks for
-# this bundle next to Bundle.main.bundleURL, which is the .app root for this app.
-RESOURCE_BUNDLE="${APP_NAME}_${APP_NAME}.bundle"
+# Copy the SwiftPM resource bundle into the standard signed resource location.
 if [ ! -d "$BUILD_DIR/$RESOURCE_BUNDLE" ]; then
     echo "Missing resource bundle: $BUILD_DIR/$RESOURCE_BUNDLE" >&2
     exit 1
 fi
-cp -R "$BUILD_DIR/$RESOURCE_BUNDLE" "$APP_BUNDLE/"
+cp -R "$BUILD_DIR/$RESOURCE_BUNDLE" "$RESOURCES/"
 
 # Copy app icon
 if [ -f "AppIcon.icns" ]; then
@@ -49,9 +66,9 @@ cat > "$CONTENTS/Info.plist" << 'PLIST'
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleVersion</key>
-    <string>1.0</string>
+    <string>1</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>1.0.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
@@ -106,16 +123,23 @@ cat > "$CONTENTS/Info.plist" << 'PLIST'
             <string>Editor</string>
         </dict>
     </array>
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <true/>
-    </dict>
-    <key>com.apple.security.network.client</key>
-    <true/>
 </dict>
 </plist>
 PLIST
+
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$CONTENTS/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$CONTENTS/Info.plist"
+
+# Ad-hoc signing keeps local/CI builds internally consistent. Set
+# CODESIGN_IDENTITY to a Developer ID certificate for distributable builds.
+SIGNING_IDENTITY="${CODESIGN_IDENTITY:--}"
+if [ "$SIGNING_IDENTITY" = "-" ]; then
+    codesign --force --deep --sign - "$APP_BUNDLE"
+else
+    codesign --force --deep --options runtime --timestamp \
+        --sign "$SIGNING_IDENTITY" "$APP_BUNDLE"
+fi
+codesign --verify --deep --strict "$APP_BUNDLE"
 
 echo "App bundle created: $APP_BUNDLE"
 echo "To run: open $APP_BUNDLE"

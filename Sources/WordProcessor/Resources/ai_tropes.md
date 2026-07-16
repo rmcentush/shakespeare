@@ -264,7 +264,7 @@ Compulsive overuse of em dashes for dramatic pauses, parenthetical asides and pi
 
 ### Bold-First Bullets
 
-Every bullet point or list item starts with a bolded phrase or sentence. Extremely common in Claude and ChatGPT markdown output. Almost nobody formats lists this way when writing by hand. It's a telltale sign of AI-generated documentation and blog posts AND README files (especially with emojis).
+Every bullet point or list item starts with a bolded phrase or sentence. Extremely common in generated markdown output. Almost nobody formats lists this way when writing by hand. It's a telltale sign of AI-generated documentation and blog posts AND README files (especially with emojis).
 
 **Avoid patterns like:**
 - "Every single bullet point begins with a bold keyword."
@@ -273,7 +273,7 @@ Every bullet point or list item starts with a bolded phrase or sentence. Extreme
 
 ### Unicode Decoration
 
-Use of unicode arrows (->), smart/curly quotes, and other special characters that can't be easily typed on a standard keyboard. Real writers typing in a text editor produce straight quotes and -> or =>. Claude in particular loves the -> arrow.
+Use of unicode arrows (->), smart/curly quotes, and other special characters that can't be easily typed on a standard keyboard. Real writers typing in a text editor produce straight quotes and -> or =>. Generated prose often overuses the arrow.
 
 **Avoid patterns like:**
 - "Input → Processing → Output"
