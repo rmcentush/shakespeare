@@ -51,9 +51,10 @@ private struct TinkerConnectionEvals {
     static func main() async {
         await validatesExpectedRequest()
         await mapsUnauthorizedResponse()
+        await mapsBillingRequiredResponse()
         await mapsTemporaryFailure()
         await rejectsMalformedSuccess()
-        print("Tinker connection evals passed (4 cases).")
+        print("Tinker connection evals passed (5 cases).")
     }
 
     private static func makeValidator(
@@ -109,6 +110,21 @@ private struct TinkerConnectionEvals {
             preconditionFailure("Expected unavailable error")
         } catch let error as TinkerConnectionValidator.ValidationError {
             precondition(error == .unavailable)
+        } catch {
+            preconditionFailure("Unexpected error: \(error)")
+        }
+    }
+
+    private static func mapsBillingRequiredResponse() async {
+        let validator = makeValidator { _ in
+            (402, Data(#"{"detail":"Access is blocked due to billing status."}"#.utf8))
+        }
+
+        do {
+            try await validator.validate(apiKey: "test-key")
+            preconditionFailure("Expected billing-required error")
+        } catch let error as TinkerConnectionValidator.ValidationError {
+            precondition(error == .billingRequired)
         } catch {
             preconditionFailure("Unexpected error: \(error)")
         }

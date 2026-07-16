@@ -5,6 +5,7 @@ struct TinkerConnectionValidator: Sendable {
         case emptyKey
         case invalidResponse
         case unauthorized
+        case billingRequired
         case unavailable
         case rejected(String)
 
@@ -16,6 +17,8 @@ struct TinkerConnectionValidator: Sendable {
                 return "Tinker returned an unexpected response. Try again."
             case .unauthorized:
                 return "Tinker rejected this key, or Inkling access is not enabled for this account."
+            case .billingRequired:
+                return "This Tinker key is valid, but the account's billing balance is blocking access. Add funds in Tinker, then try again."
             case .unavailable:
                 return "Tinker is temporarily unavailable. Your existing connection was not changed."
             case .rejected(let message):
@@ -85,6 +88,8 @@ struct TinkerConnectionValidator: Sendable {
             }
         case 401, 403:
             throw ValidationError.unauthorized
+        case 402:
+            throw ValidationError.billingRequired
         case 429, 500..<600:
             throw ValidationError.unavailable
         default:
@@ -100,7 +105,8 @@ struct TinkerConnectionValidator: Sendable {
 
         let nestedMessage = (object["error"] as? [String: Any])?["message"] as? String
         let topLevelMessage = object["message"] as? String
-        let message = (nestedMessage ?? topLevelMessage ?? "Tinker could not validate this connection.")
+        let detail = object["detail"] as? String
+        let message = (nestedMessage ?? topLevelMessage ?? detail ?? "Tinker could not validate this connection.")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !message.isEmpty else { return "Tinker could not validate this connection." }
