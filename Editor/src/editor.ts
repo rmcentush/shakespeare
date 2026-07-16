@@ -188,7 +188,7 @@ const editor = new Editor({
     }),
     Underline,
     Placeholder.configure({
-      placeholder: 'Start writing...',
+      placeholder: 'Start writing, paste a draft, or press ⌘O to open one…',
     }),
     TextAlign.configure({
       types: ['heading', 'paragraph'],

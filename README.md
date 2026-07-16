@@ -28,14 +28,19 @@ Then open the app:
 open /Applications/Shakespeare.app
 ```
 
+On first launch, a three-step welcome flow explains the editor, offers an optional
+Inkling connection, and asks separately whether Shakespeare may learn from saved
+work. Both choices can be deferred: drafting and local proofreading work without
+an API key, and personalization stays off unless the writer enables it. Reopen
+the tour anytime from **Help → Show Welcome to Shakespeare**.
+
 ### Writing assistant
 
 The editor works without a model connection. To enable the writing assistant (`Cmd+\\`):
 
 1. Get a Tinker API key.
-2. In Shakespeare, open **Settings** (Cmd+,)
-3. Go to the **API Keys** tab
-4. Paste the key and click **Save**
+2. Open the writing assistant (`Cmd+\`) and choose **Connect**, or open **Settings** (`Cmd+,`).
+3. Paste the key in **API Keys** and choose **Save**.
 
 Your key is stored in the macOS Keychain. Locally built bundles use an owner-only
 file under `~/Library/Application Support/Shakespeare/` only when Keychain access

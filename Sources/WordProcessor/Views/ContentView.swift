@@ -37,6 +37,9 @@ struct ContentView: View {
     @State private var showVersionHistory = false
     @State private var showNamedVersionAlert = false
     @State private var namedVersionName = ""
+    @State private var showOnboarding = false
+    @State private var hasCheckedOnboarding = false
+    @State private var onboardingWindowID = UUID()
 
     var body: some View {
         mainLayout
@@ -131,6 +134,37 @@ struct ContentView: View {
             }
             .onDisappear {
                 editorViewModel.flushPendingChanges(document: document)
+                OnboardingSettings.releasePresentation(for: onboardingWindowID)
+            }
+            .onAppear {
+                guard !hasCheckedOnboarding else { return }
+                hasCheckedOnboarding = true
+                if OnboardingSettings.shouldPresent,
+                   OnboardingSettings.claimPresentation(for: onboardingWindowID) {
+                    DispatchQueue.main.async {
+                        showOnboarding = true
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .showOnboarding, object: editorViewModel)) { _ in
+                showOnboarding = true
+            }
+            .sheet(isPresented: $showOnboarding, onDismiss: {
+                OnboardingSettings.markCompleted()
+                OnboardingSettings.releasePresentation(for: onboardingWindowID)
+                editorViewModel.focusEditor()
+            }) {
+                OnboardingView(
+                    onFinish: {
+                        showOnboarding = false
+                    },
+                    onOpenDocument: {
+                        showOnboarding = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                            editorViewModel.openDocument(document: document)
+                        }
+                    }
+                )
             }
             .alert("Save Named Version", isPresented: $showNamedVersionAlert) {
                 TextField("Version name", text: $namedVersionName)

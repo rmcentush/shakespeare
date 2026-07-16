@@ -1,10 +1,20 @@
 import AppKit
 import SwiftUI
 
+enum SettingsDestination {
+    static let defaultsKey = "settingsSelectedTab"
+    static let apiKeys = "apiKeys"
+    static let myStyle = "myStyle"
+    static let typography = "typography"
+    static let editing = "editing"
+}
+
 struct SettingsView: View {
     @State private var tinkerKey = ""
     @State private var showKey = false
     @State private var tinkerSaved = false
+    @State private var tinkerConnected = false
+    @AppStorage(SettingsDestination.defaultsKey) private var selectedTab = SettingsDestination.apiKeys
     @AppStorage(InferenceSettings.tinkerModelDefaultsKey) private var tinkerModel = InferenceSettings.defaultTinkerModel
     @AppStorage(PersonalizationSettings.enabledDefaultsKey) private var personalizationEnabled = false
     @State private var personalizationReadiness = TrainingEventStore.Readiness(
@@ -31,7 +41,7 @@ struct SettingsView: View {
     private let styleGuideUpdater = StyleGuideUpdater()
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             // API Keys tab
             Form {
                 Section("Inference") {
@@ -51,6 +61,15 @@ struct SettingsView: View {
                 }
 
                 Section("Tinker API Key") {
+                    HStack {
+                        Label(
+                            tinkerConnected ? "Inkling connected" : "Inkling not connected",
+                            systemImage: tinkerConnected ? "checkmark.circle.fill" : "circle.dashed"
+                        )
+                        .foregroundStyle(tinkerConnected ? .green : .secondary)
+                        Spacer()
+                    }
+
                     HStack {
                         if showKey {
                             TextField("TINKER_API_KEY", text: $tinkerKey)
@@ -90,6 +109,7 @@ struct SettingsView: View {
                 }
             }
             .tabItem { Label("API Keys", systemImage: "key") }
+            .tag(SettingsDestination.apiKeys)
 
             Form {
                 Section("How My Style Works") {
@@ -229,6 +249,7 @@ struct SettingsView: View {
                 }
             }
             .tabItem { Label("My Style", systemImage: "person.crop.circle.badge.checkmark") }
+            .tag(SettingsDestination.myStyle)
 
             // Typography tab
             Form {
@@ -271,6 +292,7 @@ struct SettingsView: View {
                 }
             }
             .tabItem { Label("Typography", systemImage: "textformat") }
+            .tag(SettingsDestination.typography)
 
             Form {
                 Section("Spelling and Grammar") {
@@ -317,11 +339,14 @@ struct SettingsView: View {
                 }
             }
             .tabItem { Label("Editing", systemImage: "checkmark.circle") }
+            .tag(SettingsDestination.editing)
         }
         .frame(width: 620, height: 620)
         .onAppear {
+            tinkerConnected = false
             if let key = APIKeyStore.shared.getAPIKey(service: "tinker") {
                 tinkerKey = key
+                tinkerConnected = true
             }
             refreshStyleContext()
         }
@@ -398,7 +423,9 @@ struct SettingsView: View {
     private func saveTinkerKey() {
         tinkerKey = tinkerKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard APIKeyStore.shared.setAPIKey(tinkerKey, service: "tinker") else { return }
+        tinkerConnected = !tinkerKey.isEmpty
         tinkerSaved = true
+        NotificationCenter.default.post(name: .inklingConnectionChanged, object: nil)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             tinkerSaved = false
         }

@@ -63,6 +63,7 @@ Content changes sent across the bridge are debounced for 1 second in the editor.
 | `Sources/WordProcessor/ViewModels/EditorViewModel.swift` | Central hub: webview ref, JS evaluation, file I/O, bridge dispatch |
 | `Sources/WordProcessor/Views/EditorWebView.swift` | NSViewRepresentable wrapping WKWebView, loads editor.html |
 | `Sources/WordProcessor/Views/ContentView.swift` | Main layout: editor + optional sidebars |
+| `Sources/WordProcessor/Views/OnboardingView.swift` | Versioned first-run setup for optional Inkling connection and personalization consent |
 | `Sources/WordProcessor/Services/LanguageModelService.swift` | Provider-configured Messages API client with SSE streaming |
 | `Sources/WordProcessor/Services/InferenceSettings.swift` | Inkling runtime configuration and promoted-checkpoint registry |
 | `Sources/WordProcessor/Services/TrainingEventStore.swift` | Opt-in, versioned, local personalization event ledger |
@@ -97,3 +98,4 @@ The hosted service is not publicly launch-ready until the worker, inference gate
 - **Font injection timing:** EditorWebView injects @font-face CSS after a 500ms delay to ensure the webview is ready.
 - **BridgePayload parsing:** Uses manual JSON parsing (`[String: Any]`), not Codable.
 - **Provider API keys:** Stored in the macOS Keychain. A service-specific 0600 file under `~/Library/Application Support/Shakespeare/` is used only as a development fallback and is migrated when Keychain access succeeds.
+- **Onboarding changes:** Increment `OnboardingSettings.currentVersion` only when every existing writer should see a revised flow again. Copy and layout fixes should not reset completion.

@@ -8,6 +8,7 @@ struct AssistantChatView: View {
     @State private var inputText = ""
     @State private var pendingSelection: String?
     @State private var shouldFollowLatestMessage = true
+    @State private var hasInklingConnection = false
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -16,6 +17,13 @@ struct AssistantChatView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
+                        if chatViewModel.messages.isEmpty {
+                            AssistantEmptyState(
+                                isConnected: hasInklingConnection,
+                                onChoosePrompt: chooseStarterPrompt
+                            )
+                        }
+
                         ForEach(chatViewModel.messages) { message in
                             MessageBubble(
                                 message: message,
@@ -62,57 +70,88 @@ struct AssistantChatView: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
-                HStack(alignment: .bottom, spacing: 8) {
-                    // Attach selected text as context
-                    Button {
-                        attachSelection()
-                    } label: {
-                        Image(systemName: "text.quote")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(pendingSelection == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.accentColor))
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.bottom, 3)
-                    .help("Attach selected text")
-
-                    TextField("Ask the writing assistant...", text: smartQuotedInputText, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .font(AssistantChatFont.input)
-                        .lineLimit(1...5)
-                        .padding(.vertical, 2)
-                        .focused($isInputFocused)
-                        .onSubmit {
-                            sendMessage()
+                if hasInklingConnection {
+                    HStack(alignment: .bottom, spacing: 8) {
+                        // Attach selected text as context
+                        Button {
+                            attachSelection()
+                        } label: {
+                            Image(systemName: "text.quote")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(pendingSelection == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.accentColor))
                         }
+                        .buttonStyle(.plain)
+                        .padding(.bottom, 3)
+                        .help("Attach selected text")
 
-                    Button {
-                        if chatViewModel.isStreaming {
-                            chatViewModel.cancelStreaming()
-                        } else {
-                            sendMessage()
+                        TextField("Ask the writing assistant...", text: smartQuotedInputText, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .font(AssistantChatFont.input)
+                            .lineLimit(1...5)
+                            .padding(.vertical, 2)
+                            .focused($isInputFocused)
+                            .onSubmit {
+                                sendMessage()
+                            }
+
+                        Button {
+                            if chatViewModel.isStreaming {
+                                chatViewModel.cancelStreaming()
+                            } else {
+                                sendMessage()
+                            }
+                        } label: {
+                            Image(systemName: chatViewModel.isStreaming ? "stop.circle.fill" : "arrow.up.circle.fill")
+                                .font(.system(size: 21))
+                                .foregroundColor(buttonColor)
                         }
-                    } label: {
-                        Image(systemName: chatViewModel.isStreaming ? "stop.circle.fill" : "arrow.up.circle.fill")
-                            .font(.system(size: 21))
-                            .foregroundColor(buttonColor)
+                        .buttonStyle(.plain)
+                        .disabled(!chatViewModel.isStreaming && inputText.isEmpty)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!chatViewModel.isStreaming && inputText.isEmpty)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 17, style: .continuous)
+                            .fill(Color(nsColor: .textBackgroundColor))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 17, style: .continuous)
+                            .stroke(Color.primary.opacity(isInputFocused ? 0.16 : 0.09), lineWidth: 1)
+                    )
+                } else {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Connect Inkling to use the assistant")
+                                .font(.caption.weight(.semibold))
+                            Text("Writing and local proofreading still work without it.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        SettingsLink {
+                            Label("Connect", systemImage: "key")
+                        }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            UserDefaults.standard.set(
+                                SettingsDestination.apiKeys,
+                                forKey: SettingsDestination.defaultsKey
+                            )
+                        })
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                    .padding(.horizontal, 4)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 17, style: .continuous)
-                        .fill(Color(nsColor: .textBackgroundColor))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 17, style: .continuous)
-                        .stroke(Color.primary.opacity(isInputFocused ? 0.16 : 0.09), lineWidth: 1)
-                )
             }
             .padding(10)
         }
         .frame(maxHeight: .infinity)
+        .onAppear {
+            refreshConnectionStatus()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .inklingConnectionChanged)) { _ in
+            refreshConnectionStatus()
+        }
         .onDisappear {
             chatViewModel.cancelStreaming()
         }
@@ -141,6 +180,15 @@ struct AssistantChatView: View {
             }
             isInputFocused = true
         }
+    }
+
+    private func chooseStarterPrompt(_ prompt: String) {
+        inputText = prompt
+        isInputFocused = true
+    }
+
+    private func refreshConnectionStatus() {
+        hasInklingConnection = APIKeyStore.shared.getAPIKey(service: "tinker") != nil
     }
 
     private func sendMessage() {
@@ -230,6 +278,67 @@ struct AssistantChatView: View {
 
         editorViewModel.insertHTMLAtCursor(html)
         editorViewModel.focusEditor()
+    }
+}
+
+private struct AssistantEmptyState: View {
+    let isConnected: Bool
+    let onChoosePrompt: (String) -> Void
+
+    private let prompts = [
+        "Review this draft for clarity and flow.",
+        "Make the opening stronger without changing my voice.",
+        "Tighten this draft and explain the biggest cuts.",
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 24))
+                .foregroundStyle(Color.accentColor)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Writing Assistant")
+                    .font(.headline)
+                Text(isConnected
+                    ? "Ask about the draft, or select text first for a focused revision. Every proposed change remains yours to review."
+                    : "Connect Inkling when you want help revising. The editor remains fully usable without it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if isConnected {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("TRY ASKING")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .kerning(0.7)
+                        .foregroundStyle(.tertiary)
+
+                    ForEach(prompts, id: \.self) { prompt in
+                        Button {
+                            onChoosePrompt(prompt)
+                        } label: {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Image(systemName: "arrow.up.right")
+                                    .font(.caption)
+                                Text(prompt)
+                                    .font(.caption)
+                                    .multilineTextAlignment(.leading)
+                                Spacer(minLength: 0)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.plain)
+                        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 6)
     }
 }
 

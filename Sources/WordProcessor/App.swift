@@ -14,6 +14,7 @@ private struct WindowCommandContext {
     let exportHTML: () -> Void
     let showSaveNamedVersion: () -> Void
     let thoroughProofread: () -> Void
+    let showOnboarding: () -> Void
     let cut: () -> Void
     let copy: () -> Void
     let paste: () -> Void
@@ -273,6 +274,13 @@ private struct WordProcessorCommands: Commands {
             }
             .keyboardShortcut(",")
         }
+
+        CommandGroup(after: .help) {
+            Button("Show Welcome to Shakespeare") {
+                windowCommandContext?.showOnboarding()
+            }
+            .disabled(windowCommandContext == nil)
+        }
     }
 
     private func performPasteboardAction(
@@ -342,6 +350,9 @@ private struct EditorWindowRootView: View {
             },
             thoroughProofread: {
                 editorViewModel.runThoroughProofread()
+            },
+            showOnboarding: {
+                NotificationCenter.default.post(name: .showOnboarding, object: editorViewModel)
             },
             cut: {
                 handlePasteboardCommand(cutAfterCopy: true)
