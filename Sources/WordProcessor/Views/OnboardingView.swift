@@ -29,54 +29,35 @@ enum OnboardingSettings {
 }
 
 struct OnboardingView: View {
-    private enum Step: Int, CaseIterable {
-        case welcome
-        case assistant
-        case style
-    }
-
-    private enum KeySaveState: Equatable {
-        case idle
-        case saved
-        case failed
-    }
-
     let onFinish: () -> Void
     let onOpenDocument: () -> Void
 
-    @State private var step: Step = .welcome
     @State private var apiKey = ""
     @State private var hasExistingAPIKey = false
     @State private var isReplacingAPIKey = false
-    @State private var keySaveState: KeySaveState = .idle
-    @State private var learningEnabled = PersonalizationSettings.isEnabled
+    @State private var isConnecting = false
+    @State private var connectionError = ""
+    @FocusState private var isAPIKeyFocused: Bool
+
+    private let connectionValidator = TinkerConnectionValidator()
 
     var body: some View {
         VStack(spacing: 0) {
             header
-
             Divider()
-
-            Group {
-                switch step {
-                case .welcome:
-                    welcomeStep
-                case .assistant:
-                    assistantStep
-                case .style:
-                    styleStep
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
+            content
             Divider()
-
             footer
         }
-        .frame(width: 700, height: 540)
+        .frame(width: 700, height: 520)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             hasExistingAPIKey = APIKeyStore.shared.getAPIKey(service: "tinker") != nil
+            if !hasExistingAPIKey {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    isAPIKeyFocused = true
+                }
+            }
         }
     }
 
@@ -87,261 +68,218 @@ struct OnboardingView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Welcome to Shakespeare")
                     .font(.headline)
-                Text("A calmer place to write, revise, and develop your voice.")
+                Text("A calmer place to write and revise.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            HStack(spacing: 7) {
-                ForEach(Step.allCases, id: \.rawValue) { item in
-                    Circle()
-                        .fill(item.rawValue <= step.rawValue ? Color.accentColor : Color.secondary.opacity(0.22))
-                        .frame(width: item == step ? 9 : 7, height: item == step ? 9 : 7)
-                        .animation(.easeOut(duration: 0.16), value: step)
-                }
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Step \(step.rawValue + 1) of \(Step.allCases.count)")
+            Text("ONE-MINUTE SETUP")
+                .font(.system(size: 9.5, weight: .semibold))
+                .kerning(0.7)
+                .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 26)
         .padding(.vertical, 18)
     }
 
-    private var welcomeStep: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 9) {
-                Text("Your words stay at the center.")
-                    .font(.system(size: 28, weight: .semibold, design: .serif))
-                Text("Write normally, ask for help when you want it, and review every suggested change before it touches your draft.")
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("One key. That’s it.")
+                    .font(.system(size: 29, weight: .semibold, design: .serif))
+                Text("Your Tinker API key automatically connects Inkling for writing help. The same credential is used by Tinker training later—there is no separate Inkling key.")
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            HStack(alignment: .top, spacing: 14) {
-                OnboardingFeature(
-                    icon: "doc.text",
-                    title: "A real editor",
-                    detail: "Draft, format, comment, save versions, and proofread without an AI connection."
-                )
-                OnboardingFeature(
-                    icon: "checkmark.bubble",
-                    title: "Edits you control",
-                    detail: "Assistant changes arrive as suggestions. Accept, revise, or reject them."
-                )
-                OnboardingFeature(
-                    icon: "person.crop.circle.badge.checkmark",
-                    title: "Your style, optional",
-                    detail: "Learning is opt-in, local by default, and reversible from Settings."
-                )
+            HStack(spacing: 10) {
+                ConnectionCapability(icon: "sparkles", label: "Inkling assistant")
+                ConnectionCapability(icon: "person.text.rectangle", label: "Tinker training")
+                ConnectionCapability(icon: "checkmark.shield", label: "One secure key")
             }
 
-            Spacer()
+            credentialCard
+
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "hand.raised")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18)
+                Text("Text is sent to Tinker only when you ask the assistant for help. Style learning is a separate choice in My Style and is never enabled by connecting a key.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
         }
-        .padding(34)
+        .padding(.horizontal, 34)
+        .padding(.vertical, 28)
     }
 
-    private var assistantStep: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 7) {
-                Label("Connect the writing assistant", systemImage: "sparkles")
-                    .font(.title2.weight(.semibold))
-                Text("Optional. Shakespeare works as an editor without an API key.")
-                    .foregroundStyle(.secondary)
-            }
+    @ViewBuilder
+    private var credentialCard: some View {
+        if hasExistingAPIKey && !isReplacingAPIKey {
+            HStack(spacing: 13) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.green)
 
-            if hasExistingAPIKey && !isReplacingAPIKey {
-                HStack(spacing: 12) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.green)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Inkling is connected")
-                            .font(.headline)
-                        Text("Your key is stored in secure local credential storage.")
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Ready to use Inkling")
+                        .font(.headline)
+                    Text("A Tinker API key is saved in secure local credential storage.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button("Replace Key") {
+                    connectionError = ""
+                    isReplacingAPIKey = true
+                    DispatchQueue.main.async {
+                        isAPIKeyFocused = true
+                    }
+                }
+            }
+            .padding(16)
+            .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Tinker API key")
+                        .font(.headline)
+                    Spacer()
+                    Link("Get a key ↗", destination: InferenceSettings.tinkerConsoleURL)
+                        .font(.caption)
+                }
+
+                HStack(spacing: 8) {
+                    SecureField("Paste TINKER_API_KEY", text: $apiKey)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($isAPIKeyFocused)
+                        .disabled(isConnecting)
+                        .onChange(of: apiKey) {
+                            connectionError = ""
+                        }
+                        .onSubmit {
+                            connectAndFinish()
+                        }
+
+                    Button {
+                        pasteAPIKey()
+                    } label: {
+                        Label("Paste", systemImage: "doc.on.clipboard")
+                    }
+                    .disabled(isConnecting)
+                }
+
+                if isConnecting {
+                    HStack(spacing: 7) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Checking access to Inkling…")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    Spacer()
-                    Button("Replace Key") {
-                        isReplacingAPIKey = true
-                    }
-                }
-                .padding(16)
-                .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-            } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Tinker API key")
-                        .font(.headline)
-
-                    HStack(spacing: 8) {
-                        SecureField("Paste your TINKER_API_KEY", text: $apiKey)
-                            .textFieldStyle(.roundedBorder)
-                            .onSubmit { saveAPIKey() }
-
-                        Button {
-                            pasteAPIKey()
-                        } label: {
-                            Label("Paste", systemImage: "doc.on.clipboard")
-                        }
-                    }
-
-                    switch keySaveState {
-                    case .idle:
-                        EmptyView()
-                    case .saved:
-                        Label("Connected securely", systemImage: "checkmark.circle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.green)
-                    case .failed:
-                        Label("The key could not be stored. Try again or continue without it.", systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
-                }
-                .padding(16)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-            }
-
-            Label {
-                Text("When you ask the assistant for help, relevant document excerpts are sent to Tinker for that request. Shakespeare does not send documents in the background.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } icon: {
-                Image(systemName: "hand.raised")
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-        }
-        .padding(34)
-    }
-
-    private var styleStep: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 7) {
-                Label("Let Shakespeare learn your style?", systemImage: "person.text.rectangle")
-                    .font(.title2.weight(.semibold))
-                Text("This is separate from connecting the assistant, and you can change it anytime.")
-                    .foregroundStyle(.secondary)
-            }
-
-            Toggle(isOn: $learningEnabled) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Learn from saved edits and documents")
-                        .font(.headline)
-                    Text("After you save, Shakespeare checks whether you kept, revised, reverted, or rewrote assistant suggestions. Those outcomes build a local style history.")
+                } else if !connectionError.isEmpty {
+                    Label(connectionError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Shakespeare checks the connection before saving the key.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .toggleStyle(.switch)
-            .accessibilityLabel("Learn from saved edits and documents")
-            .accessibilityHint("Records local learning outcomes after documents are saved")
-            .padding(18)
-            .background(
-                learningEnabled ? Color.accentColor.opacity(0.09) : Color(nsColor: .controlBackgroundColor),
-                in: RoundedRectangle(cornerRadius: 12)
-            )
-
-            VStack(alignment: .leading, spacing: 10) {
-                PrivacyPoint(icon: "internaldrive", text: "Learning history stays on this Mac unless you explicitly start a training workflow.")
-                PrivacyPoint(icon: "eye", text: "You review learned preferences before they become part of your style profile.")
-                PrivacyPoint(icon: "arrow.uturn.backward", text: "You can pause learning, delete its history, or return to untuned Inkling.")
-            }
-
-            Spacer()
+            .padding(16)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
         }
-        .padding(34)
     }
 
     private var footer: some View {
-        HStack {
-            if step == .welcome {
-                Button("Skip Setup") {
+        HStack(spacing: 10) {
+            if !hasExistingAPIKey || isReplacingAPIKey {
+                Button("Write Without Assistant") {
                     finish()
                 }
-            } else {
-                Button("Back") {
-                    move(to: Step(rawValue: step.rawValue - 1) ?? .welcome)
-                }
+                .disabled(isConnecting)
             }
 
             Spacer()
 
-            switch step {
-            case .welcome:
-                Button("Continue") {
-                    move(to: .assistant)
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-            case .assistant:
-                if !hasExistingAPIKey || isReplacingAPIKey {
-                    Button("Do This Later") {
-                        move(to: .style)
-                    }
-                }
-                Button(hasExistingAPIKey && !isReplacingAPIKey ? "Continue" : "Save & Continue") {
-                    if hasExistingAPIKey && !isReplacingAPIKey {
-                        move(to: .style)
-                    } else if saveAPIKey() {
-                        move(to: .style)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled((!hasExistingAPIKey || isReplacingAPIKey) && apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            case .style:
-                Button("Open a Document") {
-                    PersonalizationSettings.isEnabled = learningEnabled
-                    OnboardingSettings.markCompleted()
-                    onOpenDocument()
-                }
+            Button("Open a Document") {
+                OnboardingSettings.markCompleted()
+                onOpenDocument()
+            }
+            .disabled(isConnecting)
+
+            if hasExistingAPIKey && !isReplacingAPIKey {
                 Button("Start Writing") {
                     finish()
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
+            } else {
+                Button {
+                    connectAndFinish()
+                } label: {
+                    if isConnecting {
+                        Text("Connecting…")
+                    } else {
+                        Text("Connect & Start Writing")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isConnecting)
             }
         }
         .padding(.horizontal, 26)
         .padding(.vertical, 16)
     }
 
-    private func move(to nextStep: Step) {
-        withAnimation(.easeOut(duration: 0.16)) {
-            step = nextStep
-        }
-    }
-
-    @discardableResult
-    private func saveAPIKey() -> Bool {
-        let normalized = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return false }
-
-        let saved = APIKeyStore.shared.setAPIKey(normalized, service: "tinker")
-        keySaveState = saved ? .saved : .failed
-        if saved {
-            apiKey = ""
-            hasExistingAPIKey = true
-            isReplacingAPIKey = false
-            NotificationCenter.default.post(name: .inklingConnectionChanged, object: nil)
-        }
-        return saved
-    }
-
     private func pasteAPIKey() {
         guard let value = NSPasteboard.general.string(forType: .string) else { return }
         apiKey = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        keySaveState = .idle
+        connectionError = ""
+    }
+
+    private func connectAndFinish() {
+        let normalized = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty, !isConnecting else { return }
+
+        isConnecting = true
+        connectionError = ""
+
+        Task { @MainActor in
+            defer { isConnecting = false }
+
+            do {
+                try await connectionValidator.validate(apiKey: normalized)
+                guard APIKeyStore.shared.setAPIKey(normalized, service: "tinker") else {
+                    connectionError = "The key worked, but it could not be stored securely on this Mac."
+                    return
+                }
+
+                apiKey = ""
+                hasExistingAPIKey = true
+                isReplacingAPIKey = false
+                NotificationCenter.default.post(name: .inklingConnectionChanged, object: nil)
+                finish()
+            } catch is CancellationError {
+                return
+            } catch {
+                connectionError = error.localizedDescription
+            }
+        }
     }
 
     private func finish() {
-        PersonalizationSettings.isEnabled = learningEnabled
         OnboardingSettings.markCompleted()
         onFinish()
     }
@@ -361,42 +299,18 @@ private struct ShakespeareMark: View {
     }
 }
 
-private struct OnboardingFeature: View {
+private struct ConnectionCapability: View {
     let icon: String
-    let title: String
-    let detail: String
+    let label: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Image(systemName: icon)
-                .font(.title2)
-                .foregroundStyle(Color.accentColor)
-            Text(title)
-                .font(.headline)
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-    }
-}
-
-private struct PrivacyPoint: View {
-    let icon: String
-    let text: String
-
-    var body: some View {
-        Label {
-            Text(text)
-                .font(.callout)
-        } icon: {
-            Image(systemName: icon)
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 20)
-        }
+        Label(label, systemImage: icon)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 9)
+            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
     }
 }
 

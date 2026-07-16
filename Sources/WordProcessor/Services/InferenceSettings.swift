@@ -26,6 +26,7 @@ struct InferenceRuntime: Sendable, Equatable {
 enum InferenceSettings {
     static let tinkerModelDefaultsKey = "tinkerBaseModel"
     static let defaultTinkerModel = "thinkingmachines/Inkling"
+    static let tinkerConsoleURL = URL(string: "https://tinker-console.thinkingmachines.ai")!
 
     static func runtime(
         purpose: InferencePurpose,

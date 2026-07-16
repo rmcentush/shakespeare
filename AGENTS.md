@@ -63,9 +63,10 @@ Content changes sent across the bridge are debounced for 1 second in the editor.
 | `Sources/WordProcessor/ViewModels/EditorViewModel.swift` | Central hub: webview ref, JS evaluation, file I/O, bridge dispatch |
 | `Sources/WordProcessor/Views/EditorWebView.swift` | NSViewRepresentable wrapping WKWebView, loads editor.html |
 | `Sources/WordProcessor/Views/ContentView.swift` | Main layout: editor + optional sidebars |
-| `Sources/WordProcessor/Views/OnboardingView.swift` | Versioned first-run setup for optional Inkling connection and personalization consent |
+| `Sources/WordProcessor/Views/OnboardingView.swift` | Versioned one-key first-run setup; personalization consent remains a separate progressive choice |
 | `Sources/WordProcessor/Services/LanguageModelService.swift` | Provider-configured Messages API client with SSE streaming |
 | `Sources/WordProcessor/Services/InferenceSettings.swift` | Inkling runtime configuration and promoted-checkpoint registry |
+| `Sources/WordProcessor/Services/TinkerConnectionValidator.swift` | Data-free Inkling access check used before storing a new Tinker key |
 | `Sources/WordProcessor/Services/TrainingEventStore.swift` | Opt-in, versioned, local personalization event ledger |
 | `Sources/WordProcessor/Services/APIKeyStore.swift` | Keychain-backed API keys with an owner-only development fallback |
 | `Sources/WordProcessor/Services/FontManager.swift` | Font config, @font-face CSS generation, UserDefaults persistence |
@@ -98,4 +99,5 @@ The hosted service is not publicly launch-ready until the worker, inference gate
 - **Font injection timing:** EditorWebView injects @font-face CSS after a 500ms delay to ensure the webview is ready.
 - **BridgePayload parsing:** Uses manual JSON parsing (`[String: Any]`), not Codable.
 - **Provider API keys:** Stored in the macOS Keychain. A service-specific 0600 file under `~/Library/Application Support/Shakespeare/` is used only as a development fallback and is migrated when Keychain access succeeds.
+- **Tinker credentials:** Tinker and Inkling use the same `TINKER_API_KEY`. Do not introduce a second Inkling credential. Validate new keys with the token-count endpoint before replacing a working saved key.
 - **Onboarding changes:** Increment `OnboardingSettings.currentVersion` only when every existing writer should see a revised flow again. Copy and layout fixes should not reset completion.

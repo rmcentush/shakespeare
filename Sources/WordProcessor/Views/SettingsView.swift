@@ -14,6 +14,9 @@ struct SettingsView: View {
     @State private var showKey = false
     @State private var tinkerSaved = false
     @State private var tinkerConnected = false
+    @State private var isValidatingTinkerKey = false
+    @State private var tinkerConnectionError = ""
+    @State private var showDisconnectConfirmation = false
     @AppStorage(SettingsDestination.defaultsKey) private var selectedTab = SettingsDestination.apiKeys
     @AppStorage(InferenceSettings.tinkerModelDefaultsKey) private var tinkerModel = InferenceSettings.defaultTinkerModel
     @AppStorage(PersonalizationSettings.enabledDefaultsKey) private var personalizationEnabled = false
@@ -39,77 +42,13 @@ struct SettingsView: View {
     @State private var fontManager = FontManager.shared
     @State private var textCheckingSettings = TextCheckingSettings.shared
     private let styleGuideUpdater = StyleGuideUpdater()
+    private let connectionValidator = TinkerConnectionValidator()
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            // API Keys tab
-            Form {
-                Section("Inference") {
-                    TextField("Inkling base model", text: $tinkerModel)
-                        .textFieldStyle(.roundedBorder)
-                    if let checkpoint = activeCheckpoint {
-                        LabeledContent("Active personal checkpoint") {
-                            Text(checkpoint)
-                                .font(.caption2)
-                                .lineLimit(2)
-                                .textSelection(.enabled)
-                        }
-                    }
-                    Text("An evaluated and promoted personal checkpoint overrides the base model automatically.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Tinker API Key") {
-                    HStack {
-                        Label(
-                            tinkerConnected ? "Inkling connected" : "Inkling not connected",
-                            systemImage: tinkerConnected ? "checkmark.circle.fill" : "circle.dashed"
-                        )
-                        .foregroundStyle(tinkerConnected ? .green : .secondary)
-                        Spacer()
-                    }
-
-                    HStack {
-                        if showKey {
-                            TextField("TINKER_API_KEY", text: $tinkerKey)
-                                .textFieldStyle(.roundedBorder)
-                        } else {
-                            SecureField("TINKER_API_KEY", text: $tinkerKey)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        Button {
-                            pasteTinkerKeyFromClipboard()
-                        } label: {
-                            Image(systemName: "doc.on.clipboard")
-                        }
-                        .help("Paste from Clipboard")
-                        Button {
-                            showKey.toggle()
-                        } label: {
-                            Image(systemName: showKey ? "eye.slash" : "eye")
-                        }
-                        .help(showKey ? "Hide API Key" : "Show API Key")
-                    }
-
-                    HStack {
-                        Button("Save") { saveTinkerKey() }
-                        if tinkerSaved {
-                            Text("Saved!")
-                                .foregroundStyle(.green)
-                                .font(.caption)
-                        }
-                    }
-                }
-
-                Section {
-                    Text("Your API key is stored in the macOS Keychain, with an owner-only local fallback for development builds.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .tabItem { Label("API Keys", systemImage: "key") }
-            .tag(SettingsDestination.apiKeys)
+            inklingSettings
+                .tabItem { Label("Inkling", systemImage: "sparkles") }
+                .tag(SettingsDestination.apiKeys)
 
             Form {
                 Section("How My Style Works") {
@@ -344,15 +283,15 @@ struct SettingsView: View {
         .frame(width: 620, height: 620)
         .onAppear {
             tinkerConnected = false
-            if let key = APIKeyStore.shared.getAPIKey(service: "tinker") {
-                tinkerKey = key
-                tinkerConnected = true
-            }
+            tinkerConnected = APIKeyStore.shared.getAPIKey(service: "tinker") != nil
             refreshStyleContext()
         }
         .onChange(of: personalizationEnabled) { _, enabled in
             PersonalizationSettings.isEnabled = enabled
             refreshStyleContext()
+        }
+        .onChange(of: tinkerKey) {
+            tinkerConnectionError = ""
         }
         .confirmationDialog(
             "Delete local learning history?",
@@ -362,8 +301,144 @@ struct SettingsView: View {
             Button("Delete Learning History", role: .destructive) { deleteTrainingEvents() }
             Button("Cancel", role: .cancel) {}
         }
+        .confirmationDialog(
+            "Disconnect Inkling?",
+            isPresented: $showDisconnectConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Disconnect", role: .destructive) { disconnectTinker() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the saved Tinker API key from this Mac. The editor and local proofreading will keep working.")
+        }
         .sheet(isPresented: $showStyleProposal) {
             styleProposalSheet
+        }
+    }
+
+    private var inklingSettings: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                SettingsCard(title: "Inkling") {
+                    Label(
+                        tinkerConnected ? "Connected and ready" : "Not connected",
+                        systemImage: tinkerConnected ? "checkmark.circle.fill" : "circle.dashed"
+                    )
+                    .foregroundStyle(tinkerConnected ? .green : .secondary)
+
+                    Text("One Tinker API key authenticates the Inkling writing assistant and Tinker training. There is no separate Inkling key.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if let checkpoint = activeCheckpoint {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Active personal checkpoint")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(checkpoint)
+                                .font(.caption2)
+                                .lineLimit(2)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+
+                SettingsCard(title: "Connection") {
+                    HStack {
+                        Text("Tinker API key")
+                            .font(.headline)
+                        Spacer()
+                        Link("Get a key ↗", destination: InferenceSettings.tinkerConsoleURL)
+                            .font(.caption)
+                    }
+
+                    HStack {
+                        if showKey {
+                            TextField(
+                                tinkerConnected ? "Paste a new key to replace the current one" : "Paste TINKER_API_KEY",
+                                text: $tinkerKey
+                            )
+                                .textFieldStyle(.roundedBorder)
+                        } else {
+                            SecureField(
+                                tinkerConnected ? "Paste a new key to replace the current one" : "Paste TINKER_API_KEY",
+                                text: $tinkerKey
+                            )
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        Button {
+                            pasteTinkerKeyFromClipboard()
+                        } label: {
+                            Image(systemName: "doc.on.clipboard")
+                        }
+                        .help("Paste from Clipboard")
+                        Button {
+                            showKey.toggle()
+                        } label: {
+                            Image(systemName: showKey ? "eye.slash" : "eye")
+                        }
+                        .help(showKey ? "Hide API Key" : "Show API Key")
+                    }
+                    .disabled(isValidatingTinkerKey)
+
+                    HStack {
+                        Button(tinkerConnected ? "Update Connection" : "Connect") {
+                            Task { await saveTinkerKey() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(
+                            tinkerKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                            isValidatingTinkerKey
+                        )
+
+                        if tinkerConnected {
+                            Button("Disconnect", role: .destructive) {
+                                showDisconnectConfirmation = true
+                            }
+                            .disabled(isValidatingTinkerKey)
+                        }
+
+                        if isValidatingTinkerKey {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Checking Inkling…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if tinkerSaved {
+                            Text("Connected")
+                                .foregroundStyle(.green)
+                                .font(.caption)
+                        }
+                    }
+
+                    if !tinkerConnectionError.isEmpty {
+                        Label(tinkerConnectionError, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Text("The key is checked against Inkling before it is stored in secure local credential storage.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                SettingsCard(title: "Advanced") {
+                    DisclosureGroup("Model configuration") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            TextField("Inkling base model", text: $tinkerModel)
+                                .textFieldStyle(.roundedBorder)
+                            Text("An evaluated and promoted personal checkpoint overrides this base model automatically.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.top, 8)
+                    }
+                }
+            }
+            .padding(24)
         }
     }
 
@@ -418,17 +493,46 @@ struct SettingsView: View {
     private func pasteTinkerKeyFromClipboard() {
         guard let clipboardString = NSPasteboard.general.string(forType: .string) else { return }
         tinkerKey = clipboardString.trimmingCharacters(in: .whitespacesAndNewlines)
+        tinkerConnectionError = ""
     }
 
-    private func saveTinkerKey() {
+    @MainActor
+    private func saveTinkerKey() async {
         tinkerKey = tinkerKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard APIKeyStore.shared.setAPIKey(tinkerKey, service: "tinker") else { return }
-        tinkerConnected = !tinkerKey.isEmpty
-        tinkerSaved = true
-        NotificationCenter.default.post(name: .inklingConnectionChanged, object: nil)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            tinkerSaved = false
+        guard !tinkerKey.isEmpty, !isValidatingTinkerKey else { return }
+
+        isValidatingTinkerKey = true
+        tinkerConnectionError = ""
+        tinkerSaved = false
+        defer { isValidatingTinkerKey = false }
+
+        do {
+            try await connectionValidator.validate(apiKey: tinkerKey)
+            guard APIKeyStore.shared.setAPIKey(tinkerKey, service: "tinker") else {
+                tinkerConnectionError = "The key worked, but it could not be stored securely on this Mac."
+                return
+            }
+            tinkerKey = ""
+            tinkerConnected = true
+            tinkerSaved = true
+            NotificationCenter.default.post(name: .inklingConnectionChanged, object: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                tinkerSaved = false
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            tinkerConnectionError = error.localizedDescription
         }
+    }
+
+    private func disconnectTinker() {
+        APIKeyStore.shared.deleteAPIKey(service: "tinker")
+        tinkerKey = ""
+        tinkerConnected = false
+        tinkerSaved = false
+        tinkerConnectionError = ""
+        NotificationCenter.default.post(name: .inklingConnectionChanged, object: nil)
     }
 
     private func revealPersonalizationData() {
@@ -503,6 +607,27 @@ struct SettingsView: View {
         } catch {
             styleUpdateError = error.localizedDescription
         }
+    }
+}
+
+private struct SettingsCard<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline)
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 

@@ -1,4 +1,4 @@
-.PHONY: all build run clean editor typecheck swift install evals llm-edit-evals document-asset-evals api-key-store-evals personalization-evals service-install service-test
+.PHONY: all build run clean editor typecheck swift install evals llm-edit-evals document-asset-evals api-key-store-evals tinker-connection-evals personalization-evals service-install service-test
 
 all: build
 
@@ -37,6 +37,10 @@ api-key-store-evals:
 	swiftc Sources/WordProcessor/Services/APIKeyStore.swift scripts/api-key-store-evals.swift -o /tmp/api-key-store-evals
 	/tmp/api-key-store-evals
 
+tinker-connection-evals:
+	swiftc -parse-as-library Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/TinkerConnectionValidator.swift scripts/tinker-connection-evals.swift -o /tmp/tinker-connection-evals
+	/tmp/tinker-connection-evals
+
 personalization-evals:
 	PYTHONPATH=Trainer python3 -m unittest discover -s Trainer/tests -v
 
@@ -48,7 +52,7 @@ service-test:
 	python3 -m ruff check Service Trainer
 	python3 -m ruff format --check Service Trainer
 
-evals: llm-edit-evals document-asset-evals api-key-store-evals personalization-evals
+evals: llm-edit-evals document-asset-evals api-key-store-evals tinker-connection-evals personalization-evals
 
 # Build release
 build: copy-assets
