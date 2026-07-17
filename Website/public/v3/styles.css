@@ -134,6 +134,20 @@ body {
   outline-offset: 5px;
 }
 
+.download[aria-disabled="true"] {
+  border-color: rgba(44, 59, 57, 0.35);
+  background: #66716f;
+  box-shadow: none;
+  cursor: not-allowed;
+  opacity: 0.78;
+}
+
+.download[aria-disabled="true"]:hover {
+  background: #66716f;
+  box-shadow: none;
+  transform: none;
+}
+
 .scene-art {
   display: block;
   width: 100%;

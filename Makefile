@@ -23,7 +23,7 @@ privacy-check:
 	bash scripts/verify-source-privacy.sh
 
 release-script-check:
-	bash -n scripts/verify-release-archive.sh scripts/verify-public-release.sh scripts/install-release-archive.sh scripts/update-from-public-download.sh scripts/release.sh
+	bash -n scripts/verify-release-archive.sh scripts/verify-public-release.sh scripts/install-release-archive.sh scripts/update-from-public-download.sh scripts/verify-release-provenance.sh scripts/release.sh
 
 website-check: Website/node_modules/.package-lock.json
 	cd Website && npm run build

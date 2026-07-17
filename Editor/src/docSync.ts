@@ -36,7 +36,7 @@ let lastSentContentUpdate: { html: string; text: string } | null = null;
 let lastSentMetricsRevision = -1;
 let lastSentSelectionState: EditorSelectionState | null = null;
 let preservedTextSelection: PreservedTextSelection | null = null;
-const blockTextCache = new WeakMap<object, { text: string; words: number }>();
+const blockTextCache = new WeakMap<object, { text: string; words: number; hasVisibleText: boolean }>();
 
 let contentSyncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let selectionDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -132,7 +132,7 @@ function cachedDocumentText(editor: Editor): { text: string; words: number } {
       const leadingContainerSeparator = node.firstChild?.isBlock ? '\n\n' : '';
       const text = leadingContainerSeparator
         + getText(node, { blockSeparator: '\n\n', textSerializers });
-      cached = { text, words: countWords(text) };
+      cached = { text, words: countWords(text), hasVisibleText: text.trim().length > 0 };
       blockTextCache.set(node, cached);
     }
     parts.push(cached.text);
@@ -140,6 +140,40 @@ function cachedDocumentText(editor: Editor): { text: string; words: number } {
   });
 
   return { text: parts.join('\n\n'), words };
+}
+
+function largeDocumentMetrics(editor: Editor): { words: number; characters: number } {
+  const textSerializers = getTextSerializersFromSchema(editor.schema);
+  let words = 0;
+  let characters = 0;
+  let topLevelNodes = 0;
+  let hasVisibleText = false;
+
+  editor.state.doc.forEach((node) => {
+    let cached = blockTextCache.get(node);
+    if (!cached) {
+      const leadingContainerSeparator = node.firstChild?.isBlock ? '\n\n' : '';
+      const text = leadingContainerSeparator
+        + getText(node, { blockSeparator: '\n\n', textSerializers });
+      cached = { text, words: countWords(text), hasVisibleText: text.trim().length > 0 };
+      blockTextCache.set(node, cached);
+    }
+    if (topLevelNodes > 0) characters += 2;
+    topLevelNodes += 1;
+    characters += cached.text.length;
+    words += cached.words;
+    hasVisibleText ||= cached.hasVisibleText;
+  });
+
+  const footnotes = collectFootnotes(editor.state.doc);
+  if (footnotes.length > 0) {
+    const footnotesText = footnotes
+      .map((footnote) => `[${footnote.index}] ${footnote.note}`)
+      .join('\n');
+    characters += (hasVisibleText ? 2 : 0) + 'Footnotes\n'.length + footnotesText.length;
+    words += 1 + countWords(footnotesText);
+  }
+  return { words, characters };
 }
 
 function buildPlainTextSnapshot(editor: Editor, footnotes: FootnoteDetails[]): DocumentTextSnapshot {
@@ -402,20 +436,21 @@ function selectionStatesEqual(
 }
 
 export function emitContentUpdate(editor: Editor) {
-  const snapshot = getDocumentTextSnapshot(editor);
   // Large documents remain responsive by keeping the frequent bridge message
   // bounded. Full HTML/JSON/text is captured only at persistence or an explicit
   // feature request.
-  if (snapshot.characters > 512_000) {
-    if (lastSentMetricsRevision === snapshot.revision) return;
-    lastSentMetricsRevision = snapshot.revision;
+  if (editor.state.doc.content.size > 512_000) {
+    if (lastSentMetricsRevision === documentRevision) return;
+    const metrics = largeDocumentMetrics(editor);
+    lastSentMetricsRevision = documentRevision;
     sendToSwift('documentMetrics', {
-      revision: snapshot.revision,
-      words: snapshot.words,
-      characters: snapshot.characters,
+      revision: documentRevision,
+      words: metrics.words,
+      characters: metrics.characters,
     });
     return;
   }
+  const snapshot = getDocumentTextSnapshot(editor);
   const html = serializeDocumentHTML(editor);
 
   if (

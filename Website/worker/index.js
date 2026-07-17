@@ -11,8 +11,47 @@ function validManifest(value) {
         value.archiveKey,
       ) &&
       typeof value.sha256 === "string" &&
-      /^[0-9a-f]{64}$/.test(value.sha256),
+      /^[0-9a-f]{64}$/.test(value.sha256) &&
+      Number.isSafeInteger(value.buildNumber) &&
+      value.buildNumber > 0 &&
+      value.bundleIdentifier === "com.shakespeare.app" &&
+      typeof value.teamIdentifier === "string" &&
+      /^[A-Z0-9]{10}$/.test(value.teamIdentifier) &&
+      value.notarized === true &&
+      typeof value.sourceCommit === "string" &&
+      /^[0-9a-f]{40,64}$/.test(value.sourceCommit),
   );
+}
+
+async function serveHome(request, env) {
+  const response = await env.ASSETS.fetch(request);
+  if (
+    request.method !== "GET" ||
+    !response.ok ||
+    !response.headers.get("content-type")?.includes("text/html")
+  ) {
+    return response;
+  }
+
+  const manifest = await loadReleaseManifest(env);
+  if (!manifest) return response;
+
+  const unavailable = `<span class="download" data-release-action aria-disabled="true">
+            <span>Release temporarily unavailable</span>
+            <span aria-hidden="true">—</span>
+          </span>`;
+  const available = `<a class="download" data-release-action href="${archivePath}" download>
+            <span>Download for Mac</span>
+            <span aria-hidden="true">↓</span>
+          </a>`;
+  const html = (await response.text()).replace(unavailable, available);
+  const headers = new Headers(response.headers);
+  headers.delete("content-encoding");
+  headers.delete("content-length");
+  headers.delete("etag");
+  headers.set("Cache-Control", "public, max-age=60");
+  headers.set("X-Content-Type-Options", "nosniff");
+  return new Response(html, { status: response.status, headers });
 }
 
 async function loadReleaseManifest(env) {
@@ -50,6 +89,8 @@ async function serveRelease(request, env, pathname) {
       "Content-Type": "text/plain; charset=utf-8",
       "X-Content-Type-Options": "nosniff",
       "X-Shakespeare-SHA256": manifest.sha256,
+      "X-Shakespeare-Bundle-ID": manifest.bundleIdentifier,
+      "X-Shakespeare-Team-ID": manifest.teamIdentifier,
     });
     return new Response(request.method === "HEAD" ? null : body, { headers });
   }
@@ -73,6 +114,8 @@ async function serveRelease(request, env, pathname) {
   headers.set("ETag", object.httpEtag);
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("X-Shakespeare-SHA256", manifest.sha256);
+  headers.set("X-Shakespeare-Bundle-ID", manifest.bundleIdentifier);
+  headers.set("X-Shakespeare-Team-ID", manifest.teamIdentifier);
 
   return new Response(request.method === "HEAD" ? null : object.body, { headers });
 }
@@ -93,6 +136,10 @@ export default {
 
     if (url.pathname === archivePath || url.pathname === checksumPath) {
       return serveRelease(request, env, url.pathname);
+    }
+
+    if (url.pathname === "/") {
+      return serveHome(request, env);
     }
 
     return env.ASSETS.fetch(request);

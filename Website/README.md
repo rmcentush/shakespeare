@@ -43,7 +43,9 @@ silently replace a release.
 
 GitHub `main` is the source of truth. Cloudflare Workers Builds watches this
 directory, runs the locked build and tests, and deploys successful `main`
-changes. Pull-request branches upload preview versions without promoting them.
+changes. Pull-request branches upload non-production Worker versions without
+promoting them; they are inspected from Cloudflare rather than a public preview
+URL because the release bucket is production-only.
 
 Use these Cloudflare build settings:
 

@@ -11,6 +11,7 @@ signing_identity="${CODESIGN_IDENTITY:-}"
 notary_profile="${NOTARYTOOL_PROFILE:-}"
 bucket="shakespeare-releases"
 manifest_key="releases/current.json"
+allow_initial_release="${ALLOW_INITIAL_RELEASE:-0}"
 
 if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]] ||
    [[ ! "$build_number" =~ ^[0-9]+$ ]]; then
@@ -57,6 +58,9 @@ if ! security find-identity -v -p codesigning | grep -F "$signing_identity" >/de
 fi
 
 xcrun notarytool history --keychain-profile "$notary_profile" >/dev/null
+bash scripts/verify-release-provenance.sh
+(cd Editor && npm ci)
+(cd Website && npm ci)
 make check
 
 APP_VERSION="$version" \
@@ -78,17 +82,38 @@ xcrun stapler staple "$app_bundle"
 xcrun stapler validate "$app_bundle"
 spctl --assess --type execute --verbose=4 "$app_bundle"
 
+signature_details="$(codesign -dvv "$app_bundle" 2>&1)"
+team_identifier="$(sed -n 's/^TeamIdentifier=//p' <<< "$signature_details" | head -n 1)"
+bundle_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_bundle/Contents/Info.plist")"
+if [[ ! "$team_identifier" =~ ^[A-Z0-9]{10}$ ]] ||
+   [ "$bundle_identifier" != "com.shakespeare.app" ]; then
+    echo "The signed app does not match the expected publisher identity." >&2
+    exit 1
+fi
+export EXPECTED_TEAM_IDENTIFIER="$team_identifier"
+export EXPECTED_BUNDLE_IDENTIFIER="$bundle_identifier"
+
 rm "$archive"
 ditto -c -k --sequesterRsrc --keepParent "$app_bundle" "$archive"
 checksum="$(shasum -a 256 "$archive" | awk '{ print $1 }')"
 printf '%s  Shakespeare-latest.zip\n' "$checksum" > "$checksum_file"
 bash scripts/verify-release-archive.sh "$archive" "$checksum_file"
 
+source_commit="$(git rev-parse HEAD)"
 node -e '
 const fs = require("fs");
-const [path, version, archiveKey, sha256] = process.argv.slice(1);
-fs.writeFileSync(path, `${JSON.stringify({ version, archiveKey, sha256 })}\n`, { mode: 0o600 });
-' "$manifest" "$version" "$archive_key" "$checksum"
+const [path, version, buildNumber, archiveKey, sha256, bundleIdentifier, teamIdentifier, sourceCommit] = process.argv.slice(1);
+fs.writeFileSync(path, `${JSON.stringify({
+  version,
+  buildNumber: Number(buildNumber),
+  archiveKey,
+  sha256,
+  bundleIdentifier,
+  teamIdentifier,
+  notarized: true,
+  sourceCommit,
+})}\n`, { mode: 0o600 });
+' "$manifest" "$version" "$build_number" "$archive_key" "$checksum" "$bundle_identifier" "$team_identifier" "$source_commit"
 
 run_wrangler() {
     (cd "$repository_root/Website" && npx wrangler "$@" --config wrangler.jsonc)
@@ -98,21 +123,36 @@ had_previous_manifest=false
 if run_wrangler r2 object get "$bucket/$manifest_key" \
     --remote --file "$previous_manifest" >/dev/null 2>&1; then
     had_previous_manifest=true
+elif [ "$allow_initial_release" != "1" ]; then
+    echo "Could not read the current release manifest. Refusing an ambiguous first release; use ALLOW_INITIAL_RELEASE=1 only after confirming the bucket is empty." >&2
+    exit 1
 fi
 
 release_switched=false
+release_switch_attempted=false
 release_complete=false
 tag_created=false
 rollback() {
     exit_code=$?
-    if [ "$release_complete" != true ] && [ "$release_switched" = true ]; then
+    if [ "$release_complete" != true ] && [ "$release_switch_attempted" = true ]; then
         set +e
+        rollback_ok=false
         if [ "$had_previous_manifest" = true ]; then
-            run_wrangler r2 object put "$bucket/$manifest_key" \
+            if run_wrangler r2 object put "$bucket/$manifest_key" \
                 --remote --file "$previous_manifest" \
-                --content-type application/json --cache-control no-store --force
+                --content-type application/json --cache-control no-store --force &&
+               run_wrangler r2 object get "$bucket/$manifest_key" \
+                --remote --file "$manifest.rollback-check" >/dev/null 2>&1 &&
+               cmp -s "$previous_manifest" "$manifest.rollback-check"; then
+                rollback_ok=true
+            fi
         else
-            run_wrangler r2 object delete "$bucket/$manifest_key" --remote
+            if run_wrangler r2 object delete "$bucket/$manifest_key" --remote; then
+                rollback_ok=true
+            fi
+        fi
+        if [ "$rollback_ok" != true ]; then
+            echo "CRITICAL: automatic release-manifest rollback could not be verified." >&2
         fi
         set -e
     fi
@@ -123,17 +163,27 @@ rollback() {
 }
 trap rollback EXIT
 
+if run_wrangler r2 object get "$bucket/$archive_key" --remote --pipe >/dev/null 2>&1; then
+    echo "Immutable release archive already exists at $archive_key" >&2
+    exit 1
+fi
+
 run_wrangler r2 object put "$bucket/$archive_key" \
     --remote --file "$archive" \
     --content-type application/zip \
     --content-disposition 'attachment; filename="Shakespeare-latest.zip"' \
     --cache-control 'public, max-age=31536000, immutable' --force
 
-(cd Website && npm ci && npm run build && npx wrangler deploy --config wrangler.jsonc)
-
+release_switch_attempted=true
 run_wrangler r2 object put "$bucket/$manifest_key" \
     --remote --file "$manifest" \
     --content-type application/json --cache-control no-store --force
+run_wrangler r2 object get "$bucket/$manifest_key" \
+    --remote --file "$manifest.published" >/dev/null
+if ! cmp -s "$manifest" "$manifest.published"; then
+    echo "Published release manifest does not match the intended manifest." >&2
+    exit 1
+fi
 release_switched=true
 
 bash scripts/verify-public-release.sh "$archive" "$checksum_file"
@@ -142,4 +192,4 @@ tag_created=true
 git push origin "$tag"
 
 release_complete=true
-echo "Published Shakespeare $tag through Cloudflare Workers and R2."
+echo "Published Shakespeare $tag through the main-deployed Worker and R2."

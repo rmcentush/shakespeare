@@ -5,7 +5,6 @@ APP_NAME="WordProcessor"
 DISPLAY_NAME="Shakespeare"
 RESOURCE_BUNDLE="${APP_NAME}_${APP_NAME}.bundle"
 PACKAGE_DIR="${PACKAGE_DIR:-.build/package}"
-UNIVERSAL_BUILD_DIR=".build/package-build"
 APP_BUNDLE="$PACKAGE_DIR/$DISPLAY_NAME.app"
 CONTENTS="$APP_BUNDLE/Contents"
 MACOS="$CONTENTS/MacOS"
@@ -31,11 +30,14 @@ if [[ ! "$BUNDLE_IDENTIFIER" =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$ ]]; then
 fi
 
 cd "$(dirname "$0")/.."
+mkdir -p .build
+UNIVERSAL_BUILD_DIR="$(mktemp -d "$PWD/.build/package-build.XXXXXX")"
+cleanup_build_scratch() {
+    rm -rf "$UNIVERSAL_BUILD_DIR"
+}
+trap cleanup_build_scratch EXIT
 echo "Building universal release..."
 make copy-assets
-if [ -d "$UNIVERSAL_BUILD_DIR" ]; then
-    find "$UNIVERSAL_BUILD_DIR" -type d -name "$RESOURCE_BUNDLE" -prune -exec rm -rf {} +
-fi
 swift build -c release \
     --triple arm64-apple-macosx14.0 \
     --scratch-path "$UNIVERSAL_BUILD_DIR/arm64"

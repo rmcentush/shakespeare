@@ -52,6 +52,26 @@ if grep -q 'Signature=adhoc' <<< "$signature_details" ||
     exit 1
 fi
 
+expected_bundle_identifier="${EXPECTED_BUNDLE_IDENTIFIER:-com.shakespeare.app}"
+expected_team_identifier="${EXPECTED_TEAM_IDENTIFIER:-}"
+if [[ ! "$expected_team_identifier" =~ ^[A-Z0-9]{10}$ ]]; then
+    echo "EXPECTED_TEAM_IDENTIFIER must pin the 10-character Apple publisher team." >&2
+    exit 1
+fi
+
+actual_bundle_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_bundle/Contents/Info.plist")"
+signed_identifier="$(sed -n 's/^Identifier=//p' <<< "$signature_details" | head -n 1)"
+actual_team_identifier="$(sed -n 's/^TeamIdentifier=//p' <<< "$signature_details" | head -n 1)"
+if [ "$actual_bundle_identifier" != "$expected_bundle_identifier" ] ||
+   [ "$signed_identifier" != "$expected_bundle_identifier" ]; then
+    echo "Release bundle identifier does not match $expected_bundle_identifier" >&2
+    exit 1
+fi
+if [ "$actual_team_identifier" != "$expected_team_identifier" ]; then
+    echo "Release publisher team does not match EXPECTED_TEAM_IDENTIFIER" >&2
+    exit 1
+fi
+
 xcrun stapler validate "$app_bundle"
 spctl --assess --type execute "$app_bundle"
 lipo "$app_bundle/Contents/MacOS/WordProcessor" -verify_arch arm64 x86_64
