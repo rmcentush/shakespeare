@@ -102,7 +102,7 @@ struct OnboardingView: View {
             credentialCard
             personalizationCard
 
-            PrivacyNote(text: "Your key stays in Keychain. Style data stays on this Mac; only short excerpts are sent for writing help. OpenRouter bills usage.")
+            PrivacyNote(text: "Your key stays securely on this Mac. Style data stays here too; only short excerpts are sent for writing help. OpenRouter bills usage.")
 
         }
         .padding(.horizontal, 28)

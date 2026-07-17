@@ -482,7 +482,7 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Text("The key is validated before it is stored in macOS Keychain. Requests disable provider data collection and are sent only when you use a model-powered feature.")
+                Text("The key is validated before it is stored securely on this Mac. Requests disable provider data collection and are sent only when you use a model-powered feature.")
                     .settingsDescriptionStyle()
             }
 

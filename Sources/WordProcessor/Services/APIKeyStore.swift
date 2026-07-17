@@ -22,20 +22,49 @@ private final class APIKeySessionCache: @unchecked Sendable {
 }
 
 /// Stores API keys in the macOS Keychain. Owner-only files under Application
-/// Support remain as a compatibility fallback for locally built bundles whose
-/// changing ad-hoc signatures cannot access an existing Keychain item.
+/// Support are used by locally built bundles whose changing ad-hoc signatures
+/// would otherwise trigger repeated Keychain authorization dialogs.
 final class APIKeyStore: Sendable {
     static let shared = APIKeyStore()
-    private let keychainServicePrefix = "com.shakespeare.api"
+    static let keychainItemLabel = "Shakespeare"
+    static let keychainServicePrefix = "com.shakespeare.credential.v2"
     private let keychainAccount = "default"
     private let sessionCache = APIKeySessionCache()
+    private let usesDevelopmentCredentialStore: Bool
 
     private var storageDirectory: URL {
         try? ShakespeareStorage.prepare()
         return ShakespeareStorage.credentialsDirectoryURL
     }
 
-    private init() {}
+    private init() {
+        usesDevelopmentCredentialStore = !Self.hasStableSigningIdentity()
+    }
+
+    /// Developer ID and App Store signatures include a stable team identifier.
+    /// Ad-hoc local builds do not, so their code requirement changes on every
+    /// rebuild and macOS would ask for Keychain permission again.
+    static func hasStableSigningIdentity(bundleURL: URL = Bundle.main.bundleURL) -> Bool {
+        var staticCode: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(bundleURL as CFURL, SecCSFlags(), &staticCode) == errSecSuccess,
+              let staticCode
+        else {
+            return false
+        }
+
+        var signingInformation: CFDictionary?
+        guard SecCodeCopySigningInformation(
+            staticCode,
+            SecCSFlags(rawValue: kSecCSSigningInformation),
+            &signingInformation
+        ) == errSecSuccess,
+              let information = signingInformation as? [String: Any],
+              let teamIdentifier = information[kSecCodeInfoTeamIdentifier as String] as? String
+        else {
+            return false
+        }
+        return !teamIdentifier.isEmpty
+    }
 
     private func keyFilePath(service: String) -> URL? {
         guard !service.isEmpty,
@@ -54,7 +83,7 @@ final class APIKeyStore: Sendable {
         if sessionCache.value(for: service) != nil {
             return true
         }
-        if keychainContainsAPIKey(service: service) {
+        if !usesDevelopmentCredentialStore, keychainContainsAPIKey(service: service) {
             return true
         }
 
@@ -76,6 +105,11 @@ final class APIKeyStore: Sendable {
         guard keyFilePath(service: service) != nil else { return nil }
         if let cachedKey = sessionCache.value(for: service) {
             return cachedKey
+        }
+        if usesDevelopmentCredentialStore {
+            guard let key = fallbackAPIKey(service: service) else { return nil }
+            sessionCache.setValue(key, for: service)
+            return key
         }
         if let key = keychainAPIKey(service: service) {
             sessionCache.setValue(key, for: service)
@@ -99,6 +133,12 @@ final class APIKeyStore: Sendable {
             return true
         }
 
+        if usesDevelopmentCredentialStore {
+            guard setFallbackAPIKey(normalizedKey, service: service) else { return false }
+            sessionCache.setValue(normalizedKey, for: service)
+            return true
+        }
+
         if setKeychainAPIKey(normalizedKey, service: service) {
             deleteFallbackAPIKey(service: service)
             sessionCache.setValue(normalizedKey, for: service)
@@ -112,7 +152,9 @@ final class APIKeyStore: Sendable {
 
     func deleteAPIKey(service: String) {
         guard keyFilePath(service: service) != nil else { return }
-        SecItemDelete(keychainQuery(service: service) as CFDictionary)
+        if !usesDevelopmentCredentialStore {
+            SecItemDelete(keychainQuery(service: service) as CFDictionary)
+        }
         deleteFallbackAPIKey(service: service)
         sessionCache.setValue(nil, for: service)
     }
@@ -120,7 +162,7 @@ final class APIKeyStore: Sendable {
     private func keychainQuery(service: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "\(keychainServicePrefix).\(service)",
+            kSecAttrService as String: "\(Self.keychainServicePrefix).\(service)",
             kSecAttrAccount as String: keychainAccount,
         ]
     }
@@ -159,7 +201,11 @@ final class APIKeyStore: Sendable {
         let data = Data(key.utf8)
         let updateStatus = SecItemUpdate(
             query as CFDictionary,
-            [kSecValueData as String: data] as CFDictionary
+            [
+                kSecValueData as String: data,
+                kSecAttrLabel as String: Self.keychainItemLabel,
+                kSecAttrDescription as String: "OpenRouter API key",
+            ] as CFDictionary
         )
         if updateStatus == errSecSuccess {
             return true
@@ -172,6 +218,8 @@ final class APIKeyStore: Sendable {
         var item = query
         item[kSecValueData as String] = data
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        item[kSecAttrLabel as String] = Self.keychainItemLabel
+        item[kSecAttrDescription as String] = "OpenRouter API key"
         let addStatus = SecItemAdd(item as CFDictionary, nil)
         if addStatus != errSecSuccess {
             print("APIKeyStore: Keychain add failed with status \(addStatus)")
