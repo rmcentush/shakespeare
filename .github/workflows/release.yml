@@ -125,6 +125,35 @@ jobs:
           npm run verify-download
           npx wrangler deploy --config wrangler.jsonc
 
+      - name: Verify public download matches release artifact
+        env:
+          ARCHIVE: ${{ steps.archive.outputs.path }}
+        run: |
+          expected="$(shasum -a 256 "$ARCHIVE" | awk '{ print $1 }')"
+          public_archive="$RUNNER_TEMP/Shakespeare-public.zip"
+          public_checksum="$RUNNER_TEMP/Shakespeare-public.zip.sha256"
+          actual=""
+          published=""
+          for attempt in 1 2 3 4 5 6; do
+            cache_buster="release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${attempt}"
+            if curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+                "https://writeshakespeare.com/downloads/Shakespeare-latest.zip?${cache_buster}" \
+                --output "$public_archive" && \
+              curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+                "https://writeshakespeare.com/downloads/Shakespeare-latest.zip.sha256?${cache_buster}" \
+                --output "$public_checksum"; then
+              actual="$(shasum -a 256 "$public_archive" | awk '{ print $1 }')"
+              published="$(awk 'NF { print tolower($1); exit }' "$public_checksum")"
+              if [ "$actual" = "$expected" ] && [ "$published" = "$expected" ]; then
+                break
+              fi
+            fi
+            if [ "$attempt" -lt 6 ]; then sleep 5; fi
+          done
+          test "$actual" = "$expected"
+          test "$published" = "$expected"
+          bash scripts/verify-release-archive.sh "$public_archive" "$public_checksum"
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
