@@ -39,7 +39,8 @@ final class LanguageModelService: Sendable {
         systemPrompt: Any? = nil,
         outputFormat: [String: Any]? = nil,
         temperature: Double? = nil,
-        maxTokens: Int = 3_072
+        maxTokens: Int = 3_072,
+        webSearchEnabled: Bool? = nil
     ) -> AsyncThrowingStream<StreamChunk, Error> {
         let runtime = currentRuntime
         return AsyncThrowingStream { continuation in
@@ -61,7 +62,8 @@ final class LanguageModelService: Sendable {
                         systemPrompt: systemPrompt,
                         outputFormat: outputFormat,
                         temperature: temperature,
-                        maxTokens: maxTokens
+                        maxTokens: maxTokens,
+                        webSearchEnabled: webSearchEnabled
                     )
                     var hasYieldedChunk = false
                     do {
@@ -214,7 +216,8 @@ final class LanguageModelService: Sendable {
         systemPrompt: Any?,
         outputFormat: [String: Any]?,
         temperature: Double?,
-        maxTokens: Int
+        maxTokens: Int,
+        webSearchEnabled: Bool? = nil
     ) -> [String: Any] {
         var requestMessages = messages.map { message -> [String: Any] in
             var result = message
@@ -247,14 +250,20 @@ final class LanguageModelService: Sendable {
             body["models"] = fallbackModels
         }
         if runtime.supportsTemperature, let temperature { body["temperature"] = temperature }
-        if runtime.webSearchEnabled {
+        if webSearchEnabled ?? runtime.webSearchEnabled {
+            provider["sort"] = "throughput"
+            body["reasoning"] = [
+                "effort": "minimal",
+                "exclude": true,
+            ]
+            body["verbosity"] = "low"
             body["tools"] = [[
                 "type": "openrouter:web_search",
                 "parameters": [
                     "engine": "parallel",
-                    "max_results": 4,
-                    "max_total_results": 8,
-                    "max_characters": 2_000,
+                    "max_results": 3,
+                    "max_total_results": 3,
+                    "max_characters": 900,
                 ],
             ]]
         }

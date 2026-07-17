@@ -831,27 +831,59 @@ private struct AssistantBubbleToolbar: View {
 }
 
 private struct AssistantThinkingLabel: View {
-    private static let dotCounts = [1, 2, 3, 3, 2, 1]
-    @State private var phase = 0
+    private static let phrases = [
+        "Setting the scene…",
+        "Consulting the chronicles…",
+        "Following the thread…",
+        "Checking every claim…",
+        "Trimming the soliloquy…",
+        "The play’s the thing…",
+        "Brevity is the soul of wit…",
+    ]
 
-    private var dots: String {
-        String(repeating: ".", count: Self.dotCounts[phase])
-    }
+    @State private var phase = 0
+    @State private var isPulsing = false
 
     var body: some View {
-        Text(verbatim: "words, words, words\(dots)")
-            .font(.system(size: 11, weight: .regular, design: .monospaced))
+        HStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(Color.accentColor.opacity(isPulsing ? 0.16 : 0.08))
+                    .frame(width: 20, height: 20)
+
+                Image(systemName: "sparkles")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .scaleEffect(isPulsing ? 1.08 : 0.9)
+            }
+
+            ZStack(alignment: .leading) {
+                Text(verbatim: Self.phrases[phase])
+                    .id(phase)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .bottom).combined(with: .opacity),
+                        removal: .move(edge: .top).combined(with: .opacity)
+                    ))
+            }
+            .font(.system(size: 11.5, weight: .medium))
             .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 1)
+        .animation(.easeInOut(duration: 0.28), value: phase)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Shakespeare is preparing a response")
             .task {
+                withAnimation(.easeInOut(duration: 0.72).repeatForever(autoreverses: true)) {
+                    isPulsing = true
+                }
+
                 while !Task.isCancelled {
                     do {
-                        try await Task.sleep(nanoseconds: 420_000_000)
+                        try await Task.sleep(nanoseconds: 1_450_000_000)
                     } catch {
                         return
                     }
-                    phase = (phase + 1) % Self.dotCounts.count
+                    phase = (phase + 1) % Self.phrases.count
                 }
             }
     }

@@ -32,14 +32,20 @@ enum InferenceSettings {
     static let writingModelDefaultsKey = "openRouterWritingModel"
     static let researchModelDefaultsKey = "openRouterChatModel"
     static let kimiModel = "moonshotai/kimi-k3"
+    static let haikuModel = "anthropic/claude-haiku-4.5"
     static let grokModel = "x-ai/grok-4.5"
     static let defaultWritingModel = kimiModel
-    static let defaultResearchModel = grokModel
+    static let defaultResearchModel = haikuModel
     static let availableModels: [InferenceModelOption] = [
         .init(
             id: kimiModel,
             name: "Kimi K3",
             supportsTemperature: false
+        ),
+        .init(
+            id: haikuModel,
+            name: "Claude Haiku 4.5",
+            supportsTemperature: true
         ),
         .init(
             id: grokModel,

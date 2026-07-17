@@ -4,8 +4,8 @@ import Foundation
 /// gets local relevance plus a sparse beginning-to-end map without resending a
 /// long draft on every turn.
 enum ChatDocumentContextAssembler {
-    static let standardMaximumCharacters = 8_000
-    static let wholeDocumentMaximumCharacters = 14_000
+    static let standardMaximumCharacters = 6_000
+    static let wholeDocumentMaximumCharacters = 12_000
 
     private static let maximumSegmentCharacters = 900
     private static let stopWords: Set<String> = [
