@@ -17,6 +17,13 @@ private struct CanonicalDocumentEvals {
         expect(.invalidRoot) {
             try CanonicalDocumentValidator.validate(#"{"type":"paragraph"}"#)
         }
+        expect(.malformedNode) {
+            try CanonicalDocumentValidator.validate(#"{"type":"doc","content":[{"type":"text","text":"not a block"}]}"#)
+        }
+        expect(.malformedNode) {
+            try CanonicalDocumentValidator.validate(#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"image","attrs":{"src":"file:///tmp/private.png"}}]}]}"#)
+        }
+        try CanonicalDocumentValidator.validate(#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"image","attrs":{"src":"shakespeare-document://asset/abc123.png"}}]}]}"#)
 
         var nested: [String: Any] = ["type": "paragraph"]
         for _ in 0...CanonicalDocumentEvals.maximumAcceptedDepth {
@@ -29,7 +36,7 @@ private struct CanonicalDocumentEvals {
             try CanonicalDocumentValidator.validate(deepJSON)
         }
 
-        print("Canonical document evals passed (valid schema, nodes, marks, shape, root, complexity).")
+        print("Canonical document evals passed (schema, structure, assets, marks, root, complexity).")
     }
 
     private static let maximumAcceptedDepth = 100

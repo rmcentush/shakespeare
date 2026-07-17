@@ -79,10 +79,18 @@ private final class RecentDocumentRouter {
 private final class DocumentSessionCoordinator {
     static let shared = DocumentSessionCoordinator()
 
-    private var terminationHandlers: [UUID: () async -> Bool] = [:]
+    private struct TerminationHandler {
+        let prepare: () async -> Bool
+        let cancel: () -> Void
+    }
+    private var terminationHandlers: [UUID: TerminationHandler] = [:]
 
-    func register(id: UUID, handler: @escaping () async -> Bool) {
-        terminationHandlers[id] = handler
+    func register(
+        id: UUID,
+        prepare: @escaping () async -> Bool,
+        cancel: @escaping () -> Void
+    ) {
+        terminationHandlers[id] = TerminationHandler(prepare: prepare, cancel: cancel)
     }
 
     func unregister(id: UUID) {
@@ -90,8 +98,12 @@ private final class DocumentSessionCoordinator {
     }
 
     func secureAllDocumentsForTermination() async -> Bool {
-        for handler in terminationHandlers.values {
-            guard await handler() else { return false }
+        let handlers = Array(terminationHandlers.values)
+        for handler in handlers {
+            guard await handler.prepare() else {
+                handlers.forEach { $0.cancel() }
+                return false
+            }
         }
         return true
     }
@@ -340,9 +352,11 @@ private struct EditorWindowRootView: View {
                 RecentDocumentRouter.shared.register(id: recentDocumentHandlerID) { url in
                     editorViewModel.openFile(url: url, document: document)
                 }
-                DocumentSessionCoordinator.shared.register(id: documentSessionID) {
-                    await editorViewModel.prepareForTermination(document: document)
-                }
+                DocumentSessionCoordinator.shared.register(
+                    id: documentSessionID,
+                    prepare: { await editorViewModel.prepareForTermination(document: document) },
+                    cancel: { editorViewModel.cancelTerminationPreparation() }
+                )
             }
             .onDisappear {
                 RecentDocumentRouter.shared.unregister(id: recentDocumentHandlerID)

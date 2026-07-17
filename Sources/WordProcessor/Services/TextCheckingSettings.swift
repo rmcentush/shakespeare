@@ -107,8 +107,8 @@ final class TextCheckingSettings {
         // checker avoids duplicate, conflicting underlines and context menus.
         setEditorBoolOption(callback: "setSpellcheckEnabled", value: false)
         setEditorBoolOption(callback: "setAutocorrectEnabled", value: automaticSpellingCorrectionEnabled)
-        applyProofreadingOptions()
         restoreProofreadingUserState()
+        applyProofreadingOptions()
 
         if !didApplyAutomaticCorrectionToCurrentWebView,
            automaticSpellingCorrectionEnabled != baselineAutomaticSpellingCorrectionEnabled {

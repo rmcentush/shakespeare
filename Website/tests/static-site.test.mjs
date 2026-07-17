@@ -158,7 +158,9 @@ test("enables the landing-page download only for a verified release manifest", a
           sourceCommit: "b".repeat(40),
         }),
       } : null,
-      head: async () => null,
+      head: async (key) => key === "releases/v1.2.3/Shakespeare.zip"
+        ? { size: 1 }
+        : null,
     },
   };
 

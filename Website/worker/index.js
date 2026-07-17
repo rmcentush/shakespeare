@@ -35,6 +35,8 @@ async function serveHome(request, env) {
 
   const manifest = await loadReleaseManifest(env);
   if (!manifest) return response;
+  const archive = await env.RELEASES.head(manifest.archiveKey);
+  if (!archive || archive.size <= 0) return response;
 
   const unavailable = `<span class="download" data-release-action aria-disabled="true">
             <span>Release temporarily unavailable</span>
