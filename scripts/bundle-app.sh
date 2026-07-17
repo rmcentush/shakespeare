@@ -82,6 +82,8 @@ cp "Packaging/Info.plist" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_IDENTIFIER" "$CONTENTS/Info.plist"
 
+bash scripts/verify-app-privacy.sh "$APP_BUNDLE"
+
 # Ad-hoc signing keeps local/CI builds internally consistent. Set
 # CODESIGN_IDENTITY to a Developer ID certificate for distributable builds.
 SIGNING_IDENTITY="${CODESIGN_IDENTITY:--}"

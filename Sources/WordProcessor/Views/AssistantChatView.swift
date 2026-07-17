@@ -188,7 +188,7 @@ struct AssistantChatView: View {
     }
 
     private func refreshConnectionStatus() {
-        hasResearchConnection = APIKeyStore.shared.getAPIKey(service: "openrouter") != nil
+        hasResearchConnection = APIKeyStore.shared.hasAPIKey(service: "openrouter")
     }
 
     private func sendMessage() {

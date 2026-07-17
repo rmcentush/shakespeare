@@ -50,7 +50,7 @@ Style learning is on by default and can be paused under **Settings → My Style*
 4. task-relevant excerpts from the editable style reference;
 5. up to two relevant excerpts from writing samples the user deliberately imports.
 
-The complete packet is capped at 8,000 characters (about 2,000 tokens). Samples stay local; only selected excerpts are sent when a style-aware feature needs them. A suggestion is not learned merely because it was shown or clicked—Shakespeare waits for a successful save. User-modified rewrites can help the next review immediately; repeated evidence and imported samples can be distilled into a compact profile that the writer reviews before activation.
+The complete packet is capped at 8,000 characters (about 2,000 tokens). Samples stay local; only selected excerpts are sent when a style-aware feature needs them. A suggestion is not learned merely because it was shown or clicked—Shakespeare waits for a successful save. User-modified rewrites can help the next review immediately. Once there is enough evidence, Shakespeare prepares one compact profile draft in the background; the writer reviews it before activation. Only one draft is retained, failed preparation is rate-limited, and automatic preparation never triggers a Keychain prompt.
 
 Editing requests also receive a separate 2,600-character document-flow map built locally from headings, section boundaries, opening and ending passages, and sparse checkpoints. This gives paragraph and section suggestions awareness of the essay's larger argument without resending the entire document.
 
@@ -75,7 +75,9 @@ Important commands:
 | `make install` | Build, package, and copy the app to `/Applications` |
 | `make package` | Create one universal app under `.build/package/` |
 | `make typecheck` | Type-check the TypeScript editor |
+| `make privacy-check` | Reject embedded credentials, account IDs, and local home paths |
 | `make evals` | Run edit, storage, style, connection, privacy, and wire-contract evals |
+| `make live-writing-evals` | Optionally run three capped OpenRouter quality checks using `OPENROUTER_API_KEY` |
 | `make build` | Build the release binary |
 | `make clean` | Remove generated build artifacts |
 
@@ -87,6 +89,7 @@ shakespeare/
 ├── Sources/WordProcessor/     # SwiftUI app, editor bridge, storage, OpenRouter client
 ├── Packaging/                 # compact release-bundle metadata
 ├── scripts/                   # packaging and deterministic eval fixtures
+├── Website/                   # public Cloudflare download site
 ├── docs/                      # product and release documentation
 ├── Package.swift
 └── Makefile

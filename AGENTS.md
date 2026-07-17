@@ -9,6 +9,7 @@ make run          # Build editor + Swift debug app and run
 make install      # Build/package release app and copy to /Applications
 make editor       # Build the locked TipTap bundle
 make typecheck    # Type-check TypeScript
+make privacy-check # Reject committed credentials, account IDs, and local paths
 make evals        # Run all deterministic Swift regression evals
 make copy-assets  # Build and copy editor assets into Swift resources
 make build        # Build the release binary
@@ -16,7 +17,7 @@ make package      # Create one universal app under .build/package
 make clean        # Remove generated build artifacts
 ```
 
-Before handoff, run `make typecheck`, `make evals`, and the appropriate Swift build. Run `make install` only when an updated `/Applications/Shakespeare.app` is needed.
+Before handoff, run `make privacy-check`, `make typecheck`, `make evals`, and the appropriate Swift build. Run `make install` only when an updated `/Applications/Shakespeare.app` is needed.
 
 The build pipeline is `Editor/src/*.ts` → esbuild IIFE → `Editor/dist/` → `Sources/WordProcessor/Resources/` → SwiftPM resource bundle.
 

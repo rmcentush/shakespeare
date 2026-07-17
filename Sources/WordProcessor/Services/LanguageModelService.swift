@@ -1,6 +1,8 @@
 import Foundation
 
 final class LanguageModelService: Sendable {
+    static let maximumRetryCount = 1
+    static let maximumRetryAfterSeconds = 5.0
     static let maximumFallbackModelCount = 3
 
     private let purpose: InferencePurpose
@@ -43,21 +45,21 @@ final class LanguageModelService: Sendable {
                     return
                 }
 
-                let body = Self.requestBody(
-                    runtime: runtime,
-                    messages: messages,
-                    systemPrompt: systemPrompt,
-                    outputFormat: outputFormat,
-                    temperature: temperature,
-                    maxTokens: maxTokens
-                )
-
                 var attempt = 0
-                let maxRetries = 3
+                let maxRetries = Self.maximumRetryCount
 
                 while true {
                     var hasYieldedChunk = false
                     do {
+                        let attemptRuntime = Self.runtimeForAttempt(runtime, attempt: attempt)
+                        let body = Self.requestBody(
+                            runtime: attemptRuntime,
+                            messages: messages,
+                            systemPrompt: systemPrompt,
+                            outputFormat: outputFormat,
+                            temperature: temperature,
+                            maxTokens: maxTokens
+                        )
                         var request = URLRequest(url: runtime.messagesURL)
                         request.httpMethod = "POST"
                         request.timeoutInterval = 60
@@ -205,6 +207,33 @@ final class LanguageModelService: Sendable {
         return body
     }
 
+    /// Each provider request stays compact, while a retry continues with models
+    /// that were not in the first request instead of paying to repeat the same
+    /// waterfall. A single-model runtime still retries that model once.
+    static func runtimeForAttempt(
+        _ runtime: InferenceRuntime,
+        attempt: Int
+    ) -> InferenceRuntime {
+        guard attempt > 0 else { return runtime }
+        let allModels = [runtime.model] + runtime.fallbackModels
+        let groupSize = maximumFallbackModelCount + 1
+        let start = attempt * groupSize
+        guard start < allModels.count else { return runtime }
+        let group = Array(allModels.dropFirst(start).prefix(groupSize))
+        guard let model = group.first else { return runtime }
+        return InferenceRuntime(
+            providerID: runtime.providerID,
+            providerName: runtime.providerName,
+            messagesURL: runtime.messagesURL,
+            apiKeyService: runtime.apiKeyService,
+            model: model,
+            fallbackModels: Array(group.dropFirst()),
+            webSearchEnabled: runtime.webSearchEnabled,
+            supportsTemperature: InferenceSettings.modelOption(for: model)?.supportsTemperature
+                ?? runtime.supportsTemperature
+        )
+    }
+
     private static func openRouterContent(from value: Any) -> Any {
         if let text = value as? String { return text }
         if let dictionary = value as? [String: Any],
@@ -325,7 +354,7 @@ final class LanguageModelService: Sendable {
         var seconds = min(pow(2.0, Double(attempt - 1)), 8.0) + Double.random(in: 0...0.5)
         if let retryAfter = response?.value(forHTTPHeaderField: "retry-after"),
            let parsed = Double(retryAfter) {
-            seconds = max(seconds, min(parsed, 30))
+            seconds = max(seconds, min(parsed, maximumRetryAfterSeconds))
         }
         try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }

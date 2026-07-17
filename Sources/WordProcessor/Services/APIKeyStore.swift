@@ -1,5 +1,25 @@
 import Foundation
+import LocalAuthentication
 import Security
+
+/// Keeps an authorized credential available for the lifetime of the process so
+/// connection-status refreshes do not ask Keychain for the secret again.
+private final class APIKeySessionCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: String] = [:]
+
+    func value(for service: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return values[service]
+    }
+
+    func setValue(_ value: String?, for service: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        values[service] = value
+    }
+}
 
 /// Stores API keys in the macOS Keychain. Owner-only files under Application
 /// Support remain as a compatibility fallback for locally built bundles whose
@@ -8,6 +28,7 @@ final class APIKeyStore: Sendable {
     static let shared = APIKeyStore()
     private let keychainServicePrefix = "com.shakespeare.api"
     private let keychainAccount = "default"
+    private let sessionCache = APIKeySessionCache()
 
     private var storageDirectory: URL {
         try? ShakespeareStorage.prepare()
@@ -25,9 +46,39 @@ final class APIKeyStore: Sendable {
         return storageDirectory.appendingPathComponent("\(service).key")
     }
 
+    /// Checks connection state without requesting the secret bytes. UI surfaces
+    /// use this method so opening onboarding, Settings, or research chat cannot
+    /// produce a Keychain authorization prompt.
+    func hasAPIKey(service: String) -> Bool {
+        guard let fallbackPath = keyFilePath(service: service) else { return false }
+        if sessionCache.value(for: service) != nil {
+            return true
+        }
+        if keychainContainsAPIKey(service: service) {
+            return true
+        }
+
+        guard let attributes = try? FileManager.default.attributesOfItem(
+            atPath: fallbackPath.path
+        ), let size = attributes[.size] as? NSNumber else {
+            return false
+        }
+        return size.intValue > 0
+    }
+
+    /// Automatic background work may use a key only after the writer has already
+    /// authorized it in this process. This avoids surprise Keychain prompts.
+    func hasAuthorizedAPIKeyInSession(service: String) -> Bool {
+        sessionCache.value(for: service) != nil
+    }
+
     func getAPIKey(service: String) -> String? {
         guard keyFilePath(service: service) != nil else { return nil }
+        if let cachedKey = sessionCache.value(for: service) {
+            return cachedKey
+        }
         if let key = keychainAPIKey(service: service) {
+            sessionCache.setValue(key, for: service)
             return key
         }
 
@@ -35,6 +86,7 @@ final class APIKeyStore: Sendable {
         if setKeychainAPIKey(key, service: service) {
             deleteFallbackAPIKey(service: service)
         }
+        sessionCache.setValue(key, for: service)
         return key
     }
 
@@ -49,16 +101,20 @@ final class APIKeyStore: Sendable {
 
         if setKeychainAPIKey(normalizedKey, service: service) {
             deleteFallbackAPIKey(service: service)
+            sessionCache.setValue(normalizedKey, for: service)
             return true
         }
 
-        return setFallbackAPIKey(normalizedKey, service: service)
+        guard setFallbackAPIKey(normalizedKey, service: service) else { return false }
+        sessionCache.setValue(normalizedKey, for: service)
+        return true
     }
 
     func deleteAPIKey(service: String) {
         guard keyFilePath(service: service) != nil else { return }
         SecItemDelete(keychainQuery(service: service) as CFDictionary)
         deleteFallbackAPIKey(service: service)
+        sessionCache.setValue(nil, for: service)
     }
 
     private func keychainQuery(service: String) -> [String: Any] {
@@ -85,6 +141,17 @@ final class APIKeyStore: Sendable {
 
         let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return key.isEmpty ? nil : key
+    }
+
+    private func keychainContainsAPIKey(service: String) -> Bool {
+        var query = keychainQuery(service: service)
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        let authenticationContext = LAContext()
+        authenticationContext.interactionNotAllowed = true
+        query[kSecUseAuthenticationContext as String] = authenticationContext
+
+        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        return status == errSecSuccess || status == errSecInteractionNotAllowed
     }
 
     private func setKeychainAPIKey(_ key: String, service: String) -> Bool {

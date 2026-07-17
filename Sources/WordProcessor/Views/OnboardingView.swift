@@ -40,6 +40,7 @@ struct OnboardingView: View {
     @State private var connectionError = ""
     @State private var requiresBilling = false
     @State private var personalizationEnabled = true
+    @State private var connectionTask: Task<Void, Never>?
     @State private var showWritingSampleImporter = false
     @State private var writingSampleImportMessage = ""
     @State private var writingSampleImportFailed = false
@@ -58,12 +59,16 @@ struct OnboardingView: View {
         .frame(width: 640)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
-            hasKey = APIKeyStore.shared.getAPIKey(service: "openrouter") != nil
+            hasKey = APIKeyStore.shared.hasAPIKey(service: "openrouter")
             personalizationEnabled = PersonalizationSettings.isEnabled
             focusKeyIfNeeded()
         }
         .onChange(of: personalizationEnabled) { _, enabled in
             PersonalizationSettings.isEnabled = enabled
+        }
+        .onDisappear {
+            connectionTask?.cancel()
+            connectionTask = nil
         }
         .fileImporter(
             isPresented: $showWritingSampleImporter,
@@ -223,12 +228,11 @@ struct OnboardingView: View {
     private var footer: some View {
         HStack(spacing: 10) {
             Button("Skip for Now") { finish() }
-                .disabled(isConnecting)
             Button("Open Document") {
+                cancelConnection()
                 OnboardingSettings.markCompleted()
                 onOpenDocument()
             }
-            .disabled(isConnecting)
             Spacer()
 
             if hasKey && !isReplacingKey {
@@ -254,10 +258,15 @@ struct OnboardingView: View {
         connectionError = ""
         requiresBilling = false
 
-        Task { @MainActor in
-            defer { isConnecting = false }
+        connectionTask?.cancel()
+        connectionTask = Task { @MainActor in
+            defer {
+                isConnecting = false
+                connectionTask = nil
+            }
             do {
                 try await validator.validate(apiKey: normalized)
+                try Task.checkCancellation()
                 guard APIKeyStore.shared.setAPIKey(normalized, service: "openrouter") else {
                     connectionError = "The key worked, but it could not be stored securely on this Mac."
                     return
@@ -266,6 +275,9 @@ struct OnboardingView: View {
                 hasKey = true
                 isReplacingKey = false
                 NotificationCenter.default.post(name: .openRouterConnectionChanged, object: nil)
+                Task { await StyleProfileRefinementCoordinator.shared.prepareIfNeeded() }
+                isConnecting = false
+                connectionTask = nil
                 finish()
             } catch is CancellationError {
                 return
@@ -297,11 +309,21 @@ struct OnboardingView: View {
         let importResult = WritingSampleImporter.importFiles(urls)
         writingSampleImportFailed = importResult.isFailure
         writingSampleImportMessage = importResult.message
+        if importResult.imported > 0 {
+            Task { await StyleProfileRefinementCoordinator.shared.prepareIfNeeded() }
+        }
     }
 
     private func finish() {
+        cancelConnection()
         OnboardingSettings.markCompleted()
         onFinish()
+    }
+
+    private func cancelConnection() {
+        connectionTask?.cancel()
+        connectionTask = nil
+        isConnecting = false
     }
 }
 
