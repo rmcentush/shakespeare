@@ -1,124 +1,68 @@
 # Development and releasing
 
-This file is the canonical delivery contract for Shakespeare.
+GitHub `main` is the source of truth. Work on a branch, run `make check`, and
+merge through a pull request after the Cloudflare check passes. Cloudflare
+deploys the website; signed macOS releases run explicitly from a trusted Mac.
 
-## Source of truth
+## Cloudflare
 
-GitHub `main` owns the complete product history. Every production artifact must
-come from committed source on `main`; Cloudflare is the build, hosting, and
-release-storage plane, not a second source repository.
-
-The normal change flow is:
-
-1. Work on a feature branch.
-2. Run `make check` locally.
-3. Commit and push the branch to GitHub.
-4. Require the Cloudflare `Workers Builds: shakespeare-download` check and merge through a pull request.
-5. Let Cloudflare deploy the verified `main` commit.
-
-GitHub Actions is intentionally absent. This avoids hosted runner minutes and
-keeps Apple signing credentials off GitHub. Cloudflare runs the portable
-repository checks; native app releases remain explicit because they require
-macOS, Developer ID signing, Apple notarization, and ticket stapling.
-
-## Cloudflare website CI/CD
-
-Connect the `shakespeare-download` Worker to GitHub with these settings:
+Connect the `shakespeare-download` Worker with:
 
 - Repository: `rmcentush/shakespeare`
 - Production branch: `main`
 - Root directory: `Website`
 - Build command: `npm ci && npm run ci`
 - Deploy command: `npx wrangler deploy --config wrangler.jsonc`
-- Non-production branch builds: enabled (version upload only; no public preview URL)
-- Non-production deploy command: `npx wrangler versions upload --config wrangler.jsonc`
+- Non-production builds: enabled
+- Non-production deploy: `npx wrangler versions upload --config wrangler.jsonc`
 - Build watch include path: `*`
-- Build watch exclude path: leave empty
 - Build cache: enabled
 
-Restrict the Cloudflare GitHub App to this repository. Successful production
-builds deploy automatically; pull-request branches create preview versions.
-The `npm run ci` entry point invokes `make cloud-ci`, which verifies the Worker,
-editor tests and types, source privacy, and delivery scripts on Linux. The
-required local `make check` additionally compiles the macOS app and runs the
-Swift eval suite.
-`make deploy-site` exists only for recovery and refuses to deploy a dirty,
-non-`main`, or stale checkout.
+Limit the Cloudflare GitHub App to this repository. `make deploy-site` is a
+recovery command and accepts only a clean, current `main` checkout.
 
-The R2 binding is declared in `Website/wrangler.jsonc`. Static deployments
-exclude `public/downloads`; the Worker reads `releases/current.json` and serves
-the immutable archive it names. Therefore a website deploy cannot overwrite or
-erase the current app download.
+Release archives live in R2 and are selected through
+`releases/current.json`. Static website deployments exclude downloads.
 
-## One-time Mac setup
+## Prepare the Mac
 
-Install one Developer ID Application certificate in Keychain, then store Apple
-notarization credentials without placing them in the repository:
+Install one Developer ID Application certificate and save notarization
+credentials outside the repository:
 
 ```bash
 xcrun notarytool store-credentials shakespeare
 ```
 
-Release commands select the uniquely named `Shakespeare` account from Wrangler's
-authenticated JSON when `CLOUDFLARE_ACCOUNT_ID` is unset. Export the account ID
-explicitly only if the account is renamed or selection must be overridden. Do
-not commit it.
+Wrangler should be authenticated to the account named `Shakespeare`. Set
+`CLOUDFLARE_ACCOUNT_ID`, `CODESIGN_IDENTITY`, or `NOTARYTOOL_PROFILE` only when
+automatic selection is ambiguous. Never commit their values.
 
-## Publish the macOS app
+## Publish the app
 
-Check every prerequisite without publishing anything:
+Check prerequisites without publishing:
 
 ```bash
 make release-readiness
 ```
 
-From a clean, up-to-date `main` branch:
+Then use a clean `main` that exactly matches `origin/main`:
 
 ```bash
-VERSION=1.2.3 \
-BUILD_NUMBER=123 \
-make release
+VERSION=1.2.3 BUILD_NUMBER=123 make release
 ```
 
-The release command automatically uses the sole Developer ID Application
-identity and the `shakespeare` notarization profile. Set `CODESIGN_IDENTITY` or
-`NOTARYTOOL_PROFILE` only when the Mac has multiple identities or uses a
-different profile name.
+The release command runs the complete checks, builds from clean dependencies,
+signs and notarizes the app, uploads an immutable archive, advances the R2
+manifest, verifies the public download, and pushes the version tag. It restores
+the previous manifest if post-publication verification fails.
 
-The command:
+For the first release only, confirm the bucket has no prior manifest and set
+`ALLOW_INITIAL_RELEASE=1`. `make update` also requires the expected Apple Team
+Identifier on the first verified install; later updates pin the installed
+publisher automatically.
 
-1. Requires a clean `main` exactly matching `origin/main`.
-2. Requires a reviewed root `LICENSE` and icon provenance record containing the
-   current AppIcon SHA-256 and usage rights.
-3. Reinstalls exact npm dependencies and runs `make check`.
-4. Builds from fresh Swift scratch directories, signs, notarizes, and staples
-   the universal app.
-5. Pins the bundle identifier and Apple Team Identifier in verification and in
-   the release manifest.
-6. Uploads an immutable versioned archive to R2.
-7. Atomically advances and reads back `releases/current.json`; the Worker from
-   `main` exposes the download only for the complete verified manifest schema.
-8. Downloads the public ZIP and proves its checksum, publisher signature, and
-   notarization.
-9. Creates and pushes the version tag.
+## Repository controls
 
-If a post-switch step fails, the prior R2 manifest is restored. Existing
-versioned archives remain immutable, so rollback changes only the small
-manifest pointer.
-
-The first-ever release has no prior manifest to roll back to. After separately
-confirming the R2 bucket is empty, opt into that one case with
-`ALLOW_INITIAL_RELEASE=1`. A normal release refuses an unreadable or missing
-prior manifest because it cannot distinguish absence from a control-plane
-failure safely.
-
-## GitHub repository controls
-
-Keep `main` behind a repository ruleset that requires pull requests, blocks
-force pushes and deletion, and requires the Cloudflare check above. Protect
-`v*` release tags from deletion or updates. Use squash merging and delete merged
-branches so the source history stays linear and compact.
-
-`make update` trusts the Team Identifier from an already verified installed app.
-For the first verified install, supply `EXPECTED_TEAM_IDENTIFIER` explicitly;
-subsequent updates refuse a different Apple publisher.
+Protect `main` with pull requests, the Cloudflare check, and blocked force
+pushes/deletion. Protect `v*` tags and use squash merging. Keep credentials,
+private keys, account details, and purchase records outside Git.
