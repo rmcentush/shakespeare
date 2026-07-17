@@ -264,24 +264,74 @@ struct ToolbarView: View {
 
 struct AppearanceToggle: View {
     @Environment(EditorViewModel.self) private var viewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("editorAppearance") private var appearance: String = "system"
+    @State private var isExpanded = false
+
+    private let options = [
+        AppearanceOption(id: "system", icon: "circle.lefthalf.filled", label: "System"),
+        AppearanceOption(id: "light", icon: "sun.max", label: "Light"),
+        AppearanceOption(id: "dark", icon: "moon", label: "Dark")
+    ]
+
+    private var selectedOption: AppearanceOption {
+        options.first { $0.id == appearance } ?? options[0]
+    }
+
+    private var otherOptions: [AppearanceOption] {
+        options.filter { $0.id != selectedOption.id }
+    }
+
+    private var expansionAnimation: Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.01)
+            : .spring(response: 0.28, dampingFraction: 0.82)
+    }
 
     var body: some View {
-        Picker("", selection: Binding(
-            get: { appearance },
-            set: { newValue in
-                appearance = newValue
-                applyAppearance(newValue)
+        HStack(spacing: 0) {
+            if isExpanded {
+                ForEach(otherOptions) { option in
+                    AppearanceOptionButton(option: option, isSelected: false, isExpanded: false) {
+                        select(option)
+                    }
+                    .transition(
+                        .scale(scale: 0.72, anchor: .trailing)
+                            .combined(with: .opacity)
+                    )
+                }
             }
-        )) {
-            Image(systemName: "circle.lefthalf.filled").tag("system")
-            Image(systemName: "sun.max").tag("light")
-            Image(systemName: "moon").tag("dark")
+
+            AppearanceOptionButton(option: selectedOption, isSelected: true, isExpanded: isExpanded) {
+                withAnimation(expansionAnimation) {
+                    isExpanded.toggle()
+                }
+            }
         }
-        .pickerStyle(.segmented)
-        .frame(width: 100)
+        .padding(2)
+        .background(Color.primary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .animation(expansionAnimation, value: isExpanded)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Appearance")
         .onAppear {
             applyAppearance(appearance)
+        }
+        .onChange(of: appearance) { _, newValue in
+            applyAppearance(newValue)
+        }
+        .onExitCommand {
+            guard isExpanded else { return }
+            withAnimation(expansionAnimation) {
+                isExpanded = false
+            }
+        }
+    }
+
+    private func select(_ option: AppearanceOption) {
+        withAnimation(expansionAnimation) {
+            appearance = option.id
+            isExpanded = false
         }
     }
 
@@ -297,6 +347,50 @@ struct AppearanceToggle: View {
             NSApp.appearance = nil
             viewModel.setThemeCSS(FontManager.shared.themedCSS(for: mode))
         }
+    }
+}
+
+private struct AppearanceOption: Identifiable {
+    let id: String
+    let icon: String
+    let label: String
+}
+
+private struct AppearanceOptionButton: View {
+    let option: AppearanceOption
+    let isSelected: Bool
+    let isExpanded: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: option.icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
+                .frame(width: 30, height: 28)
+                .background(
+                    isSelected
+                        ? Color.accentColor
+                        : isHovered ? Color.primary.opacity(0.08) : Color.clear
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .help(
+            isSelected
+                ? "\(option.label) Appearance — \(isExpanded ? "Hide" : "Show") Options"
+                : "\(option.label) Appearance"
+        )
+        .accessibilityLabel(
+            isSelected
+                ? "\(option.label) appearance, selected. \(isExpanded ? "Hide" : "Show") options"
+                : "Use \(option.label.lowercased()) appearance"
+        )
     }
 }
 
