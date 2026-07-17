@@ -1975,6 +1975,100 @@ final class EditorViewModel {
 
     // MARK: - File Operations
 
+    func renameDocument(named requestedName: String, document: DocumentModel) {
+        let fileExtension = document.fileURL?.pathExtension
+            ?? DocumentFileStore.documentPackageExtension
+        guard let name = normalizedDocumentName(
+            requestedName,
+            removingExtension: fileExtension
+        ) else {
+            setPersistenceStatus("Rename failed: enter a valid file name", isError: true)
+            return
+        }
+
+        guard name != document.displayName else { return }
+
+        guard let sourceURL = document.fileURL else {
+            document.renameUnsavedDocument(to: name)
+            setPersistenceStatus("Document named \(name)", isError: false)
+            return
+        }
+
+        guard !isDocumentTransitioning else {
+            setPersistenceStatus("Rename failed: another document operation is in progress", isError: true)
+            return
+        }
+
+        let destinationURL = sourceURL.deletingLastPathComponent()
+            .appendingPathComponent(name, isDirectory: false)
+            .appendingPathExtension(fileExtension)
+        guard destinationURL.lastPathComponent.utf8.count <= 255 else {
+            setPersistenceStatus("Rename failed: the file name is too long", isError: true)
+            return
+        }
+
+        isDocumentTransitioning = true
+        persistenceTimer?.invalidate()
+        persistenceTimer = nil
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                isDocumentTransitioning = false
+                if document.isDirty {
+                    schedulePersistence(document: document)
+                }
+            }
+
+            if let persistenceTask {
+                await persistenceTask.value
+                self.persistenceTask = nil
+            }
+
+            guard document.fileURL == sourceURL else {
+                setPersistenceStatus("Rename cancelled: the open document changed", isError: true)
+                return
+            }
+
+            do {
+                try await DocumentFileStore.shared.rename(
+                    from: sourceURL,
+                    to: destinationURL
+                )
+                document.markRenamed(from: sourceURL, to: destinationURL)
+                if assetBaseURL == sourceURL {
+                    assetBaseURL = destinationURL
+                }
+                setPersistenceStatus("Renamed to \(destinationURL.lastPathComponent)", isError: false)
+            } catch {
+                setPersistenceStatus("Rename failed: \(error.localizedDescription)", isError: true)
+            }
+        }
+    }
+
+    private func normalizedDocumentName(
+        _ requestedName: String,
+        removingExtension fileExtension: String
+    ) -> String? {
+        var name = requestedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = ".\(fileExtension)"
+        if name.lowercased().hasSuffix(suffix.lowercased()) {
+            name.removeLast(suffix.count)
+            name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        guard !name.isEmpty,
+              name != ".",
+              name != "..",
+              !name.contains("/"),
+              !name.contains(":"),
+              !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+        else {
+            return nil
+        }
+        return name
+    }
+
     func openDocument(document: DocumentModel) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.shakespeareDocument, .html]
