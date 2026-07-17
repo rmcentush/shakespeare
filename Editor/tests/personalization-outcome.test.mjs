@@ -14,6 +14,18 @@ test('unchanged model prose is never eligible to teach the writer profile', () =
   );
 });
 
+test('format-only whitespace changes do not become writer evidence', () => {
+  assert.equal(
+    classifyPersonalizationOutcome(
+      'accept',
+      'Original',
+      'A model\u00a0suggestion with spacing.',
+      '  A model suggestion\nwith spacing.  '
+    ).trainingEligible,
+    false
+  );
+});
+
 test('active writer modifications remain eligible evidence', () => {
   const accepted = classifyPersonalizationOutcome(
     'accept',

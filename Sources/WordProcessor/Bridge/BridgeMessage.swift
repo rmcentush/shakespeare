@@ -3,12 +3,14 @@ import Foundation
 enum BridgePayload: Codable {
     case editorReady
     case contentUpdate(html: String, text: String, words: Int, characters: Int)
+    case documentMetrics(revision: Int, words: Int, characters: Int)
     case selectionChanged(SelectionState)
     case pendingEditUpdate(PendingEditUpdateData)
     case editDecision(EditDecisionData)
     case commentsChanged([CommentData], documentChanged: Bool)
     case commentActivated(commentId: String)
     case proofreadingUpdate(ProofreadingUpdateData)
+    case proofreadingUserStateChanged(json: String)
     case imageImportRequested(ImageImportRequestData)
     case openURL(url: String)
     case unknown
@@ -55,6 +57,7 @@ enum BridgePayload: Codable {
         let requestID: String
         let dataURL: String
         let filename: String
+        let referencedSources: [String]
     }
 
     struct CommentData: Identifiable, Equatable {
@@ -138,6 +141,15 @@ enum BridgePayload: Codable {
             let words = payload["words"] as? Int ?? 0
             let characters = payload["characters"] as? Int ?? 0
             return .contentUpdate(html: html, text: text, words: words, characters: characters)
+        case "documentMetrics":
+            guard let revision = payload["revision"] as? Int,
+                  let words = payload["words"] as? Int,
+                  let characters = payload["characters"] as? Int,
+                  revision >= 0,
+                  words >= 0,
+                  characters >= 0
+            else { return .unknown }
+            return .documentMetrics(revision: revision, words: words, characters: characters)
         case "selectionChanged":
             let state = SelectionState(
                 hasSelection: payload["hasSelection"] as? Bool ?? false,
@@ -261,12 +273,26 @@ enum BridgePayload: Codable {
                     message: payload["message"] as? String ?? ""
                 )
             )
+        case "proofreadingUserStateChanged":
+            guard let json = payload["json"] as? String,
+                  json.utf8.count <= 256 * 1_024
+            else { return .unknown }
+            return .proofreadingUserStateChanged(json: json)
         case "imageImportRequested":
+            guard let rawReferencedSources = payload["referencedSources"] as? [Any],
+                  rawReferencedSources.count <= 2_048
+            else { return .unknown }
+            let referencedSources = rawReferencedSources.compactMap { value -> String? in
+                guard let source = value as? String, source.utf8.count <= 1_024 else { return nil }
+                return source
+            }
+            guard referencedSources.count == rawReferencedSources.count else { return .unknown }
             return .imageImportRequested(
                 ImageImportRequestData(
                     requestID: payload["requestId"] as? String ?? "",
                     dataURL: payload["dataURL"] as? String ?? "",
-                    filename: payload["filename"] as? String ?? ""
+                    filename: payload["filename"] as? String ?? "",
+                    referencedSources: referencedSources
                 )
             )
         case "openURL":

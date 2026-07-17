@@ -152,6 +152,7 @@ actor DocumentFileStore {
         case invalidDataURL
         case invalidPackagePath(String)
         case invalidPackageManifest
+        case invalidDocumentContent(String)
         case assetTooLarge(maximumMegabytes: Int)
         case packageAssetsTooLarge(maximumMegabytes: Int)
         case incompletePackageWrite(String)
@@ -166,6 +167,8 @@ actor DocumentFileStore {
                 return "The document package contains an unsafe file path (\(filename))."
             case .invalidPackageManifest:
                 return "The document package manifest contains invalid values."
+            case .invalidDocumentContent(let detail):
+                return "The document package contains invalid content (\(detail))."
             case .assetTooLarge(let maximumMegabytes):
                 return "Images must be \(maximumMegabytes) MB or smaller."
             case .packageAssetsTooLarge(let maximumMegabytes):
@@ -288,7 +291,8 @@ actor DocumentFileStore {
     func stageImageAsset(
         from dataURL: String,
         documentID: String,
-        sourceDocumentURL: URL?
+        sourceDocumentURL: URL?,
+        referencedAssetFilenames: Set<String>
     ) throws -> StagedImageAsset {
         let payload = try dataFromDataURL(
             dataURL,
@@ -298,14 +302,16 @@ actor DocumentFileStore {
             data: payload.data,
             fileExtension: payload.fileExtension,
             documentID: documentID,
-            sourceDocumentURL: sourceDocumentURL
+            sourceDocumentURL: sourceDocumentURL,
+            referencedAssetFilenames: referencedAssetFilenames
         )
     }
 
     func stageImageAsset(
         from fileURL: URL,
         documentID: String,
-        sourceDocumentURL: URL?
+        sourceDocumentURL: URL?,
+        referencedAssetFilenames: Set<String>
     ) throws -> StagedImageAsset {
         guard let type = UTType(filenameExtension: fileURL.pathExtension),
               type.conforms(to: .image)
@@ -318,7 +324,8 @@ actor DocumentFileStore {
             data: data,
             fileExtension: fileExtension,
             documentID: documentID,
-            sourceDocumentURL: sourceDocumentURL
+            sourceDocumentURL: sourceDocumentURL,
+            referencedAssetFilenames: referencedAssetFilenames
         )
     }
 
@@ -326,7 +333,8 @@ actor DocumentFileStore {
         data: Data,
         fileExtension: String,
         documentID: String,
-        sourceDocumentURL: URL?
+        sourceDocumentURL: URL?,
+        referencedAssetFilenames: Set<String>
     ) throws -> StagedImageAsset {
         let filename = assetFilename(for: data, fileExtension: fileExtension)
         let baseURL = try workingDocumentURL(for: documentID)
@@ -336,7 +344,11 @@ actor DocumentFileStore {
         )
 
         try FileManager.default.createDirectory(at: assetsURL, withIntermediateDirectories: true)
-        try copyExistingAssetsIfNeeded(from: sourceDocumentURL, to: assetsURL)
+        try copyExistingAssetsIfNeeded(
+            from: sourceDocumentURL,
+            to: assetsURL,
+            referencedAssetFilenames: referencedAssetFilenames
+        )
 
         let destinationURL = assetsURL.appendingPathComponent(filename)
         if !FileManager.default.fileExists(atPath: destinationURL.path) {
@@ -414,6 +426,11 @@ actor DocumentFileStore {
                 maximumBytes: Self.maximumDocumentContentBytes,
                 displayName: manifest.contentFileName
             )
+            do {
+                try CanonicalDocumentValidator.validate(canonicalJSON)
+            } catch {
+                throw FileStoreError.invalidDocumentContent(error.localizedDescription)
+            }
             return FileSnapshot(
                 canonicalJSON: canonicalJSON,
                 htmlContent: "",
@@ -680,10 +697,15 @@ actor DocumentFileStore {
         )
     }
 
-    private func copyExistingAssetsIfNeeded(from sourceDocumentURL: URL?, to destination: URL) throws {
+    private func copyExistingAssetsIfNeeded(
+        from sourceDocumentURL: URL?,
+        to destination: URL,
+        referencedAssetFilenames: Set<String>
+    ) throws {
         guard let sourceDocumentURL,
               Self.isNativeDocumentURL(sourceDocumentURL),
-              sourceDocumentURL.standardizedFileURL != destination.deletingLastPathComponent().standardizedFileURL
+              sourceDocumentURL.standardizedFileURL != destination.deletingLastPathComponent().standardizedFileURL,
+              referencedAssetFilenames.count <= 2_048
         else { return }
 
         try withSecurityScopedAccess(to: [sourceDocumentURL]) {
@@ -692,24 +714,26 @@ actor DocumentFileStore {
                 in: sourceDocumentURL
             ) else { return }
             guard FileManager.default.fileExists(atPath: source.path) else { return }
-            let files = try FileManager.default.contentsOfDirectory(
-                at: source,
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]
-            )
-            for listedURL in files {
-                let filename = listedURL.lastPathComponent
+            var copiedBytes = 0
+            for filename in referencedAssetFilenames.sorted() {
                 guard let file = DocumentAssetReference.containedFileURL(
                     named: filename,
                     in: source
                 ) else { continue }
                 let target = destination.appendingPathComponent(filename)
                 guard !FileManager.default.fileExists(atPath: target.path) else { continue }
-                do {
-                    try FileManager.default.linkItem(at: file, to: target)
-                } catch {
-                    try FileManager.default.copyItem(at: file, to: target)
+                let data = try PackageFileSafety.readData(
+                    from: file,
+                    maximumBytes: Self.maximumImportedImageBytes,
+                    displayName: filename
+                )
+                copiedBytes += data.count
+                guard copiedBytes <= Self.maximumPackageAssetBytes else {
+                    throw FileStoreError.packageAssetsTooLarge(
+                        maximumMegabytes: Self.maximumPackageAssetBytes / (1_024 * 1_024)
+                    )
                 }
+                try data.write(to: target, options: [.atomic])
             }
         }
     }

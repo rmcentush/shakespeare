@@ -13,8 +13,12 @@ export function classifyPersonalizationOutcome(
   proposedText: string,
   finalText: string
 ): ClassifiedPersonalizationOutcome {
+  const normalizedOriginal = normalizedOutcomeText(originalText);
+  const normalizedProposed = normalizedOutcomeText(proposedText);
+  const normalizedFinal = normalizedOutcomeText(finalText);
+
   if (decision === 'accept') {
-    if (finalText === proposedText) {
+    if (normalizedFinal === normalizedProposed) {
       return {
         outcome: 'accepted_unchanged',
         finalText,
@@ -22,7 +26,7 @@ export function classifyPersonalizationOutcome(
         trainingEligible: false,
       };
     }
-    if (finalText === originalText) {
+    if (normalizedFinal === normalizedOriginal) {
       return {
         outcome: 'reverted',
         finalText,
@@ -34,11 +38,11 @@ export function classifyPersonalizationOutcome(
       outcome: 'accepted_modified',
       finalText,
       confidence: 0.9,
-      trainingEligible: finalText.trim().length > 0,
+      trainingEligible: normalizedFinal.length > 0,
     };
   }
 
-  if (finalText === originalText) {
+  if (normalizedFinal === normalizedOriginal) {
     return {
       outcome: 'rejected_unchanged',
       finalText,
@@ -46,18 +50,25 @@ export function classifyPersonalizationOutcome(
       trainingEligible: false,
     };
   }
-  if (finalText === proposedText) {
+  if (normalizedFinal === normalizedProposed) {
     return {
       outcome: 'later_accepted',
       finalText,
       confidence: 0.9,
-      trainingEligible: finalText.trim().length > 0,
+      trainingEligible: normalizedFinal.length > 0,
     };
   }
   return {
     outcome: 'rejected_rewritten',
     finalText,
     confidence: 1,
-    trainingEligible: finalText.trim().length > 0,
+    trainingEligible: normalizedFinal.length > 0,
   };
+}
+
+function normalizedOutcomeText(value: string): string {
+  return value
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }

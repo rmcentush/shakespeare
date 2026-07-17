@@ -56,6 +56,25 @@ struct APIKeyStoreEvals {
             exit(1)
         }
 
+        let stableDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shakespeare-stable-key-eval-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: stableDirectory) }
+        let stableStore = APIKeyStore(
+            testingDevelopmentStore: false,
+            storageDirectory: stableDirectory,
+            keychainWrite: { _, _ in false }
+        )
+        guard !stableStore.setAPIKey(expected, service: "openrouter") else {
+            print("API key store eval failed: stable build accepted a failed Keychain write")
+            exit(1)
+        }
+        guard !FileManager.default.fileExists(
+            atPath: stableDirectory.appendingPathComponent("openrouter.key").path
+        ) else {
+            print("API key store eval failed: stable build wrote a fallback credential file")
+            exit(1)
+        }
+
         print("API key store eval passed.")
     }
 }

@@ -29,6 +29,7 @@ final class EditorViewModel {
     var proofreadingErrorMessage = ""
     var persistenceStatusText = ""
     var persistenceStatusIsError = false
+    private(set) var isDocumentTransitioning = false
     private var persistenceTimer: Timer?
     private var persistenceTask: Task<Void, Never>?
     private var ambientReviewTimer: Timer?
@@ -40,7 +41,7 @@ final class EditorViewModel {
     private var ambientReviewedBlockHashes: [String: String] = [:]
     private var pendingSnapshot: DocumentFileStore.FileSnapshot?
     private var lastAutoSaveCheckpointByDocumentID: [String: Date] = [:]
-    /// Set when the most recent snapshot capture fell back to last-synced state.
+    /// Set when the most recent snapshot capture could not prove current state.
     private var lastSnapshotCaptureFailed = false
     private let autoSaveCheckpointInterval: TimeInterval = 60
     @ObservationIgnored private let ambientReviewService = LanguageModelService()
@@ -318,6 +319,13 @@ final class EditorViewModel {
                 ]
             )
 
+        case .documentMetrics(_, let words, let characters):
+            NotificationCenter.default.post(
+                name: .editorDocumentMetricsUpdated,
+                object: self,
+                userInfo: ["words": words, "characters": characters]
+            )
+
         case .selectionChanged(let state):
             let nextSelectionState = SelectionState(state)
             if nextSelectionState != selectionState {
@@ -368,6 +376,9 @@ final class EditorViewModel {
             proofreadingIssueCount = update.issueCount
             proofreadingErrorMessage = update.message
 
+        case .proofreadingUserStateChanged(let json):
+            TextCheckingSettings.shared.persistProofreadingUserState(json)
+
         case .imageImportRequested(let request):
             guard !request.requestID.isEmpty,
                   !request.dataURL.isEmpty,
@@ -381,7 +392,10 @@ final class EditorViewModel {
                     let staged = try await DocumentFileStore.shared.stageImageAsset(
                         from: request.dataURL,
                         documentID: documentID,
-                        sourceDocumentURL: sourceDocumentURL
+                        sourceDocumentURL: sourceDocumentURL,
+                        referencedAssetFilenames: Set(
+                            request.referencedSources.compactMap(DocumentAssetReference.filename(from:))
+                        )
                     )
                     assetBaseURL = staged.baseURL
                     callEditorAPI(
@@ -449,6 +463,34 @@ final class EditorViewModel {
         callEditorAPI("loadJSONContent", arguments: [json])
     }
 
+    private func applySnapshotToEditor(
+        _ snapshot: DocumentFileStore.FileSnapshot,
+        completion: @escaping (Bool) -> Void
+    ) {
+        if let canonicalJSON = snapshot.canonicalJSON, !canonicalJSON.isEmpty {
+            callEditorAPI("loadJSONContent", arguments: [canonicalJSON]) { result in
+                completion(result as? Bool == true)
+            }
+        } else {
+            callEditorAPI("loadContent", arguments: [snapshot.htmlContent]) { result in
+                completion(result as? Bool == true)
+            }
+        }
+    }
+
+    private func loadSnapshotIntoReadyEditor(_ snapshot: DocumentFileStore.FileSnapshot) async -> Bool {
+        guard isEditorReady else { return false }
+        return await withCheckedContinuation { continuation in
+            applySnapshotToEditor(snapshot) { success in
+                continuation.resume(returning: success)
+            }
+        }
+    }
+
+    private func setEditorEditable(_ enabled: Bool) {
+        callEditorAPI("setEditorEditable", arguments: [enabled])
+    }
+
     // MARK: - Snapshot Capture
 
     func getDocumentSnapshot(completion: @escaping (DocumentFileStore.FileSnapshot?) -> Void) {
@@ -475,13 +517,40 @@ final class EditorViewModel {
 
     func importImage(from fileURL: URL) async throws {
         guard !activeDocumentID.isEmpty else { return }
+        guard let referencedAssetFilenames = await referencedAssetFilenamesInEditor() else {
+            throw NSError(
+                domain: "Shakespeare.Editor",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Could not verify the document's existing image references."]
+            )
+        }
         let staged = try await DocumentFileStore.shared.stageImageAsset(
             from: fileURL,
             documentID: activeDocumentID,
-            sourceDocumentURL: assetBaseURL
+            sourceDocumentURL: assetBaseURL,
+            referencedAssetFilenames: referencedAssetFilenames
         )
         assetBaseURL = staged.baseURL
         applyFormat("insertImage", value: staged.source)
+    }
+
+    private func referencedAssetFilenamesInEditor() async -> Set<String>? {
+        guard isEditorReady else { return nil }
+        return await withCheckedContinuation { continuation in
+            callEditorAPI("getReferencedAssetSources") { result in
+                guard let json = result as? String,
+                      json.utf8.count <= 2 * 1_024 * 1_024,
+                      let data = json.data(using: .utf8),
+                      let sources = try? JSONDecoder().decode([String].self, from: data)
+                else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: Set(
+                    sources.prefix(2_048).compactMap(DocumentAssetReference.filename(from:))
+                ))
+            }
+        }
     }
 
     func getPlainText(completion: @escaping (String) -> Void) {
@@ -1713,19 +1782,26 @@ final class EditorViewModel {
         callEditorAPI("clearFind")
     }
 
-    func latestSnapshot(for document: DocumentModel, preferEditorState: Bool = true) async -> DocumentFileStore.FileSnapshot {
-        if preferEditorState {
-            if let snapshot = await captureEditorSnapshot(document: document) {
-                document.syncFromEditor(snapshot: snapshot)
-                lastSnapshotCaptureFailed = false
-            } else if isEditorReady {
-                // The editor should have produced a snapshot; falling back to
-                // the last-synced state means live edits may not be captured.
-                print("Editor snapshot capture failed; using last-synced document state")
-                lastSnapshotCaptureFailed = true
-            }
+    func latestSnapshot(
+        for document: DocumentModel,
+        preferEditorState: Bool = true
+    ) async -> DocumentFileStore.FileSnapshot? {
+        guard preferEditorState else { return document.currentSnapshot() }
+
+        if isEditorReady, let snapshot = await captureEditorSnapshot(document: document) {
+            document.syncFromEditor(snapshot: snapshot)
+            lastSnapshotCaptureFailed = false
+            return document.currentSnapshot()
         }
-        return document.currentSnapshot()
+
+        if !isEditorReady, !document.hasUnsyncedEditorChanges {
+            lastSnapshotCaptureFailed = false
+            return document.currentSnapshot()
+        }
+
+        print("Editor snapshot capture failed; refusing to persist unverified state")
+        lastSnapshotCaptureFailed = true
+        return nil
     }
 
     // MARK: - Auto-Save
@@ -1755,13 +1831,16 @@ final class EditorViewModel {
 
     func flushPendingChanges(document: DocumentModel) {
         Task { @MainActor in
-            await flushBeforeDocumentChange(document: document)
+            _ = await flushBeforeDocumentChange(document: document)
         }
     }
 
     private func performScheduledPersistence(document: DocumentModel) async {
         guard document.isDirty else { return }
-        let snapshot = await latestSnapshot(for: document)
+        guard let snapshot = await latestSnapshot(for: document) else {
+            setPersistenceStatus("Auto-save paused — editor state is temporarily unavailable", isError: true)
+            return
+        }
 
         if let url = document.fileURL {
             let saved = await persistDocument(
@@ -1773,14 +1852,14 @@ final class EditorViewModel {
                 providedSnapshot: snapshot
             )
             if !saved {
-                await saveRecoveryDraft(document: document, providedSnapshot: snapshot)
+                _ = await saveRecoveryDraft(document: document, providedSnapshot: snapshot)
             }
         } else {
-            await saveRecoveryDraft(document: document, providedSnapshot: snapshot)
+            _ = await saveRecoveryDraft(document: document, providedSnapshot: snapshot)
         }
     }
 
-    private func flushBeforeDocumentChange(document: DocumentModel) async {
+    private func flushBeforeDocumentChange(document: DocumentModel) async -> Bool {
         persistenceTimer?.invalidate()
         persistenceTimer = nil
         if let persistenceTask {
@@ -1796,11 +1875,14 @@ final class EditorViewModel {
         grammarCheckTask?.cancel()
         grammarCheckTask = nil
 
-        guard document.isDirty else { return }
-        let snapshot = await latestSnapshot(for: document)
+        guard document.isDirty else { return true }
+        guard let snapshot = await latestSnapshot(for: document) else {
+            setPersistenceStatus("Could not capture the latest editor state", isError: true)
+            return false
+        }
 
         if let url = document.fileURL {
-            _ = await persistDocument(
+            let saved = await persistDocument(
                 document: document,
                 to: url,
                 captureLatestEditorState: false,
@@ -1808,8 +1890,10 @@ final class EditorViewModel {
                 actionName: "Flush",
                 providedSnapshot: snapshot
             )
+            if saved { return true }
+            return await saveRecoveryDraft(document: document, providedSnapshot: snapshot)
         } else {
-            await saveRecoveryDraft(document: document, providedSnapshot: snapshot)
+            return await saveRecoveryDraft(document: document, providedSnapshot: snapshot)
         }
     }
 
@@ -1824,18 +1908,23 @@ final class EditorViewModel {
         return now.timeIntervalSince(lastCheckpoint) >= autoSaveCheckpointInterval
     }
 
+    @discardableResult
     private func saveRecoveryDraft(
         document: DocumentModel,
         providedSnapshot: DocumentFileStore.FileSnapshot? = nil
-    ) async {
-        guard document.isDirty else { return }
+    ) async -> Bool {
+        guard document.isDirty else { return true }
 
         do {
             let snapshot: DocumentFileStore.FileSnapshot
             if let providedSnapshot {
                 snapshot = providedSnapshot
             } else {
-                snapshot = await latestSnapshot(for: document)
+                guard let captured = await latestSnapshot(for: document) else {
+                    setPersistenceStatus("Recovery draft failed: latest editor state is unavailable", isError: true)
+                    return false
+                }
+                snapshot = captured
             }
             _ = try await RecoveryDraftStore.shared.saveDraft(
                 snapshot: snapshot,
@@ -1846,8 +1935,10 @@ final class EditorViewModel {
             if document.fileURL == nil {
                 setPersistenceStatus("Recovery draft saved \(formattedStatusTime())", isError: false)
             }
+            return true
         } catch {
             setPersistenceStatus("Recovery draft failed: \(error.localizedDescription)", isError: true)
+            return false
         }
     }
 
@@ -1897,18 +1988,62 @@ final class EditorViewModel {
 
     func openFile(url: URL, document: DocumentModel) {
         Task { @MainActor in
-            await flushBeforeDocumentChange(document: document)
             do {
-                let snapshot = try await DocumentFileStore.shared.load(from: url)
-                document.load(snapshot: snapshot, from: url)
+                // Read and validate first so the existing document remains
+                // editable during slow-volume I/O. Freeze only for the short
+                // flush-and-commit transaction.
+                let candidate = try await DocumentFileStore.shared.load(from: url)
+                isDocumentTransitioning = true
+                setEditorEditable(false)
+                defer {
+                    setEditorEditable(true)
+                    isDocumentTransitioning = false
+                }
+
+                guard await flushBeforeDocumentChange(document: document) else {
+                    setPersistenceStatus("Open cancelled — current changes could not be secured", isError: true)
+                    return
+                }
+
+                let editorWasReady = isEditorReady
+                let securedCurrentSnapshot = document.currentSnapshot()
+                if editorWasReady {
+                    guard await loadSnapshotIntoReadyEditor(candidate) else {
+                        _ = await loadSnapshotIntoReadyEditor(securedCurrentSnapshot)
+                        setPersistenceStatus("Open failed: the editor rejected this document", isError: true)
+                        return
+                    }
+                }
+
+                document.load(snapshot: candidate, from: url)
                 assetBaseURL = DocumentFileStore.isNativeDocumentURL(url) ? url : nil
-                loadSnapshot(snapshot)
-                VersionStore.shared.saveVersion(filePath: url.path, snapshot: snapshot)
+                if editorWasReady {
+                    activeDocumentID = candidate.documentID
+                    pendingSnapshot = nil
+                    ambientReviewedBlockHashes = [:]
+                    clearGrammarCheckingState()
+                } else {
+                    // Startup URL events may arrive before WKWebView is ready.
+                    // Queue the already-validated snapshot for editorReady.
+                    loadSnapshot(candidate)
+                }
+                VersionStore.shared.saveVersion(filePath: url.path, snapshot: candidate)
                 setPersistenceStatus("Opened \(url.lastPathComponent)", isError: false)
             } catch {
                 setPersistenceStatus("Open failed: \(error.localizedDescription)", isError: true)
             }
         }
+    }
+
+    func prepareForTermination(document: DocumentModel) async -> Bool {
+        isDocumentTransitioning = true
+        setEditorEditable(false)
+        let secured = await flushBeforeDocumentChange(document: document)
+        if !secured {
+            setEditorEditable(true)
+            isDocumentTransitioning = false
+        }
+        return secured
     }
 
     func saveDocument(document: DocumentModel) {
@@ -1961,7 +2096,10 @@ final class EditorViewModel {
             guard response == .OK, let url = panel.url else { return }
             Task { @MainActor in
                 guard let self else { return }
-                let snapshot = await self.latestSnapshot(for: document)
+                guard let snapshot = await self.latestSnapshot(for: document) else {
+                    self.setPersistenceStatus("Export failed: latest editor state is unavailable", isError: true)
+                    return
+                }
                 do {
                     _ = try await DocumentFileStore.shared.save(
                         snapshot,
@@ -1988,10 +2126,14 @@ final class EditorViewModel {
         if let providedSnapshot {
             resolvedSnapshot = providedSnapshot
         } else {
-            resolvedSnapshot = await latestSnapshot(
+            guard let captured = await latestSnapshot(
                 for: document,
                 preferEditorState: captureLatestEditorState
-            )
+            ) else {
+                setPersistenceStatus("\(actionName) failed: latest editor state is unavailable", isError: true)
+                return false
+            }
+            resolvedSnapshot = captured
         }
         let request = document.makePersistenceRequest(snapshot: resolvedSnapshot)
         let sourceDocumentURL = assetBaseURL ?? document.fileURL
@@ -2032,14 +2174,7 @@ final class EditorViewModel {
                     )
                 }
             }
-            if lastSnapshotCaptureFailed {
-                setPersistenceStatus(
-                    "\(actionName) saved last-synced state \(formattedStatusTime()) — latest edits may be missing",
-                    isError: true
-                )
-            } else {
-                setPersistenceStatus("\(actionName) saved \(formattedStatusTime())", isError: false)
-            }
+            setPersistenceStatus("\(actionName) saved \(formattedStatusTime())", isError: false)
             return true
         } catch {
             setPersistenceStatus("\(actionName) failed: \(error.localizedDescription)", isError: true)
@@ -2299,6 +2434,7 @@ private enum EditorClipboardWriter {
 // MARK: - Notifications
 extension Notification.Name {
     static let editorContentUpdated = Notification.Name("editorContentUpdated")
+    static let editorDocumentMetricsUpdated = Notification.Name("editorDocumentMetricsUpdated")
     static let editorBecameReady = Notification.Name("editorBecameReady")
     static let grammarCheckingSettingsChanged = Notification.Name("grammarCheckingSettingsChanged")
     static let showSaveNamedVersion = Notification.Name("showSaveNamedVersion")

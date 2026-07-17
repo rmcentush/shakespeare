@@ -19,6 +19,7 @@ type SuggestionKindValue = typeof SuggestionKind[keyof typeof SuggestionKind];
 const CUSTOM_WORDS_KEY = 'proofreading.harper.customWords.v1';
 const IGNORED_LINTS_KEY = 'proofreading.harper.ignoredLints.v1';
 const IGNORED_AI_GRAMMAR_KEY = 'proofreading.aiGrammar.ignored.v1';
+let isApplyingPersistedUserState = false;
 
 export type ProofreadingDialect =
   | 'american'
@@ -195,8 +196,35 @@ function readStoredString(key: string): string | null {
 function writeStoredString(key: string, value: string) {
   try {
     window.localStorage.setItem(key, value);
+    if (!isApplyingPersistedUserState) {
+      sendToSwift('proofreadingUserStateChanged', {
+        json: JSON.stringify({
+          customWords: readStoredString(CUSTOM_WORDS_KEY) ?? '[]',
+          ignoredLints: readStoredString(IGNORED_LINTS_KEY) ?? '[]',
+          ignoredAIGrammar: readStoredString(IGNORED_AI_GRAMMAR_KEY) ?? '[]',
+        }),
+      });
+    }
   } catch {
     // Checking still works when WebKit storage is unavailable; only persistence is lost.
+  }
+}
+
+export function applyPersistedProofreadingUserState(json: string): boolean {
+  try {
+    const parsed = JSON.parse(json) as Record<string, unknown>;
+    const values = [parsed.customWords, parsed.ignoredLints, parsed.ignoredAIGrammar];
+    if (!values.every((value) => typeof value === 'string')) return false;
+
+    isApplyingPersistedUserState = true;
+    window.localStorage.setItem(CUSTOM_WORDS_KEY, parsed.customWords as string);
+    window.localStorage.setItem(IGNORED_LINTS_KEY, parsed.ignoredLints as string);
+    window.localStorage.setItem(IGNORED_AI_GRAMMAR_KEY, parsed.ignoredAIGrammar as string);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    isApplyingPersistedUserState = false;
   }
 }
 
@@ -301,8 +329,11 @@ function proofreadingPlugin(controller: ProofreadingController): Plugin<Proofrea
           return controller.handleEditorClick(event);
         },
         keydown(_view, event) {
-          if (event.key !== 'Escape') return false;
-          return controller.hidePopover();
+          if (event.key === 'Escape') return controller.hidePopover();
+          if (event.key !== 'F8') return false;
+          event.preventDefault();
+          controller.focusRelativeIssue(event.shiftKey ? -1 : 1);
+          return true;
         },
       },
     },
@@ -457,6 +488,42 @@ class ProofreadingController {
       await linter.clearIgnoredLints();
       this.clearBlockCache();
       this.scheduleCheck(0);
+    });
+  }
+
+  reloadUserState() {
+    this.runToken += 1;
+    const previousLinter = this.linterPromise;
+    this.linterPromise = null;
+    void previousLinter?.then((linter) => linter.dispose()).catch(() => {});
+    this.clearBlockCache();
+    this.dispatchIssues();
+    this.scheduleCheck(0);
+  }
+
+  focusRelativeIssue(delta: number) {
+    const issues = this.allIssues().sort((left, right) => left.from - right.from || left.to - right.to);
+    if (issues.length === 0) return;
+    const currentPosition = this.editor.state.selection.from;
+    let index = delta < 0
+      ? -1
+      : issues.findIndex((issue) => issue.from > currentPosition);
+    if (delta < 0) {
+      for (let candidate = issues.length - 1; candidate >= 0; candidate -= 1) {
+        if (issues[candidate].from < currentPosition) {
+          index = candidate;
+          break;
+        }
+      }
+    }
+    if (index < 0) index = delta < 0 ? issues.length - 1 : 0;
+    const issue = issues[index];
+    this.editor.commands.setTextSelection({ from: issue.from, to: issue.to });
+    this.editor.commands.focus();
+    window.requestAnimationFrame(() => {
+      const elements = document.querySelectorAll<HTMLElement>('[data-proofreading-id]');
+      const target = [...elements].find((element) => element.dataset.proofreadingId === issue.id);
+      if (target) this.showPopover(issue, target.getBoundingClientRect());
     });
   }
 
@@ -870,6 +937,7 @@ export interface ProofreadingControllerAPI {
   setOptions(spelling: boolean, grammar: boolean, dialect: string): void;
   setAIGrammarIssues(json: string): void;
   resetDictionary(): void;
+  reloadUserState(): void;
   grammarContextJSON(): string;
 }
 

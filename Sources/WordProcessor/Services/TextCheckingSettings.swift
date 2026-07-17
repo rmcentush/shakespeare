@@ -21,6 +21,7 @@ final class TextCheckingSettings {
         static let dialect = "proofreading.dialect"
         static let automaticSpellingCorrection = "textChecking.automaticSpellingCorrectionEnabled"
         static let automaticTextReplacement = "textChecking.automaticTextReplacementEnabled"
+        static let proofreadingUserState = "proofreading.userState.v1"
     }
 
     private let baselineAutomaticSpellingCorrectionEnabled: Bool
@@ -107,6 +108,7 @@ final class TextCheckingSettings {
         setEditorBoolOption(callback: "setSpellcheckEnabled", value: false)
         setEditorBoolOption(callback: "setAutocorrectEnabled", value: automaticSpellingCorrectionEnabled)
         applyProofreadingOptions()
+        restoreProofreadingUserState()
 
         if !didApplyAutomaticCorrectionToCurrentWebView,
            automaticSpellingCorrectionEnabled != baselineAutomaticSpellingCorrectionEnabled {
@@ -123,8 +125,35 @@ final class TextCheckingSettings {
     }
 
     func resetDictionary() {
+        UserDefaults.standard.removeObject(forKey: Keys.proofreadingUserState)
         webView?.evaluateJavaScript("window.editorAPI?.resetProofreadingDictionary()")
         NotificationCenter.default.post(name: .grammarCheckingSettingsChanged, object: self)
+    }
+
+    func persistProofreadingUserState(_ json: String) {
+        guard Self.validProofreadingUserState(json) else { return }
+        UserDefaults.standard.set(json, forKey: Keys.proofreadingUserState)
+    }
+
+    private func restoreProofreadingUserState() {
+        guard let json = UserDefaults.standard.string(forKey: Keys.proofreadingUserState),
+              Self.validProofreadingUserState(json),
+              let data = try? JSONSerialization.data(withJSONObject: json, options: .fragmentsAllowed),
+              let quotedJSON = String(data: data, encoding: .utf8)
+        else { return }
+        webView?.evaluateJavaScript("window.editorAPI?.setProofreadingUserState(\(quotedJSON))")
+    }
+
+    private static func validProofreadingUserState(_ json: String) -> Bool {
+        guard json.utf8.count <= 256 * 1_024,
+              let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        let keys = ["customWords", "ignoredLints", "ignoredAIGrammar"]
+        return keys.allSatisfy { key in
+            guard let value = object[key] as? String, value.utf8.count <= 128 * 1_024 else { return false }
+            return (try? JSONSerialization.jsonObject(with: Data(value.utf8))) != nil
+        }
     }
 
     private func applyProofreadingOptions() {

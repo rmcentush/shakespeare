@@ -199,13 +199,26 @@ struct VersionHistoryView: View {
         .contentShape(Rectangle())
         .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
         .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.15)) {
-                if selectedVersionID == version.id {
-                    selectedVersionID = nil
-                } else {
-                    selectedVersionID = version.id
-                    renamingVersionID = nil
-                }
+            toggleVersionSelection(version)
+        }
+        .focusable()
+        .onKeyPress(.return) {
+            toggleVersionSelection(version)
+            return .handled
+        }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            toggleVersionSelection(version)
+        }
+    }
+
+    private func toggleVersionSelection(_ version: VersionStore.VersionSummary) {
+        withAnimation(.easeInOut(duration: 0.15)) {
+            if selectedVersionID == version.id {
+                selectedVersionID = nil
+            } else {
+                selectedVersionID = version.id
+                renamingVersionID = nil
             }
         }
     }
@@ -233,7 +246,7 @@ struct VersionHistoryView: View {
     private func restoreVersion(_ summary: VersionStore.VersionSummary) {
         Task { @MainActor in
             guard let version = await VersionStore.shared.version(id: summary.id) else { return }
-            let currentSnapshot = await editorViewModel.latestSnapshot(for: document)
+            guard let currentSnapshot = await editorViewModel.latestSnapshot(for: document) else { return }
 
             // Save current state as a version first (so nothing is lost)
             if let url = document.fileURL {
@@ -267,7 +280,7 @@ struct VersionHistoryView: View {
         guard !name.isEmpty else { return }
 
         Task {
-            let snapshot = await editorViewModel.latestSnapshot(for: document)
+            guard let snapshot = await editorViewModel.latestSnapshot(for: document) else { return }
             VersionStore.shared.saveVersion(filePath: url.path, snapshot: snapshot, name: name)
             refreshVersions()
         }

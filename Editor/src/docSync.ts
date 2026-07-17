@@ -33,6 +33,7 @@ let cachedDocumentTextSnapshot: DocumentTextSnapshot | null = null;
 let cachedSerializedHTMLRevision = -1;
 let cachedSerializedHTML = '';
 let lastSentContentUpdate: { html: string; text: string } | null = null;
+let lastSentMetricsRevision = -1;
 let lastSentSelectionState: EditorSelectionState | null = null;
 let preservedTextSelection: PreservedTextSelection | null = null;
 const blockTextCache = new WeakMap<object, { text: string; words: number }>();
@@ -112,6 +113,7 @@ export function resetDocSyncState(): void {
   invalidateDerivedDocumentState();
   revisionMappings.length = 0;
   lastSentContentUpdate = null;
+  lastSentMetricsRevision = -1;
   lastSentSelectionState = null;
   preservedTextSelection = null;
 }
@@ -401,6 +403,19 @@ function selectionStatesEqual(
 
 export function emitContentUpdate(editor: Editor) {
   const snapshot = getDocumentTextSnapshot(editor);
+  // Large documents remain responsive by keeping the frequent bridge message
+  // bounded. Full HTML/JSON/text is captured only at persistence or an explicit
+  // feature request.
+  if (snapshot.characters > 512_000) {
+    if (lastSentMetricsRevision === snapshot.revision) return;
+    lastSentMetricsRevision = snapshot.revision;
+    sendToSwift('documentMetrics', {
+      revision: snapshot.revision,
+      words: snapshot.words,
+      characters: snapshot.characters,
+    });
+    return;
+  }
   const html = serializeDocumentHTML(editor);
 
   if (

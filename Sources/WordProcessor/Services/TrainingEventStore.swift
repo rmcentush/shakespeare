@@ -534,13 +534,36 @@ final class TrainingEventStore: @unchecked Sendable {
     func recentRejectedDecisions(limit: Int = 10) -> [DecisionSummary] {
         lock.lock()
         defer { lock.unlock() }
-        return allEventsUnlocked()
-            .filter {
-                $0.eventType == "edit_decision"
-                    && ($0.decision == "reject" || $0.decision == "dismiss")
+        let events = allEventsUnlocked()
+        let outcomes = events.reduce(into: [String: Event]()) { result, event in
+            guard event.eventType == "edit_outcome", let parent = event.parentEventID else { return }
+            if let existing = result[parent], existing.recordedAt > event.recordedAt { return }
+            result[parent] = event
+        }
+        return events
+            .compactMap { action -> DecisionSummary? in
+                guard action.eventType == "edit_decision",
+                      action.decision == "reject" || action.decision == "dismiss",
+                      let outcome = outcomes[action.id],
+                      ["rejected_unchanged", "rejected_rewritten"].contains(outcome.outcome ?? "")
+                else { return nil }
+                return DecisionSummary(
+                    id: action.id,
+                    decision: action.decision,
+                    source: action.source,
+                    kind: action.learningCategory.isEmpty ? action.operationKind : action.learningCategory,
+                    originalText: action.originalText,
+                    replacementText: action.proposedText,
+                    finalText: outcome.finalText,
+                    surroundingSentence: action.surroundingText,
+                    groupID: action.groupID,
+                    rationale: action.rationale,
+                    outcome: outcome.outcome,
+                    confidence: outcome.confidence,
+                    timestamp: outcome.recordedAt
+                )
             }
             .suffix(limit)
-            .map(Self.summary(from:))
     }
 
     func markProcessed(ids: [String]) throws {
@@ -549,10 +572,21 @@ final class TrainingEventStore: @unchecked Sendable {
         try ensureStorageUnlocked()
         var processed = processedIDsUnlocked()
         ids.forEach { processed.insert($0) }
-        let data = try encoder.encode(Array(processed).sorted())
-        try data.write(to: processedIDsURL, options: .atomic)
-        try Self.protectFile(at: processedIDsURL)
+        try writeProcessedIDsUnlocked(processed)
         try compactIfNeededUnlocked()
+    }
+
+    func processedIDsSnapshot() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return Array(processedIDsUnlocked()).sorted()
+    }
+
+    func restoreProcessedIDs(_ ids: [String]) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try ensureStorageUnlocked()
+        try writeProcessedIDsUnlocked(Set(ids))
     }
 
     func learnedPreferences() -> String {
@@ -642,6 +676,12 @@ final class TrainingEventStore: @unchecked Sendable {
               let ids = try? decoder.decode([String].self, from: data)
         else { return [] }
         return Set(ids)
+    }
+
+    private func writeProcessedIDsUnlocked(_ ids: Set<String>) throws {
+        let data = try encoder.encode(Array(ids).sorted())
+        try data.write(to: processedIDsURL, options: .atomic)
+        try Self.protectFile(at: processedIDsURL)
     }
 
     private func allEventsUnlocked() -> [Event] {

@@ -1,4 +1,4 @@
-.PHONY: all build run clean editor editor-tests typecheck privacy-check release-script-check website-check check swift install update package deploy-site release evals document-asset-evals document-package-safety-evals storage-layout-evals style-context-evals chat-context-evals style-profile-evals ledger-retention-evals writing-quality-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
+.PHONY: all build run clean editor editor-tests typecheck privacy-check release-script-check website-check check swift install update package deploy-site release evals document-asset-evals document-package-safety-evals canonical-document-evals storage-layout-evals style-context-evals chat-context-evals style-profile-evals ledger-retention-evals writing-quality-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 all: build
 
@@ -51,6 +51,10 @@ document-package-safety-evals:
 	swiftc Sources/WordProcessor/Services/PackageFileSafety.swift scripts/document-package-safety-evals.swift -o /tmp/document-package-safety-evals
 	/tmp/document-package-safety-evals
 
+canonical-document-evals:
+	swiftc Sources/WordProcessor/Services/CanonicalDocumentValidator.swift scripts/canonical-document-evals.swift -o /tmp/canonical-document-evals
+	/tmp/canonical-document-evals
+
 api-key-store-evals:
 	swiftc Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/APIKeyStore.swift scripts/api-key-store-evals.swift -o /tmp/api-key-store-evals
 	/tmp/api-key-store-evals
@@ -100,7 +104,7 @@ focus-mode-escape-evals:
 	swiftc -parse-as-library Sources/WordProcessor/Views/FocusModeEscapeMonitor.swift scripts/focus-mode-escape-evals.swift -o /tmp/focus-mode-escape-evals
 	/tmp/focus-mode-escape-evals
 
-evals: release-script-check editor-tests document-asset-evals document-package-safety-evals storage-layout-evals style-context-evals chat-context-evals style-profile-evals ledger-retention-evals writing-quality-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
+evals: release-script-check editor-tests document-asset-evals document-package-safety-evals canonical-document-evals storage-layout-evals style-context-evals chat-context-evals style-profile-evals ledger-retention-evals writing-quality-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 # Build release
 build: copy-assets

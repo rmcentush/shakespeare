@@ -12,6 +12,7 @@ final class AssistantChatViewModel {
     @ObservationIgnored private let apiService = LanguageModelService(purpose: .chat)
     @ObservationIgnored private var apiMessages: [[String: Any]] = []
     @ObservationIgnored private var requestTask: Task<Void, Never>?
+    @ObservationIgnored private var requestGeneration: UInt64 = 0
 
     private static let maxApiMessages = 12
     private static let maxVisibleMessages = 60
@@ -43,18 +44,22 @@ final class AssistantChatViewModel {
         guard !trimmed.isEmpty else { return }
 
         cancelStreaming(markCancelledMessage: false)
+        requestGeneration &+= 1
+        let generation = requestGeneration
         let selection = quotedSelection?.trimmingCharacters(in: .whitespacesAndNewlines)
 
         requestTask = Task { [weak self] in
             await self?.runSendMessage(
                 trimmed,
                 quotedSelection: (selection?.isEmpty ?? true) ? nil : selection,
-                documentContent: documentContent
+                documentContent: documentContent,
+                generation: generation
             )
         }
     }
 
     func cancelStreaming(markCancelledMessage: Bool = true) {
+        requestGeneration &+= 1
         requestTask?.cancel()
         requestTask = nil
         isStreaming = false
@@ -73,8 +78,10 @@ final class AssistantChatViewModel {
     private func runSendMessage(
         _ text: String,
         quotedSelection: String?,
-        documentContent: String
+        documentContent: String,
+        generation: UInt64
     ) async {
+        guard generation == requestGeneration else { return }
         messages.append(ChatMessage(role: .user, content: text, quotedSelection: quotedSelection))
 
         var apiText = text
@@ -87,17 +94,20 @@ final class AssistantChatViewModel {
             \(text)
             """
         }
-        apiMessages.append(["role": "user", "content": apiText])
-        trimAPIHistory()
+        var requestMessages = apiMessages
+        requestMessages.append(["role": "user", "content": apiText])
+        Self.trimAPIHistory(&requestMessages)
 
         isStreaming = true
         let assistantMessageID = appendVisibleMessage(role: .assistant, content: "")
         streamingMessageID = assistantMessageID
 
         defer {
-            isStreaming = false
-            streamingMessageID = nil
-            requestTask = nil
+            if generation == requestGeneration {
+                isStreaming = false
+                streamingMessageID = nil
+                requestTask = nil
+            }
             trimVisibleMessages()
         }
 
@@ -113,11 +123,12 @@ final class AssistantChatViewModel {
 
         do {
             for try await chunk in apiService.streamMessage(
-                messages: apiMessages,
+                messages: requestMessages,
                 systemPrompt: systemPrompt,
                 temperature: 0.2,
                 maxTokens: 1_800
             ) {
+                guard generation == requestGeneration else { throw CancellationError() }
                 switch chunk {
                 case .text(let text):
                     fullText += text
@@ -148,12 +159,16 @@ final class AssistantChatViewModel {
 
             let renderedText = Self.appendingSources(to: fullText, citations: citations)
             updateAssistantMessage(id: assistantMessageID, content: renderedText)
-            apiMessages.append(["role": "assistant", "content": renderedText])
-            trimAPIHistory()
+            guard generation == requestGeneration else { return }
+            requestMessages.append(["role": "assistant", "content": renderedText])
+            Self.trimAPIHistory(&requestMessages)
+            apiMessages = requestMessages
         } catch is CancellationError {
             updateAssistantMessage(
                 id: assistantMessageID,
-                content: fullText.isEmpty ? "Request cancelled." : fullText
+                content: fullText.isEmpty
+                    ? "Request cancelled."
+                    : fullText + "\n\n_Response interrupted._"
             )
         } catch {
             let errorText = "Error: \(error.localizedDescription)"
@@ -226,15 +241,20 @@ final class AssistantChatViewModel {
         messages.removeFirst(excess)
     }
 
-    private func trimAPIHistory() {
-        while apiMessages.count > Self.maxApiMessages ||
-            apiHistoryCharacterCount() > Self.maxAPIHistoryCharacters {
-            apiMessages.removeFirst()
+    private static func trimAPIHistory(_ messages: inout [[String: Any]]) {
+        while messages.count > maxApiMessages ||
+            apiHistoryCharacterCount(messages) > maxAPIHistoryCharacters {
+            // Keep complete user/assistant turns. If the oldest entry is a user
+            // message and has a paired assistant response, remove both.
+            messages.removeFirst()
+            if messages.first?["role"] as? String == "assistant" {
+                messages.removeFirst()
+            }
         }
     }
 
-    private func apiHistoryCharacterCount() -> Int {
-        apiMessages.reduce(into: 0) { total, message in
+    private static func apiHistoryCharacterCount(_ messages: [[String: Any]]) -> Int {
+        messages.reduce(into: 0) { total, message in
             total += Self.approximateSize(of: message)
         }
     }

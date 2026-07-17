@@ -81,6 +81,8 @@ function closestReplacementRange(ed: Editor, edit: PendingEdit): SearchMatch {
   }
 
   const matches = findTextInDoc(ed.state.doc, edit.replacementText);
+  const exactStart = matches.find((match) => match.from === edit.from);
+  if (exactStart) return exactStart;
   return matches.reduce<SearchMatch | null>((closest, match) => {
     if (!closest) return match;
     return Math.abs(match.from - edit.from) < Math.abs(closest.from - edit.from)
@@ -121,10 +123,18 @@ export function acknowledgePersonalizationOutcomes(actionIds: string[]) {
 
 export function collectPersonalizationOutcomes(ed: Editor): PersonalizationOutcomeSnapshot[] {
   return Array.from(trackedPersonalizationDecisions.values()).map((tracked) => {
-    // Map the outside edges so a writer replacing the entire tracked passage
-    // still yields the replacement text instead of a collapsed range.
-    const mappedFrom = mapPositionFromRevision(tracked.revision, tracked.from, -1);
-    const mappedTo = mapPositionFromRevision(tracked.revision, tracked.to, 1);
+    // Prefer inward-biased edges so typing immediately before/after a decision
+    // cannot masquerade as a rewrite. A transaction that replaces the whole
+    // tracked span reverses those anchors, in which case the outward pair is
+    // the actual replacement range.
+    const inwardFrom = mapPositionFromRevision(tracked.revision, tracked.from, 1);
+    const inwardTo = mapPositionFromRevision(tracked.revision, tracked.to, -1);
+    const mappedFrom = inwardFrom !== null && inwardTo !== null && inwardTo >= inwardFrom
+      ? inwardFrom
+      : mapPositionFromRevision(tracked.revision, tracked.from, -1);
+    const mappedTo = inwardFrom !== null && inwardTo !== null && inwardTo >= inwardFrom
+      ? inwardTo
+      : mapPositionFromRevision(tracked.revision, tracked.to, 1);
     if (mappedFrom === null || mappedTo === null || mappedTo < mappedFrom) {
       return {
         actionId: tracked.actionId,

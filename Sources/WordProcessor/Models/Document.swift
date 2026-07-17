@@ -21,6 +21,7 @@ final class DocumentModel: @unchecked Sendable {
     var schemaVersion: Int = DocumentFileStore.currentSchemaVersion
     var createdAt: Date = Date()
     var modifiedAt: Date = Date()
+    private(set) var hasUnsyncedEditorChanges: Bool = false
 
     private static let recentFilesKey = "recentFileBookmarks"
     private static let maxRecentFiles = 10
@@ -49,6 +50,7 @@ final class DocumentModel: @unchecked Sendable {
         contentRevision &+= 1
         modifiedAt = Date()
         isDirty = true
+        hasUnsyncedEditorChanges = true
     }
 
     @discardableResult
@@ -64,6 +66,7 @@ final class DocumentModel: @unchecked Sendable {
             contentRevision &+= 1
             isDirty = true
         }
+        hasUnsyncedEditorChanges = false
         return changed
     }
 
@@ -77,10 +80,20 @@ final class DocumentModel: @unchecked Sendable {
         modifiedAt = Date()
 
         if changed {
+            // A complete HTML snapshot is a safe persistence fallback if the
+            // renderer becomes unavailable. Never pair it with older JSON.
+            canonicalJSONContent = nil
             contentRevision &+= 1
             isDirty = true
         }
+        hasUnsyncedEditorChanges = false
         return changed
+    }
+
+    func syncEditorMetrics(words: Int, characters: Int) {
+        wordCount = max(0, words)
+        characterCount = max(0, characters)
+        markEditorMutation()
     }
 
     func markSaved(url: URL, request: PersistenceRequest) {
@@ -166,6 +179,7 @@ final class DocumentModel: @unchecked Sendable {
         if resetRevision {
             contentRevision = 0
         }
+        hasUnsyncedEditorChanges = false
     }
 
     // MARK: - Recent Files
