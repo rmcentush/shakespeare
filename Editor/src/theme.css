@@ -533,7 +533,7 @@ body {
   border-radius: 2px;
 }
 
-/* Pending edit decorations (Cursor-like diff review) */
+/* Pending edit diff-review decorations */
 .pending-edit-delete {
   text-decoration: line-through;
   color: #b5484e;

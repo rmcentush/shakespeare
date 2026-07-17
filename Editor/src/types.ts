@@ -142,7 +142,7 @@ export interface EditContextSnapshot {
   placeholders: EditContextPlaceholder[];
 }
 
-// --- Pending Edits (Cursor-like diff review) ---
+// --- Pending edit diff review ---
 export type PendingEditKind = 'selection' | 'insert' | 'findReplace' | 'delete';
 export type PendingEditStatus = 'pending' | 'conflicted';
 
