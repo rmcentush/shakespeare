@@ -62,7 +62,7 @@ body {
   position: absolute;
   z-index: 2;
   top: clamp(40px, 8vh, 82px);
-  left: 52.4%;
+  left: 50%;
   width: min(720px, calc(100vw - 44px));
   padding: clamp(17px, 2.3vh, 23px) clamp(24px, 3.5vw, 38px) clamp(18px, 2.5vh, 25px);
   border: 1px solid rgba(91, 66, 39, 0.2);
@@ -166,10 +166,6 @@ body {
 .download:focus-visible {
   outline: 3px solid #f4dcae;
   outline-offset: 5px;
-}
-
-@media (orientation: portrait) {
-  .message { left: 50%; }
 }
 
 @media (max-width: 700px) and (orientation: portrait) {
