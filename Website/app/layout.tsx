@@ -13,7 +13,7 @@ const sans = Manrope({
   subsets: ["latin"],
 });
 
-const title = "Shakespeare — Write like yourself, only sharper";
+const title = "Shakespeare — Write like yourself.";
 const description =
   "A calm, local-first writing app for macOS with thoughtful revision, private style learning, and source-backed research.";
 

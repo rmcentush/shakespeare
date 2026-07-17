@@ -19,12 +19,15 @@ test("renders the Shakespeare download page", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>Shakespeare — Write like yourself, only sharper<\/title>/i);
+  assert.match(html, /<title>Shakespeare — Write like yourself\.<\/title>/i);
   assert.match(html, /Write like yourself/);
   assert.match(html, /Download for Mac/);
   assert.match(html, /Shakespeare-latest\.zip/);
+  assert.match(html, /shakespeare-editor\.jpg/);
+  assert.match(html, /Actual app/);
   assert.match(html, /macOS 14\+/);
   assert.match(html, /https:\/\/writeshakespeare\.com\//);
+  assert.doesNotMatch(html, /github\.com|>Source<|>GitHub</i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
 
