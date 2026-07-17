@@ -1,9 +1,7 @@
 import Foundation
 
 final class LanguageModelService: Sendable {
-    static let maximumRetryCount = 1
-    static let maximumRetryAfterSeconds = 5.0
-    static let maximumFallbackModelCount = 3
+    static let maximumTransportRetryCount = 1
 
     private let purpose: InferencePurpose
     private let modelOverride: String?
@@ -45,21 +43,19 @@ final class LanguageModelService: Sendable {
                     return
                 }
 
+                let body = Self.requestBody(
+                    runtime: runtime,
+                    messages: messages,
+                    systemPrompt: systemPrompt,
+                    outputFormat: outputFormat,
+                    temperature: temperature,
+                    maxTokens: maxTokens
+                )
                 var attempt = 0
-                let maxRetries = Self.maximumRetryCount
 
                 while true {
                     var hasYieldedChunk = false
                     do {
-                        let attemptRuntime = Self.runtimeForAttempt(runtime, attempt: attempt)
-                        let body = Self.requestBody(
-                            runtime: attemptRuntime,
-                            messages: messages,
-                            systemPrompt: systemPrompt,
-                            outputFormat: outputFormat,
-                            temperature: temperature,
-                            maxTokens: maxTokens
-                        )
                         var request = URLRequest(url: runtime.messagesURL)
                         request.httpMethod = "POST"
                         request.timeoutInterval = 60
@@ -75,11 +71,6 @@ final class LanguageModelService: Sendable {
                         }
 
                         guard httpResponse.statusCode == 200 else {
-                            if Self.isRetryableStatus(httpResponse.statusCode), attempt < maxRetries {
-                                attempt += 1
-                                try await Self.backoff(attempt: attempt, response: httpResponse)
-                                continue
-                            }
                             var errorBody = ""
                             for try await line in bytes.lines { errorBody += line }
                             continuation.finish(throwing: APIError.httpError(httpResponse.statusCode, errorBody))
@@ -124,10 +115,12 @@ final class LanguageModelService: Sendable {
                         continuation.finish(throwing: CancellationError())
                         return
                     } catch {
-                        if !hasYieldedChunk, attempt < maxRetries, Self.isRetryableTransportError(error) {
+                        if !hasYieldedChunk,
+                           attempt < Self.maximumTransportRetryCount,
+                           Self.isRetryableTransportError(error) {
                             attempt += 1
                             do {
-                                try await Self.backoff(attempt: attempt, response: nil)
+                                try await Self.backoff(attempt: attempt)
                                 continue
                             } catch {
                                 continuation.finish(throwing: CancellationError())
@@ -173,9 +166,8 @@ final class LanguageModelService: Sendable {
             "stream": true,
             "messages": requestMessages,
         ]
-        let fallbackModels = Array(runtime.fallbackModels.prefix(maximumFallbackModelCount))
-        if !fallbackModels.isEmpty {
-            body["models"] = fallbackModels
+        if !runtime.fallbackModels.isEmpty {
+            body["models"] = runtime.fallbackModels
         }
         if runtime.supportsTemperature, let temperature { body["temperature"] = temperature }
         if runtime.webSearchEnabled {
@@ -205,33 +197,6 @@ final class LanguageModelService: Sendable {
         }
         body["provider"] = provider
         return body
-    }
-
-    /// Each provider request stays compact, while a retry continues with models
-    /// that were not in the first request instead of paying to repeat the same
-    /// waterfall. A single-model runtime still retries that model once.
-    static func runtimeForAttempt(
-        _ runtime: InferenceRuntime,
-        attempt: Int
-    ) -> InferenceRuntime {
-        guard attempt > 0 else { return runtime }
-        let allModels = [runtime.model] + runtime.fallbackModels
-        let groupSize = maximumFallbackModelCount + 1
-        let start = attempt * groupSize
-        guard start < allModels.count else { return runtime }
-        let group = Array(allModels.dropFirst(start).prefix(groupSize))
-        guard let model = group.first else { return runtime }
-        return InferenceRuntime(
-            providerID: runtime.providerID,
-            providerName: runtime.providerName,
-            messagesURL: runtime.messagesURL,
-            apiKeyService: runtime.apiKeyService,
-            model: model,
-            fallbackModels: Array(group.dropFirst()),
-            webSearchEnabled: runtime.webSearchEnabled,
-            supportsTemperature: InferenceSettings.modelOption(for: model)?.supportsTemperature
-                ?? runtime.supportsTemperature
-        )
     }
 
     private static func openRouterContent(from value: Any) -> Any {
@@ -335,10 +300,6 @@ final class LanguageModelService: Sendable {
         return URL(string: url)?.host ?? "Source"
     }
 
-    private static func isRetryableStatus(_ code: Int) -> Bool {
-        code == 429 || code == 529 || (500...599).contains(code)
-    }
-
     private static func isRetryableTransportError(_ error: Error) -> Bool {
         guard let urlError = error as? URLError else { return false }
         switch urlError.code {
@@ -350,12 +311,8 @@ final class LanguageModelService: Sendable {
         }
     }
 
-    private static func backoff(attempt: Int, response: HTTPURLResponse?) async throws {
-        var seconds = min(pow(2.0, Double(attempt - 1)), 8.0) + Double.random(in: 0...0.5)
-        if let retryAfter = response?.value(forHTTPHeaderField: "retry-after"),
-           let parsed = Double(retryAfter) {
-            seconds = max(seconds, min(parsed, maximumRetryAfterSeconds))
-        }
+    private static func backoff(attempt: Int) async throws {
+        let seconds = min(pow(2.0, Double(attempt - 1)), 8.0) + Double.random(in: 0...0.5)
         try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 

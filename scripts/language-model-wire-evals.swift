@@ -118,9 +118,6 @@ struct LanguageModelWireEvals {
                 modelOverride: option.id
             )
             let expectedFallbacks = allModelIDs.filter { $0 != option.id }
-            let expectedWireFallbacks = Array(
-                expectedFallbacks.prefix(LanguageModelService.maximumFallbackModelCount)
-            )
             precondition(selectedRuntime.model == option.id)
             precondition(selectedRuntime.fallbackModels == expectedFallbacks)
             let selectedBody = LanguageModelService.requestBody(
@@ -132,8 +129,7 @@ struct LanguageModelWireEvals {
                 maxTokens: 512
             )
             precondition(selectedBody["model"] as? String == option.id)
-            precondition(selectedBody["models"] as? [String] == expectedWireFallbacks)
-            precondition(expectedWireFallbacks.count <= 3)
+            precondition(selectedBody["models"] as? [String] == expectedFallbacks)
         }
 
         let customRuntime = InferenceSettings.runtime(
@@ -181,15 +177,6 @@ struct LanguageModelWireEvals {
     }
 
     private static func boundsClientRetriesAroundProviderWaterfall() {
-        precondition(LanguageModelService.maximumRetryCount == 1)
-        precondition(LanguageModelService.maximumRetryAfterSeconds <= 5)
-
-        let runtime = InferenceSettings.runtime(purpose: .assistant)
-        let retryRuntime = LanguageModelService.runtimeForAttempt(runtime, attempt: 1)
-        let allModels = [runtime.model] + runtime.fallbackModels
-        let retryStart = LanguageModelService.maximumFallbackModelCount + 1
-        precondition(retryRuntime.model == allModels[retryStart])
-        precondition(retryRuntime.fallbackModels == Array(allModels.dropFirst(retryStart + 1)))
-        precondition(!([runtime.model] + Array(runtime.fallbackModels.prefix(3))).contains(retryRuntime.model))
+        precondition(LanguageModelService.maximumTransportRetryCount == 1)
     }
 }

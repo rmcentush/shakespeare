@@ -718,12 +718,12 @@ private struct AssistantMessageContent: View {
                         ProgressView()
                             .controlSize(.small)
 
-                        Text("Thinking…")
+                        Text("Words, words, words…")
                             .font(AssistantChatFont.message)
                             .foregroundStyle(.secondary)
                     }
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Shakespeare is thinking")
+                    .accessibilityLabel("Shakespeare is preparing a response")
                 } else {
                     Text(verbatim: content)
                         .foregroundStyle(.primary)
