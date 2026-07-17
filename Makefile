@@ -1,10 +1,13 @@
-.PHONY: all build run clean editor editor-tests typecheck privacy-check release-script-check swift install update package evals document-asset-evals storage-layout-evals style-context-evals style-profile-evals writing-quality-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
+.PHONY: all build run clean editor editor-tests typecheck privacy-check release-script-check website-check check swift install update package deploy-site release evals document-asset-evals storage-layout-evals style-context-evals style-profile-evals writing-quality-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
 
 all: build
 
 # Install exact editor dependencies only when the lockfile changes.
 Editor/node_modules/.package-lock.json: Editor/package.json Editor/package-lock.json
 	cd Editor && npm ci
+
+Website/node_modules/.package-lock.json: Website/package.json Website/package-lock.json
+	cd Website && npm ci
 
 # Build TipTap editor bundle
 editor: Editor/node_modules/.package-lock.json
@@ -20,7 +23,13 @@ privacy-check:
 	bash scripts/verify-source-privacy.sh
 
 release-script-check:
-	bash -n scripts/verify-release-archive.sh scripts/install-release-archive.sh scripts/update-from-public-download.sh scripts/stage-website-download.sh
+	bash -n scripts/verify-release-archive.sh scripts/verify-public-release.sh scripts/install-release-archive.sh scripts/update-from-public-download.sh scripts/release.sh
+
+website-check: Website/node_modules/.package-lock.json
+	cd Website && npm run build
+
+# Full deterministic validation. This replaces automatic GitHub-hosted CI.
+check: privacy-check typecheck evals website-check build
 
 # Copy editor bundles to Swift resources
 copy-assets: editor
@@ -99,7 +108,15 @@ install: package
 update:
 	bash scripts/update-from-public-download.sh
 
+# Validate the site and deploy it to Cloudflare. R2 releases stay independent.
+deploy-site: Website/node_modules/.package-lock.json
+	cd Website && npm run build && npx wrangler deploy --config wrangler.jsonc
+
+# Build, sign, notarize, verify, and publish one release from this Mac.
+release:
+	bash scripts/release.sh
+
 # Clean everything
 clean:
-	rm -rf .build Editor/node_modules Editor/dist
+	rm -rf .build Editor/node_modules Editor/dist Website/node_modules
 	rm -f Sources/WordProcessor/Resources/editor.js Sources/WordProcessor/Resources/editor.css Sources/WordProcessor/Resources/harper-runtime.js Sources/WordProcessor/Resources/harper-wasm-data.js Sources/WordProcessor/Resources/THIRD_PARTY_NOTICES.txt

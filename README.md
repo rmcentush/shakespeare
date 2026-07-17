@@ -38,7 +38,7 @@ Paid AI grammar while typing is off by default; local spelling stays on and a th
 
 ## Update or roll back
 
-To update, quit Shakespeare and replace the copy in **Applications** with the newer release. Documents and internal app data live outside the app bundle and remain in place. To roll back, install an earlier ZIP from the [release history](https://github.com/rmcentush/shakespeare/releases); document packages remain compatible within the current schema version.
+To update, quit Shakespeare and replace the copy in **Applications** with the newer release. Documents and internal app data live outside the app bundle and remain in place. Keep the previous ZIP if you need a local rollback; document packages remain compatible within the current schema version.
 
 ## Personal style
 
@@ -72,6 +72,7 @@ Important commands:
 | Command | Purpose |
 |---|---|
 | `make run` | Build and run a debug app |
+| `make check` | Run the complete local validation suite without hosted CI |
 | `make install` | Build, package, and copy the app to `/Applications` |
 | `make update` | Install the exact signed public download after checksum and notarization verification |
 | `make package` | Create one universal app under `.build/package/` |
@@ -80,6 +81,8 @@ Important commands:
 | `make evals` | Run edit, storage, style, connection, privacy, and wire-contract evals |
 | `make live-writing-evals` | Optionally run three capped OpenRouter quality checks using `OPENROUTER_API_KEY` |
 | `make build` | Build the release binary |
+| `make deploy-site` | Validate and deploy the site to Cloudflare Workers |
+| `make release` | Sign, notarize, publish to Cloudflare R2, verify, and tag a release |
 | `make clean` | Remove generated build artifacts |
 
 ## Repository structure
@@ -98,4 +101,4 @@ shakespeare/
 
 The TypeScript editor and Swift app communicate through one `WKScriptMessageHandler` named `editorBridge`. Release automation builds a universal, hardened-runtime app, signs and notarizes it, and publishes a ZIP containing only `Shakespeare.app`.
 
-The release job stages one notarized ZIP for both the website and GitHub, then downloads the public URL and proves its SHA-256 matches that source artifact. `make update` uses the same public ZIP and checksum, verifies signing, notarization, architecture, and privacy, and only then replaces the local app.
+GitHub Actions is intentionally unused. Cloudflare Workers Builds deploys the tiny website, Cloudflare R2 keeps versioned release archives, and `make release` performs the Apple-only build and notarization locally before atomically advancing the public download. It then downloads the live URL and proves its SHA-256 matches the signed source artifact. See [Releasing](docs/RELEASING.md).

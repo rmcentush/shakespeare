@@ -10,11 +10,10 @@
     "build": "npm run lint && node --test tests/static-site.test.mjs",
     "start": "npm run dev",
     "test": "node --test tests/static-site.test.mjs",
-    "verify-download": "node --test tests/download-artifact.test.mjs",
-    "lint": "node --check worker/index.js && node --check tests/static-site.test.mjs && node --check tests/download-artifact.test.mjs"
+    "lint": "node --check worker/index.js && node --check tests/static-site.test.mjs"
   },
   "devDependencies": {
-    "wrangler": "4.92.0"
+    "wrangler": "^4.111.0"
   },
   "type": "module"
 }

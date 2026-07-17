@@ -6,8 +6,11 @@ Canonical contributor guide for this repository.
 
 ```bash
 make run          # Build editor + Swift debug app and run
+make check        # Run every deterministic local validation and release build
 make install      # Build/package release app and copy to /Applications
 make update       # Install the exact verified app served by the public download
+make deploy-site  # Validate and deploy the site to Cloudflare Workers
+make release      # Sign/notarize locally and publish through Cloudflare R2
 make editor       # Build the locked TipTap bundle
 make typecheck    # Type-check TypeScript
 make privacy-check # Reject committed credentials, account IDs, and local paths
@@ -18,7 +21,7 @@ make package      # Create one universal app under .build/package
 make clean        # Remove generated build artifacts
 ```
 
-Before handoff, run `make privacy-check`, `make typecheck`, `make evals`, and the appropriate Swift build. Run `make install` only when an updated `/Applications/Shakespeare.app` is needed.
+Before handoff, run `make check`. Run `make install` only when an updated `/Applications/Shakespeare.app` is needed. GitHub Actions is intentionally unused: site builds belong to Cloudflare and Developer ID releases belong on a trusted Mac.
 
 The build pipeline is `Editor/src/*.ts` → esbuild IIFE → `Editor/dist/` → `Sources/WordProcessor/Resources/` → SwiftPM resource bundle.
 
