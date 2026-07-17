@@ -1,32 +1,58 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-/* eslint-disable @next/next/no-img-element -- local product assets are intentionally served directly */
+/* eslint-disable @next/next/no-img-element -- local product captures are intentionally served directly */
 
 const downloadUrl = "/downloads/Shakespeare-latest.zip";
 
 export const metadata: Metadata = {
   title: "How Shakespeare works",
-  description: "A simple, private writing workflow for your Mac.",
+  description: "See how Shakespeare keeps writing private, useful, and unmistakably yours.",
   alternates: { canonical: "/how-it-works" },
   openGraph: {
     title: "How Shakespeare works",
-    description: "A simple, private writing workflow for your Mac.",
+    description: "Write normally. Ask when stuck. Decide what stays.",
     url: "/how-it-works",
   },
 };
 
+const chapters = [
+  {
+    number: "01",
+    eyebrow: "Write normally",
+    title: "The editor stays out of your way.",
+    body: "Draft, format, and keep versions in a quiet native Mac app. Your documents remain local, and nothing is sent simply because you are typing.",
+  },
+  {
+    number: "02",
+    eyebrow: "Ask when stuck",
+    title: "Bring help to the sentence.",
+    body: "Select a passage for revision, turn on paragraph-scoped grammar checks, or research a question beside the draft with linked sources.",
+  },
+  {
+    number: "03",
+    eyebrow: "Decide what stays",
+    title: "Your judgment closes the loop.",
+    body: "Keep, change, or reject every suggestion. Style learning is optional, reviewable, and shaped by the rewrites you actually save.",
+  },
+];
+
+const principles = [
+  ["Local", "Documents, versions, and style data stay on your Mac."],
+  ["Reviewable", "You can inspect every durable writing preference."],
+  ["Reversible", "Pause learning, edit the profile, or clear it entirely."],
+];
+
 export default function HowItWorks() {
   return (
-    <main className="landing how-landing">
+    <main className="walkthrough-page">
       <a className="skip-link" href="#main-content">Skip to content</a>
 
-      <header className="site-header">
+      <header className="site-header walkthrough-header">
         <Link className="brand" href="/" aria-label="Shakespeare home">
           <img src="/app-icon.png" alt="" />
           <span>Shakespeare.</span>
         </Link>
-
         <nav className="header-actions" aria-label="Primary navigation">
           <span className="release-note"><i aria-hidden="true" /> Beta for macOS 14+</span>
           <Link className="header-link active" href="/how-it-works" aria-current="page">How it works</Link>
@@ -36,56 +62,115 @@ export default function HowItWorks() {
         </nav>
       </header>
 
-      <section className="hero how-simple-hero" id="main-content">
-        <div className="hero-copy how-simple-copy">
-          <p className="eyebrow"><span aria-hidden="true">✦</span> How it works</p>
-          <h1>Help when you ask.<br /><em>Your voice when you write.</em></h1>
-          <p className="hero-lede how-story">
-            Download Shakespeare and open it like any Mac app. Your documents,
-            versions, and style data stay on your Mac. When you want revision,
-            optional grammar checks, or source-linked research, connect one
-            OpenRouter key—validated first, then stored in Keychain. Keep style
-            learning on, turn it off, or add a few samples; every preference
-            remains yours to review.
-          </p>
-
-          <div className="how-flow" aria-label="Shakespeare workflow">
-            <span><i>01</i> Install</span>
-            <span><i>02</i> Connect when ready</span>
-            <span><i>03</i> Write</span>
-          </div>
-
-          <div className="hero-actions">
-            <a className="primary-button" href={downloadUrl} download>
-              <span>Download for Mac</span>
-              <span className="button-icon" aria-hidden="true">↓</span>
-            </a>
-            <Link className="text-link" href="/">Back home <span aria-hidden="true">↖</span></Link>
-          </div>
+      <section className="walkthrough-hero" id="main-content">
+        <div className="walkthrough-title">
+          <p className="eyebrow light"><span aria-hidden="true">✦</span> How it works</p>
+          <h1>From blank page<br />to <em>better draft.</em></h1>
         </div>
+        <div className="walkthrough-intro">
+          <p>
+            Shakespeare does not write over you. It keeps the page quiet,
+            brings help close when you ask, and leaves every decision in your hands.
+          </p>
+          <a href="#story">Follow the writing loop <span aria-hidden="true">↓</span></a>
+        </div>
+        <div className="walkthrough-beats" aria-label="The Shakespeare writing loop">
+          <span><i>01</i><strong>Write</strong><small>Local by default</small></span>
+          <span><i>02</i><strong>Ask</strong><small>Help in context</small></span>
+          <span><i>03</i><strong>Decide</strong><small>You keep control</small></span>
+        </div>
+      </section>
 
-        <div className="product-stage">
-          <div className="stage-glow" aria-hidden="true" />
-          <div className="product-label">
-            <span><i aria-hidden="true" /> Actual app</span>
-            <span>Shakespeare for macOS</span>
-          </div>
-          <figure className="product-window">
+      <section className="story-section" id="story">
+        <div className="story-visual">
+          <p className="visual-caption"><span><i aria-hidden="true" /> Actual app</span><span>The writing room</span></p>
+          <div className="editor-capture">
             <img
               src="/shakespeare-editor.jpg"
               width="1131"
               height="701"
-              alt="The real Shakespeare editor showing an essay"
-              fetchPriority="high"
+              alt="The real Shakespeare editor showing a formatted essay"
             />
-          </figure>
-          <div className="privacy-card">
-            <span className="privacy-icon" aria-hidden="true">◆</span>
-            <span><strong>Local-first</strong><small>Your work stays yours.</small></span>
           </div>
-          <p className="first-launch">One optional OpenRouter key powers writing help and cited research.</p>
+          <div className="setup-peek">
+            <span>Two-choice setup</span>
+            <img
+              src="/shakespeare-setup.jpg"
+              width="350"
+              height="190"
+              alt="Shakespeare setup showing the OpenRouter connection and optional style learning"
+            />
+          </div>
+        </div>
+
+        <div className="story-copy">
+          {chapters.map((chapter) => (
+            <article className="story-chapter" key={chapter.number}>
+              <span className="chapter-number">{chapter.number}</span>
+              <p className="chapter-eyebrow">{chapter.eyebrow}</p>
+              <h2>{chapter.title}</h2>
+              <p>{chapter.body}</p>
+            </article>
+          ))}
         </div>
       </section>
+
+      <section className="setup-story" aria-labelledby="setup-title">
+        <div className="setup-story-copy">
+          <p className="eyebrow"><span aria-hidden="true">✦</span> Five-minute setup</p>
+          <h2 id="setup-title">One connection.<br /><em>One choice.</em></h2>
+          <p>
+            Paste one OpenRouter key if you want model-powered writing and research.
+            Then choose whether Shakespeare may learn from saved rewrites. Both can be
+            skipped, changed, or removed later.
+          </p>
+          <div className="setup-actions">
+            <a href="https://openrouter.ai/settings/keys">Get an OpenRouter key <span aria-hidden="true">↗</span></a>
+            <span>Stored in macOS Keychain</span>
+          </div>
+        </div>
+        <figure className="setup-capture">
+          <img
+            src="/shakespeare-setup.jpg"
+            width="350"
+            height="190"
+            alt="The real Shakespeare onboarding screen"
+          />
+          <figcaption>Connect once. Personalize only if you want to.</figcaption>
+        </figure>
+      </section>
+
+      <section className="principles" aria-label="Shakespeare privacy principles">
+        {principles.map(([title, body], index) => (
+          <article key={title}>
+            <span>0{index + 1}</span>
+            <h2>{title}</h2>
+            <p>{body}</p>
+          </article>
+        ))}
+      </section>
+
+      <section className="walkthrough-cta">
+        <div>
+          <p className="eyebrow light"><span aria-hidden="true">✦</span> Ready when you are</p>
+          <h2>Keep the voice.<br /><em>Lose the friction.</em></h2>
+        </div>
+        <div>
+          <p>Latest beta for macOS 14+.<br />Apple silicon and Intel.</p>
+          <a className="walkthrough-download" href={downloadUrl} download>
+            <span>Download Shakespeare</span><span aria-hidden="true">↓</span>
+          </a>
+        </div>
+      </section>
+
+      <footer className="walkthrough-footer">
+        <Link className="brand" href="/">
+          <img src="/app-icon.png" alt="" />
+          <span>Shakespeare.</span>
+        </Link>
+        <p>Made for writers who still want to sound human.</p>
+        <a href={`${downloadUrl}.sha256`} download>SHA-256 checksum</a>
+      </footer>
     </main>
   );
 }
