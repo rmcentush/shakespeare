@@ -28,6 +28,7 @@ OpenRouter is the only remote model boundary:
 
 - Writing, revision, grammar, and style review use `moonshotai/kimi-k3` by default.
 - Research chat uses the same `moonshotai/kimi-k3` model with a bounded `openrouter:web_search` server tool enabled for current, source-linked answers.
+- OpenRouter automatically tries `~x-ai/grok-latest` if the default Kimi model fails; custom model overrides do not inherit that fallback.
 - Both models use the same `OPENROUTER_API_KEY`.
 - Every request sets provider data collection to `deny`.
 - Model overrides live under **Settings → Connections → Advanced** so cost-conscious users can choose smaller OpenRouter models.

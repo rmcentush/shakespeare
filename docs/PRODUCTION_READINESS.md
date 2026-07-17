@@ -17,7 +17,7 @@ Reviewed July 16, 2026. Shakespeare is now a compact local macOS application wit
 
 1. **License and provenance:** add the appropriate repository `LICENSE` and retain written permission for any inherited commercial code or assets before public distribution.
 2. **Release proof:** configure the signing/notarization secrets and retain evidence from a successful public release artifact.
-3. **Provider behavior:** test Kimi K3 against latency, writing quality, structured-output reliability, mandatory reasoning cost, and the bounded chat-search budget.
+3. **Provider behavior:** test Kimi K3 and the Grok fallback against latency, writing quality, structured-output reliability, mandatory reasoning cost, failover behavior, and the bounded chat-search budget.
 4. **Privacy disclosure:** publish a concise policy explaining which feature sends which bounded context to OpenRouter and how local style history is deleted.
 5. **Governance:** require CI and reviewed changes on `main`, enable secret scanning, and protect release tags.
 

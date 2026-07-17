@@ -8,7 +8,8 @@ struct LanguageModelWireEvals {
         rejectsUnsafeCitationURLs()
         buildsPrivateStructuredRequest()
         enablesBoundedWebSearchForChatOnly()
-        print("Language-model wire evals passed (5 cases).")
+        configuresGrokFallbackForDefaultKimiOnly()
+        print("Language-model wire evals passed (6 cases).")
     }
 
     private static func extractsStandardOpenRouterAnnotations() {
@@ -105,5 +106,36 @@ struct LanguageModelWireEvals {
         precondition(parameters?["max_results"] as? Int == 4)
         precondition(parameters?["max_total_results"] as? Int == 8)
         precondition(parameters?["max_characters"] as? Int == 2_000)
+    }
+
+    private static func configuresGrokFallbackForDefaultKimiOnly() {
+        let defaultRuntime = InferenceSettings.runtime(purpose: .assistant)
+        precondition(defaultRuntime.model == InferenceSettings.kimiModel)
+        precondition(defaultRuntime.fallbackModels == [InferenceSettings.defaultFallbackModel])
+
+        let body = LanguageModelService.requestBody(
+            runtime: defaultRuntime,
+            messages: [["role": "user", "content": "Revise this paragraph."]],
+            systemPrompt: nil,
+            outputFormat: nil,
+            temperature: 0.2,
+            maxTokens: 512
+        )
+        precondition(body["models"] as? [String] == ["~x-ai/grok-latest"])
+
+        let customRuntime = InferenceSettings.runtime(
+            purpose: .assistant,
+            modelOverride: "example/custom-model"
+        )
+        precondition(customRuntime.fallbackModels.isEmpty)
+        let customBody = LanguageModelService.requestBody(
+            runtime: customRuntime,
+            messages: [["role": "user", "content": "Revise this paragraph."]],
+            systemPrompt: nil,
+            outputFormat: nil,
+            temperature: 0.2,
+            maxTokens: 512
+        )
+        precondition(customBody["models"] == nil)
     }
 }

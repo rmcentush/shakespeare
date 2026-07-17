@@ -514,6 +514,11 @@ struct SettingsView: View {
                             Text("The default is moonshotai/kimi-k3. Research chat alone receives a bounded web-search tool for current, cited answers.")
                                 .settingsDescriptionStyle()
                         }
+
+                        Divider()
+
+                        Text("When the default Kimi model fails, OpenRouter tries ~x-ai/grok-latest once. Custom model overrides do not use this fallback.")
+                            .settingsDescriptionStyle()
                     }
                     .padding(.top, 8)
                 }

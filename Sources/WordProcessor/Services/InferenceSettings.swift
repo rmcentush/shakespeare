@@ -17,6 +17,7 @@ struct InferenceRuntime: Sendable, Equatable {
     let messagesURL: URL
     let apiKeyService: String
     let model: String
+    let fallbackModels: [String]
     let webSearchEnabled: Bool
     let supportsTemperature: Bool
 }
@@ -24,8 +25,10 @@ struct InferenceRuntime: Sendable, Equatable {
 enum InferenceSettings {
     static let writingModelDefaultsKey = "openRouterWritingModel"
     static let researchModelDefaultsKey = "openRouterChatModel"
-    static let defaultWritingModel = "moonshotai/kimi-k3"
-    static let defaultResearchModel = "moonshotai/kimi-k3"
+    static let kimiModel = "moonshotai/kimi-k3"
+    static let defaultWritingModel = kimiModel
+    static let defaultResearchModel = kimiModel
+    static let defaultFallbackModel = "~x-ai/grok-latest"
     static let openRouterKeysURL = URL(string: "https://openrouter.ai/settings/keys")!
     static let openRouterCreditsURL = URL(string: "https://openrouter.ai/settings/credits")!
 
@@ -43,8 +46,9 @@ enum InferenceSettings {
             messagesURL: URL(string: "https://openrouter.ai/api/v1/chat/completions")!,
             apiKeyService: "openrouter",
             model: model,
+            fallbackModels: model == kimiModel ? [defaultFallbackModel] : [],
             webSearchEnabled: purpose == .chat,
-            supportsTemperature: !model.hasPrefix("moonshotai/kimi-k3")
+            supportsTemperature: model != kimiModel
         )
     }
 
