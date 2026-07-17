@@ -77,6 +77,16 @@ import {
 } from './images';
 import { HoverableLink, attachLinkHoverPreview } from './linkPreview';
 import {
+  FontSize,
+  LineHeight,
+  applyFontSize,
+  applyLineHeight,
+  setDefaultTypography as configureDefaultTypography,
+  normalizeFontFamily,
+  restoreDefaultTypographyForEmptyEditor,
+  unsetLineHeight,
+} from './typography';
+import {
   CommentMark,
   addComment,
   addCommentAtRangeFromJSON,
@@ -197,6 +207,8 @@ const editor = new Editor({
     SmartQuotes,
     FontFamily,
     TextStyle,
+    FontSize,
+    LineHeight,
     HoverableLink.configure({
       openOnClick: false,
       HTMLAttributes: {
@@ -313,6 +325,7 @@ registerSwiftCallbacks({
     resetEditorSyncState();
     rejectAllPendingEdits(editor, false);
     editor.commands.setContent(sanitizeDocumentHTML(html), false);
+    restoreDefaultTypographyForEmptyEditor(editor);
     normalizeDocumentSmartQuotes(editor);
     renderFootnotesPanel(editor, true);
     emitSelectionUpdate(editor);
@@ -327,6 +340,7 @@ registerSwiftCallbacks({
         throw new Error('Document JSON must contain an object root');
       }
       editor.commands.setContent(parsed as JSONContent, false);
+      restoreDefaultTypographyForEmptyEditor(editor);
       normalizeDocumentSmartQuotes(editor);
       renderFootnotesPanel(editor, true);
       emitSelectionUpdate(editor);
@@ -404,7 +418,19 @@ registerSwiftCallbacks({
         editor.chain().focus().setTextAlign('justify').run();
         break;
       case 'fontFamily':
-        if (value) editor.chain().focus().setFontFamily(value).run();
+        if (value) {
+          const fontFamily = normalizeFontFamily(value);
+          if (fontFamily) editor.chain().focus().setFontFamily(fontFamily).run();
+        }
+        break;
+      case 'fontSize':
+        if (value) applyFontSize(editor, value);
+        break;
+      case 'lineHeight':
+        if (value) applyLineHeight(editor, value);
+        break;
+      case 'unsetLineHeight':
+        unsetLineHeight(editor);
         break;
       case 'undo':
         editor.chain().focus().undo().run();
@@ -458,6 +484,7 @@ registerSwiftCallbacks({
         }
         break;
     }
+    emitSelectionUpdate(editor);
   },
   focus() {
     editor.commands.focus();
@@ -504,6 +531,10 @@ registerSwiftCallbacks({
       document.head.appendChild(styleEl);
     }
     styleEl.textContent = css;
+  },
+  setDefaultTypography(fontFamily: string, fontSize: number, lineHeight: number) {
+    configureDefaultTypography(editor, fontFamily, fontSize, lineHeight);
+    emitSelectionUpdate(editor);
   },
   findInDocument(query: string): number {
     return runFindInDocument(editor, query);

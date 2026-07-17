@@ -35,6 +35,7 @@ body {
 
 .editor-content {
   outline: none;
+  font-family: Georgia, serif;
   font-size: 18px;
   line-height: 1.7;
   color: #1a1a1a;
@@ -421,6 +422,9 @@ body {
 
 .editor-footnotes,
 .generated-footnotes {
+  font-family: Georgia, serif;
+  font-size: 18px;
+  line-height: 1.7;
   margin-top: 48px;
   padding-top: 20px;
   border-top: 1px solid #e0e0e0;

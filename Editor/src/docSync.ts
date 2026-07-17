@@ -22,6 +22,11 @@ import {
 } from './footnotes';
 import { normalizeImageAlign, normalizeImageLayout, selectedImageNode } from './images';
 import { scheduleSmartQuotesNormalization } from './smartQuotes';
+import {
+  selectedLineHeight,
+  selectedTextAlignment,
+  selectedTextStyleAttribute,
+} from './typography';
 
 let documentRevision = 0;
 let cachedDocumentTextSnapshot: DocumentTextSnapshot | null = null;
@@ -312,6 +317,11 @@ function buildSelectionState(editor: Editor): EditorSelectionState {
   const selectedFootnote = getSelectedFootnote(editor);
   const selectedImage = selectedImageNode(editor);
   const selectedImageAttrs = (selectedImage?.node.attrs || {}) as Record<string, unknown>;
+  const textColor = selectedTextStyleAttribute(editor, 'color');
+  const fontFamily = selectedTextStyleAttribute(editor, 'fontFamily');
+  const fontSize = selectedTextStyleAttribute(editor, 'fontSize');
+  const lineHeight = selectedLineHeight(editor);
+  const textAlign = selectedTextAlignment(editor);
 
   return {
     hasSelection: activeSelection !== null,
@@ -320,6 +330,10 @@ function buildSelectionState(editor: Editor): EditorSelectionState {
     isBold: editor.isActive('bold'),
     isItalic: editor.isActive('italic'),
     isUnderline: editor.isActive('underline'),
+    isStrike: editor.isActive('strike'),
+    isBulletList: editor.isActive('bulletList'),
+    isOrderedList: editor.isActive('orderedList'),
+    isBlockquote: editor.isActive('blockquote'),
     heading: editor.isActive('heading', { level: 1 })
       ? 1
       : editor.isActive('heading', { level: 2 })
@@ -327,16 +341,17 @@ function buildSelectionState(editor: Editor): EditorSelectionState {
         : editor.isActive('heading', { level: 3 })
           ? 3
           : 0,
-    textAlign: editor.isActive({ textAlign: 'center' })
-      ? 'center'
-      : editor.isActive({ textAlign: 'right' })
-        ? 'right'
-        : editor.isActive({ textAlign: 'justify' })
-          ? 'justify'
-          : 'left',
+    textAlign,
     isLink: editor.isActive('link'),
     linkHref: editor.getAttributes('link').href || '',
-    textColor: editor.getAttributes('textStyle').color || '',
+    textColor: textColor.value,
+    isTextColorMixed: textColor.mixed,
+    fontFamily: fontFamily.value,
+    isFontFamilyMixed: fontFamily.mixed,
+    fontSize: fontSize.value,
+    isFontSizeMixed: fontSize.mixed,
+    lineHeight: lineHeight.value,
+    isLineHeightMixed: lineHeight.mixed,
     isFootnote: selectedFootnote !== null,
     footnoteText: (selectedFootnote?.node.attrs.note as string) || '',
     isImage: selectedImage !== null,
@@ -359,11 +374,22 @@ function selectionStatesEqual(
     a.isBold === b.isBold &&
     a.isItalic === b.isItalic &&
     a.isUnderline === b.isUnderline &&
+    a.isStrike === b.isStrike &&
+    a.isBulletList === b.isBulletList &&
+    a.isOrderedList === b.isOrderedList &&
+    a.isBlockquote === b.isBlockquote &&
     a.heading === b.heading &&
     a.textAlign === b.textAlign &&
     a.isLink === b.isLink &&
     a.linkHref === b.linkHref &&
     a.textColor === b.textColor &&
+    a.isTextColorMixed === b.isTextColorMixed &&
+    a.fontFamily === b.fontFamily &&
+    a.isFontFamilyMixed === b.isFontFamilyMixed &&
+    a.fontSize === b.fontSize &&
+    a.isFontSizeMixed === b.isFontSizeMixed &&
+    a.lineHeight === b.lineHeight &&
+    a.isLineHeightMixed === b.isLineHeightMixed &&
     a.isFootnote === b.isFootnote &&
     a.footnoteText === b.footnoteText &&
     a.isImage === b.isImage &&

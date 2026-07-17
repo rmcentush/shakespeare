@@ -269,7 +269,7 @@ struct SettingsView: View {
 
     private var typographySettings: some View {
         SettingsPage {
-            SettingsCard(title: "Document Typography") {
+            SettingsCard(title: "Default Typography") {
                 Picker("Font family", selection: $fontManager.currentFont) {
                     Text("Georgia").tag("Georgia")
                     Text("Palatino").tag("Palatino")
@@ -311,7 +311,7 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity, minHeight: 100, alignment: .leading)
                     .padding(.horizontal, 4)
 
-                Text("Typography applies to the editor and is saved for future documents.")
+                Text("New empty documents start with these defaults. Existing text is never reformatted.")
                     .settingsDescriptionStyle()
             }
         }

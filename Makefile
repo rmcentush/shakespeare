@@ -1,4 +1,4 @@
-.PHONY: all build run clean editor typecheck privacy-check swift install package evals document-asset-evals storage-layout-evals style-context-evals style-profile-evals writing-quality-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
+.PHONY: all build run clean editor editor-tests typecheck privacy-check swift install package evals document-asset-evals storage-layout-evals style-context-evals style-profile-evals writing-quality-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
 
 all: build
 
@@ -12,6 +12,9 @@ editor: Editor/node_modules/.package-lock.json
 
 typecheck: Editor/node_modules/.package-lock.json
 	cd Editor && npm run typecheck
+
+editor-tests: Editor/node_modules/.package-lock.json
+	cd Editor && npm test
 
 privacy-check:
 	bash scripts/verify-source-privacy.sh
@@ -69,7 +72,7 @@ language-model-wire-evals:
 	swiftc Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/APIKeyStore.swift Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/LanguageModelService.swift scripts/language-model-wire-evals.swift -o /tmp/language-model-wire-evals
 	/tmp/language-model-wire-evals
 
-evals: document-asset-evals storage-layout-evals style-context-evals style-profile-evals writing-quality-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
+evals: editor-tests document-asset-evals storage-layout-evals style-context-evals style-profile-evals writing-quality-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
 
 # Build release
 build: copy-assets
