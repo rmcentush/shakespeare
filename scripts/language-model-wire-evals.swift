@@ -2,7 +2,7 @@ import Foundation
 
 @main
 struct LanguageModelWireEvals {
-    static func main() {
+    static func main() async {
         extractsStandardOpenRouterAnnotations()
         extractsFlatFallbackCitations()
         rejectsUnsafeCitationURLs()
@@ -11,7 +11,8 @@ struct LanguageModelWireEvals {
         validatesCuratedModelCatalog()
         configuresFullServerSideModelWaterfall()
         boundsClientRetriesAroundProviderWaterfall()
-        print("Language-model wire evals passed (8 cases).")
+        await rejectsIncompleteAndMalformedStreams()
+        print("Language-model wire evals passed (request privacy, routing, citations, terminal SSE).")
     }
 
     private static func extractsStandardOpenRouterAnnotations() {
@@ -205,4 +206,88 @@ struct LanguageModelWireEvals {
             ).count == 1
         )
     }
+
+    private static func rejectsIncompleteAndMalformedStreams() async {
+        let completed = """
+        data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}
+
+        data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+
+        data: [DONE]
+
+        """
+        do {
+            let chunks = try await streamedText(from: completed)
+            precondition(chunks == "Hello")
+        } catch {
+            preconditionFailure("Complete SSE stream failed: \(error)")
+        }
+
+        let incomplete = """
+        data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}
+
+        """
+        do {
+            _ = try await streamedText(from: incomplete)
+            preconditionFailure("Incomplete SSE stream was accepted")
+        } catch let error as LanguageModelService.APIError {
+            guard case .incompleteStream = error else {
+                preconditionFailure("Unexpected incomplete-stream error: \(error)")
+            }
+        } catch {
+            preconditionFailure("Unexpected incomplete-stream error: \(error)")
+        }
+
+        do {
+            _ = try await streamedText(from: "data: {not-json}\n\n")
+            preconditionFailure("Malformed SSE stream was accepted")
+        } catch let error as LanguageModelService.APIError {
+            guard case .streamError = error else {
+                preconditionFailure("Unexpected malformed-stream error: \(error)")
+            }
+        } catch {
+            preconditionFailure("Unexpected malformed-stream error: \(error)")
+        }
+    }
+
+    private static func streamedText(from eventStream: String) async throws -> String {
+        WireEvalURLProtocol.responseBody = Data(eventStream.utf8)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [WireEvalURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let service = LanguageModelService(
+            purpose: .assistant,
+            session: session,
+            apiKeyProvider: { _ in "test-key" }
+        )
+        var text = ""
+        for try await chunk in service.streamMessage(
+            messages: [["role": "user", "content": "test"]],
+            maxTokens: 8
+        ) {
+            if case .text(let chunkText) = chunk { text += chunkText }
+        }
+        return text
+    }
+}
+
+private final class WireEvalURLProtocol: URLProtocol {
+    static var responseBody = Data()
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "text/event-stream"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Self.responseBody)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

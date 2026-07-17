@@ -1988,17 +1988,21 @@ final class EditorViewModel {
 
     func openFile(url: URL, document: DocumentModel) {
         Task { @MainActor in
+            guard !isDocumentTransitioning else {
+                setPersistenceStatus("Another document transition is already in progress", isError: true)
+                return
+            }
+            isDocumentTransitioning = true
+            defer {
+                setEditorEditable(true)
+                isDocumentTransitioning = false
+            }
             do {
                 // Read and validate first so the existing document remains
                 // editable during slow-volume I/O. Freeze only for the short
                 // flush-and-commit transaction.
                 let candidate = try await DocumentFileStore.shared.load(from: url)
-                isDocumentTransitioning = true
                 setEditorEditable(false)
-                defer {
-                    setEditorEditable(true)
-                    isDocumentTransitioning = false
-                }
 
                 guard await flushBeforeDocumentChange(document: document) else {
                     setPersistenceStatus("Open cancelled — current changes could not be secured", isError: true)
@@ -2036,6 +2040,7 @@ final class EditorViewModel {
     }
 
     func prepareForTermination(document: DocumentModel) async -> Bool {
+        guard !isDocumentTransitioning else { return false }
         isDocumentTransitioning = true
         setEditorEditable(false)
         let secured = await flushBeforeDocumentChange(document: document)
@@ -2044,6 +2049,11 @@ final class EditorViewModel {
             isDocumentTransitioning = false
         }
         return secured
+    }
+
+    func cancelTerminationPreparation() {
+        setEditorEditable(true)
+        isDocumentTransitioning = false
     }
 
     func saveDocument(document: DocumentModel) {

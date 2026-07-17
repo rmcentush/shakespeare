@@ -153,6 +153,7 @@ actor DocumentFileStore {
         case invalidPackagePath(String)
         case invalidPackageManifest
         case invalidDocumentContent(String)
+        case missingReferencedAsset(String)
         case assetTooLarge(maximumMegabytes: Int)
         case packageAssetsTooLarge(maximumMegabytes: Int)
         case incompletePackageWrite(String)
@@ -169,6 +170,8 @@ actor DocumentFileStore {
                 return "The document package manifest contains invalid values."
             case .invalidDocumentContent(let detail):
                 return "The document package contains invalid content (\(detail))."
+            case .missingReferencedAsset(let filename):
+                return "The document is missing a referenced image (\(filename))."
             case .assetTooLarge(let maximumMegabytes):
                 return "Images must be \(maximumMegabytes) MB or smaller."
             case .packageAssetsTooLarge(let maximumMegabytes):
@@ -351,6 +354,12 @@ actor DocumentFileStore {
         )
 
         let destinationURL = assetsURL.appendingPathComponent(filename)
+        try validateStagedAssets(
+            at: assetsURL,
+            referencedAssetFilenames: referencedAssetFilenames.union([filename]),
+            newFilename: filename,
+            newData: data
+        )
         if !FileManager.default.fileExists(atPath: destinationURL.path) {
             try data.write(to: destinationURL, options: .atomic)
         }
@@ -719,7 +728,9 @@ actor DocumentFileStore {
                 guard let file = DocumentAssetReference.containedFileURL(
                     named: filename,
                     in: source
-                ) else { continue }
+                ), FileManager.default.fileExists(atPath: file.path) else {
+                    throw FileStoreError.missingReferencedAsset(filename)
+                }
                 let target = destination.appendingPathComponent(filename)
                 guard !FileManager.default.fileExists(atPath: target.path) else { continue }
                 let data = try PackageFileSafety.readData(
@@ -734,6 +745,47 @@ actor DocumentFileStore {
                     )
                 }
                 try data.write(to: target, options: [.atomic])
+            }
+        }
+    }
+
+    private func validateStagedAssets(
+        at assetsURL: URL,
+        referencedAssetFilenames: Set<String>,
+        newFilename: String,
+        newData: Data
+    ) throws {
+        var totalBytes = 0
+        for filename in referencedAssetFilenames.sorted() {
+            guard let assetURL = DocumentAssetReference.containedFileURL(
+                named: filename,
+                in: assetsURL
+            ) else {
+                throw FileStoreError.invalidPackagePath(filename)
+            }
+            if filename == newFilename,
+               !FileManager.default.fileExists(atPath: assetURL.path) {
+                totalBytes += newData.count
+            } else {
+                guard FileManager.default.fileExists(atPath: assetURL.path) else {
+                    throw FileStoreError.missingReferencedAsset(filename)
+                }
+                let assetData = try PackageFileSafety.readData(
+                    from: assetURL,
+                    maximumBytes: Self.maximumImportedImageBytes,
+                    displayName: filename
+                )
+                if filename == newFilename, assetData != newData {
+                    throw FileStoreError.invalidDocumentContent(
+                        "an existing image does not match its content-addressed filename"
+                    )
+                }
+                totalBytes += assetData.count
+            }
+            guard totalBytes <= Self.maximumPackageAssetBytes else {
+                throw FileStoreError.packageAssetsTooLarge(
+                    maximumMegabytes: Self.maximumPackageAssetBytes / (1_024 * 1_024)
+                )
             }
         }
     }

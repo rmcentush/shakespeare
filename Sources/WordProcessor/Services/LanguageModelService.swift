@@ -6,15 +6,20 @@ final class LanguageModelService: Sendable {
     private let purpose: InferencePurpose
     private let modelOverride: String?
     private let session: URLSession
+    private let apiKeyProvider: @Sendable (String) -> String?
 
     init(
         purpose: InferencePurpose = .assistant,
         model: String? = nil,
-        session: URLSession = LanguageModelService.makeSession()
+        session: URLSession = LanguageModelService.makeSession(),
+        apiKeyProvider: @escaping @Sendable (String) -> String? = {
+            APIKeyStore.shared.getAPIKey(service: $0)
+        }
     ) {
         self.purpose = purpose
         self.modelOverride = model
         self.session = session
+        self.apiKeyProvider = apiKeyProvider
     }
 
     var currentRuntime: InferenceRuntime {
@@ -37,8 +42,8 @@ final class LanguageModelService: Sendable {
     ) -> AsyncThrowingStream<StreamChunk, Error> {
         let runtime = currentRuntime
         return AsyncThrowingStream { continuation in
-            let task = Task.detached(priority: .userInitiated) { [runtime, session] in
-                guard let apiKey = APIKeyStore.shared.getAPIKey(service: runtime.apiKeyService) else {
+            let task = Task.detached(priority: .userInitiated) { [runtime, session, apiKeyProvider] in
+                guard let apiKey = apiKeyProvider(runtime.apiKeyService) else {
                     continuation.finish(throwing: APIError.noAPIKey)
                     return
                 }
