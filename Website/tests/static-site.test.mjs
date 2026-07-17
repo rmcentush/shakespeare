@@ -4,37 +4,42 @@ import test from "node:test";
 
 const root = new URL("../", import.meta.url);
 
-test("ships responsive full-page scenes and a fail-closed release action", async () => {
-  const [html, css, hero, portraitHero] = await Promise.all([
+test("ships an app-aligned responsive landing page and a fail-closed release action", async () => {
+  const [html, css, editorImage, appIcon] = await Promise.all([
     readFile(new URL("public/index.html", root), "utf8"),
-    readFile(new URL("public/v3/styles.css", root), "utf8"),
-    readFile(new URL("public/v3/sea-desk-hero.jpg", root)),
-    readFile(new URL("public/v3/sea-desk-hero-portrait.jpg", root)),
+    readFile(new URL("public/v4/styles.css", root), "utf8"),
+    readFile(new URL("public/v4/shakespeare-editor.jpg", root)),
+    readFile(new URL("public/v4/app-icon.png", root)),
   ]);
 
   assert.match(html, /^<!doctype html>/i);
-  assert.match(html, /class="scene-image"/);
-  assert.match(html, /sea-desk-hero\.jpg/);
-  assert.match(html, /sea-desk-hero-portrait\.jpg/);
-  assert.match(html, /<picture class="scene-art">/);
-  assert.match(html, /<h1>Write like yourself\.<\/h1>/);
-  assert.match(html, /A local-first writing app for Mac\./);
+  assert.match(html, /class="app-frame"/);
+  assert.match(html, /v4\/shakespeare-editor\.jpg/);
+  assert.match(html, /v4\/app-icon\.png/);
+  assert.match(html, /<h1[^>]*>Write like yourself\.<\/h1>/);
+  assert.match(html, /A local-first writing app for Mac/);
+  assert.match(html, /Powerful when you need it/);
+  assert.match(html, /Your work lives on your Mac\./);
+  assert.match(html, /source-backed/);
   assert.match(html, /Release temporarily unavailable/);
   assert.match(html, /data-release-action aria-disabled="true"/);
   assert.match(html, /href="https:\/\/github\.com\/rmcentush\/shakespeare"/);
-  assert.match(html, /Open source <span aria-hidden="true">·<\/span> MIT/);
+  assert.match(html, />Open source<\/a>/);
   assert.doesNotMatch(html, /Shakespeare-latest\.zip/);
-  assert.equal((html.match(/<a\b/g) ?? []).length, 1);
   assert.equal((html.match(/<img\b/g) ?? []).length, 1);
-  assert.equal((html.match(/<source\b/g) ?? []).length, 1);
-  assert.doesNotMatch(html, /<header\b|<nav\b|<footer\b|<section\b|<script\b/i);
-  assert.doesNotMatch(html, /How it works|shakespeare-editor|app-icon|og-v5/i);
+  assert.equal((html.match(/data-release-action/g) ?? []).length, 1);
+  assert.match(html, /<header\b[\s\S]*<nav\b[\s\S]*<footer\b/i);
+  assert.doesNotMatch(html, /<script\b/i);
   assert.doesNotMatch(css, /@import|url\(/i);
+  assert.match(css, /#007aff/i);
+  assert.match(css, /Georgia/);
+  assert.match(css, /-apple-system/);
+  assert.match(css, /@media \(max-width: 680px\)/);
   assert.match(css, /prefers-reduced-motion/);
-  assert.ok(hero.length > 100_000);
-  assert.ok(portraitHero.length > 100_000);
-  assert.deepEqual([...hero.subarray(0, 3)], [0xff, 0xd8, 0xff]);
-  assert.deepEqual([...portraitHero.subarray(0, 3)], [0xff, 0xd8, 0xff]);
+  assert.ok(editorImage.length > 50_000);
+  assert.ok(appIcon.length > 100_000);
+  assert.deepEqual([...editorImage.subarray(0, 3)], [0xff, 0xd8, 0xff]);
+  assert.deepEqual([...appIcon.subarray(1, 4)], [0x50, 0x4e, 0x47]);
 });
 
 test("redirects retired routes before serving the scene", async () => {
