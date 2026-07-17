@@ -894,28 +894,25 @@ struct StatusBarView: View {
     @Environment(EditorViewModel.self) private var editorViewModel
 
     var body: some View {
-        HStack {
-            if editorViewModel.selectionState.hasSelection {
-                Text("Selected \(editorViewModel.selectionState.selectedWords) words")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary)
-                Text("\u{00B7}")
-                    .foregroundStyle(.quaternary)
-                Text("\(editorViewModel.selectionState.selectedCharacters) characters")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("\u{00B7}")
-                    .foregroundStyle(.quaternary)
+        HStack(spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                if editorViewModel.selectionState.hasSelection {
+                    Text("Selected \(editorViewModel.selectionState.selectedWords) words")
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.primary)
+                    metricSeparator
+                    Text("\(editorViewModel.selectionState.selectedCharacters) characters")
+                    metricSeparator
+                }
+                Text("\(document.wordCount) words")
+                metricSeparator
+                Text("\(document.characterCount) characters")
             }
-            Text("\(document.wordCount) words")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text("\u{00B7}")
-                .foregroundStyle(.quaternary)
-            Text("\(document.characterCount) characters")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
+            .font(.caption)
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+
+            Spacer(minLength: 12)
             proofreadingStatus
             if !editorViewModel.persistenceStatusText.isEmpty {
                 Text(editorViewModel.persistenceStatusText)
@@ -928,6 +925,12 @@ struct StatusBarView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
         .background(.bar)
+    }
+
+    private var metricSeparator: some View {
+        Text("\u{00B7}")
+            .foregroundStyle(.quaternary)
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder
