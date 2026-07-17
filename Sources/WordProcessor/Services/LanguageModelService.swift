@@ -169,6 +169,9 @@ final class LanguageModelService: Sendable {
             "stream": true,
             "messages": requestMessages,
         ]
+        if !runtime.fallbackModels.isEmpty {
+            body["models"] = runtime.fallbackModels
+        }
         if runtime.supportsTemperature, let temperature { body["temperature"] = temperature }
         if runtime.webSearchEnabled {
             body["tools"] = [[
