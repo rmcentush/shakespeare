@@ -497,28 +497,29 @@ struct SettingsView: View {
             SettingsCard(title: "Advanced") {
                 DisclosureGroup("Model configuration") {
                     VStack(alignment: .leading, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("Writing model").font(.caption.weight(.semibold))
-                            TextField("OpenRouter model", text: $writingModel)
-                                .textFieldStyle(.roundedBorder)
-                            Text("Used for drafting, revision, grammar, and style work. The default is moonshotai/kimi-k3; choose a smaller model here if cost matters more.")
-                                .settingsDescriptionStyle()
-                        }
+                        modelPicker(
+                            title: "Writing",
+                            selection: $writingModel,
+                            description: "Drafting, revision, grammar, and style."
+                        )
 
                         Divider()
 
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("Research chat model").font(.caption.weight(.semibold))
-                            TextField("OpenRouter model", text: $researchModel)
-                                .textFieldStyle(.roundedBorder)
-                            Text("The default is moonshotai/kimi-k3. Research chat alone receives a bounded web-search tool for current, cited answers.")
-                                .settingsDescriptionStyle()
-                        }
+                        modelPicker(
+                            title: "Research chat",
+                            selection: $researchModel,
+                            description: "Includes bounded web search for current, cited answers."
+                        )
 
                         Divider()
 
-                        Text("When the default Kimi model fails, OpenRouter tries ~x-ai/grok-latest once. Custom model overrides do not use this fallback.")
-                            .settingsDescriptionStyle()
+                        HStack(alignment: .firstTextBaseline) {
+                            Text("Kimi automatically falls back to Grok Latest. Other selections run directly.")
+                                .settingsDescriptionStyle()
+                            Spacer(minLength: 12)
+                            Link("Compare pricing ↗", destination: InferenceSettings.openRouterModelsURL)
+                                .font(.caption.weight(.semibold))
+                        }
                     }
                     .padding(.top, 8)
                 }
@@ -532,6 +533,42 @@ struct SettingsView: View {
 
     private var learnedPreferencesPath: String {
         AuthorStyleReference.learnedPreferencesURL.path
+    }
+
+    @ViewBuilder
+    private func modelPicker(
+        title: String,
+        selection: Binding<String>,
+        description: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Picker(title, selection: selection) {
+                    ForEach(InferenceSettings.availableModels) { model in
+                        Text(model.selectionLabel).tag(model.id)
+                    }
+                    if InferenceSettings.modelOption(for: selection.wrappedValue) == nil {
+                        Text("Previous custom model").tag(selection.wrappedValue)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(width: 250)
+            }
+
+            Text(description)
+                .settingsDescriptionStyle()
+
+            if InferenceSettings.modelOption(for: selection.wrappedValue) == nil {
+                Text(selection.wrappedValue)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
     }
 
     private var styleProposalSheet: some View {
