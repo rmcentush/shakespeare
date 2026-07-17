@@ -179,7 +179,12 @@ actor RecoveryDraftStore {
     private func readMetadata(from url: URL) throws -> DraftMetadata {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(DraftMetadata.self, from: Data(contentsOf: url))
+        let data = try PackageFileSafety.readData(
+            from: url,
+            maximumBytes: 256 * 1_024,
+            displayName: url.lastPathComponent
+        )
+        return try decoder.decode(DraftMetadata.self, from: data)
     }
 
     private func writeMetadata(_ metadata: DraftMetadata, to url: URL) throws {

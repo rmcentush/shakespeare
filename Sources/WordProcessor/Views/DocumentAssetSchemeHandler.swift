@@ -33,13 +33,11 @@ final class DocumentAssetSchemeHandler: NSObject, WKURLSchemeHandler {
         }
 
         do {
-            let values = try assetURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-            guard values.isRegularFile == true,
-                  (values.fileSize ?? 0) <= DocumentFileStore.maximumImportedImageBytes
-            else {
-                throw CocoaError(.fileReadTooLarge)
-            }
-            let data = try Data(contentsOf: assetURL, options: .mappedIfSafe)
+            let data = try PackageFileSafety.readData(
+                from: assetURL,
+                maximumBytes: DocumentFileStore.maximumImportedImageBytes,
+                displayName: filename
+            )
             let mimeType = UTType(filenameExtension: assetURL.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
             let response = URLResponse(
                 url: requestURL,
