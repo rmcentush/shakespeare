@@ -15,6 +15,33 @@ struct StyleProfileEvals {
     private static func excludesModelAuthoredFeedbackLoops() {
         let substantial = String(repeating: "The writer actively reshaped this sentence. ", count: 3)
         require(
+            !StyleLearningPolicy.isDurableStyleEvidence(
+                outcome: "accepted_unchanged",
+                finalText: substantial,
+                trainingEligible: true,
+                confidence: 1
+            ),
+            "accepted-unchanged model prose entered durable style evidence"
+        )
+        require(
+            StyleLearningPolicy.isDurableStyleEvidence(
+                outcome: "accepted_modified",
+                finalText: substantial,
+                trainingEligible: true,
+                confidence: 0.9
+            ),
+            "an actively modified edit was excluded from durable evidence"
+        )
+        require(
+            !StyleLearningPolicy.isDurableStyleEvidence(
+                outcome: "rejected_rewritten",
+                finalText: substantial,
+                trainingEligible: false,
+                confidence: 1
+            ),
+            "an explicitly ineligible outcome entered durable evidence"
+        )
+        require(
             !StyleLearningPolicy.isConfirmedUserRewrite(
                 outcome: "accepted_unchanged",
                 finalText: substantial

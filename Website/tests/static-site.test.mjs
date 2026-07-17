@@ -40,6 +40,10 @@ test("redirects retired routes before serving the scene", async () => {
     ASSETS: {
       fetch: async () => new Response("static asset", { status: 200 }),
     },
+    RELEASES: {
+      get: async () => null,
+      head: async () => null,
+    },
   };
 
   const www = await worker.fetch(new Request("https://www.writeshakespeare.com/test"), env);
@@ -52,4 +56,89 @@ test("redirects retired routes before serving the scene", async () => {
 
   const asset = await worker.fetch(new Request("https://writeshakespeare.com/"), env);
   assert.equal(await asset.text(), "static asset");
+});
+
+test("serves one release atomically from an R2 manifest", async () => {
+  const { default: worker } = await import("../worker/index.js");
+  const sha256 = "a".repeat(64);
+  const archiveKey = "releases/v1.2.3/Shakespeare.zip";
+  const archive = new TextEncoder().encode("signed archive");
+  const calls = [];
+  const releaseObject = {
+    body: archive,
+    httpEtag: '"release-etag"',
+    size: archive.byteLength,
+    writeHttpMetadata(headers) {
+      headers.set("Content-Type", "application/zip");
+    },
+  };
+  const env = {
+    ASSETS: {
+      fetch: async () => new Response("static asset", { status: 200 }),
+    },
+    RELEASES: {
+      async get(key) {
+        calls.push(["get", key]);
+        if (key === "releases/current.json") {
+          return { json: async () => ({ version: "1.2.3", archiveKey, sha256 }) };
+        }
+        return key === archiveKey ? releaseObject : null;
+      },
+      async head(key) {
+        calls.push(["head", key]);
+        return key === archiveKey ? releaseObject : null;
+      },
+    },
+  };
+
+  const archiveResponse = await worker.fetch(
+    new Request("https://writeshakespeare.com/downloads/Shakespeare-latest.zip"),
+    env,
+  );
+  assert.equal(archiveResponse.status, 200);
+  assert.equal(await archiveResponse.text(), "signed archive");
+  assert.equal(archiveResponse.headers.get("content-type"), "application/zip");
+  assert.equal(archiveResponse.headers.get("x-shakespeare-sha256"), sha256);
+
+  const checksumResponse = await worker.fetch(
+    new Request(
+      "https://writeshakespeare.com/downloads/Shakespeare-latest.zip.sha256",
+    ),
+    env,
+  );
+  assert.equal(await checksumResponse.text(), `${sha256}  Shakespeare-latest.zip\n`);
+
+  const headResponse = await worker.fetch(
+    new Request("https://writeshakespeare.com/downloads/Shakespeare-latest.zip", {
+      method: "HEAD",
+    }),
+    env,
+  );
+  assert.equal(headResponse.status, 200);
+  assert.equal(await headResponse.text(), "");
+  assert.deepEqual(calls, [
+    ["get", "releases/current.json"],
+    ["get", archiveKey],
+    ["get", "releases/current.json"],
+    ["get", "releases/current.json"],
+    ["head", archiveKey],
+  ]);
+});
+
+test("fails closed when the R2 release manifest is invalid", async () => {
+  const { default: worker } = await import("../worker/index.js");
+  const env = {
+    ASSETS: { fetch: async () => new Response("static asset") },
+    RELEASES: {
+      get: async () => ({ json: async () => ({ archiveKey: "unsafe", sha256: "no" }) }),
+      head: async () => null,
+    },
+  };
+
+  const response = await worker.fetch(
+    new Request("https://writeshakespeare.com/downloads/Shakespeare-latest.zip"),
+    env,
+  );
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get("cache-control"), "no-store");
 });

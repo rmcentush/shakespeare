@@ -9,7 +9,7 @@ make run          # Build editor + Swift debug app and run
 make check        # Run every deterministic local validation and release build
 make install      # Build/package release app and copy to /Applications
 make update       # Install the exact verified app served by the public download
-make deploy-site  # Validate and deploy the site to Cloudflare Workers
+make deploy-site  # Recovery-only site deploy from clean/current main
 make release      # Sign/notarize locally and publish through Cloudflare R2
 make editor       # Build the locked TipTap bundle
 make typecheck    # Type-check TypeScript
@@ -21,7 +21,18 @@ make package      # Create one universal app under .build/package
 make clean        # Remove generated build artifacts
 ```
 
-Before handoff, run `make check`. Run `make install` only when an updated `/Applications/Shakespeare.app` is needed. GitHub Actions is intentionally unused: site builds belong to Cloudflare and Developer ID releases belong on a trusted Mac.
+Before handoff, run `make check`. Run `make install` only when an updated `/Applications/Shakespeare.app` is needed.
+
+## Delivery contract
+
+- GitHub `main` is the source of truth. Work on a branch, validate locally, push, and merge through a pull request.
+- Cloudflare Workers Builds owns routine website CI/CD. Its repository root is `Website`; production deploys come only from `main`.
+- `make deploy-site` is a guarded recovery command, not the normal delivery path.
+- Developer ID releases run only through `make release` on a trusted Mac whose clean `main` exactly matches `origin/main`.
+- GitHub Actions is intentionally unused. Do not add a workflow unless the delivery architecture is explicitly changed.
+- Never publish generated app archives, credentials, or uncommitted sources.
+
+The canonical settings and release sequence live in `docs/RELEASING.md`.
 
 The build pipeline is `Editor/src/*.ts` → esbuild IIFE → `Editor/dist/` → `Sources/WordProcessor/Resources/` → SwiftPM resource bundle.
 
@@ -72,8 +83,11 @@ Key files:
 | `Sources/WordProcessor/Services/LanguageModelService.swift` | OpenRouter request/SSE boundary |
 | `Sources/WordProcessor/Services/OpenRouterConnectionValidator.swift` | data-free key validation |
 | `Sources/WordProcessor/Services/StyleContextAssembler.swift` | bounded local style retrieval |
+| `Sources/WordProcessor/Services/ChatDocumentContextAssembler.swift` | bounded query-aware research context |
 | `Sources/WordProcessor/Services/StyleProfileCompiler.swift` | evidence budgets, profile schema, thresholds, and copy-safety gates |
 | `Sources/WordProcessor/Services/TrainingEventStore.swift` | versioned local learning ledger (historical filename/schema) |
+| `Sources/WordProcessor/Services/PersonalizationLedgerRetention.swift` | deterministic ledger compaction policy |
+| `Sources/WordProcessor/Services/PackageFileSafety.swift` | bounded package reads and schema/file-type checks |
 | `Sources/WordProcessor/Services/ShakespeareStorage.swift` | canonical private app-data layout |
 | `Sources/WordProcessor/ViewModels/EditorViewModel.swift` | editor hub and prompt injection |
 | `Sources/WordProcessor/ViewModels/AssistantChatViewModel.swift` | bounded research orchestration |

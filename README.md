@@ -32,7 +32,7 @@ OpenRouter is the only remote model boundary:
 - Every request sets provider data collection to `deny`.
 - Curated writing and chat selectors live under **Settings → Connections → Advanced**. They show the exact numbered models: Kimi K3, Grok 4.5, GPT-5.6 Sol, Claude Fable 5, and Claude Opus 4.7/4.8.
 
-The research sidebar receives a bounded excerpt of the open draft, but not the permanent style reference, learned preferences, or local learning ledger. Grammar requests are similarly scoped to changed blocks.
+The research sidebar receives a query-aware draft excerpt capped at 8,000 characters for ordinary questions and 14,000 only for explicit whole-draft review. It includes relevant passages plus sparse opening-to-ending checkpoints, but never the permanent style reference, learned preferences, or local learning ledger. Grammar requests are similarly scoped to changed blocks.
 
 Paid AI grammar while typing is off by default; local spelling stays on and a thorough AI proofread is available on demand. OpenRouter charges model and search usage directly to the key owner, and Shakespeare adds no subscription or usage markup.
 
@@ -54,6 +54,8 @@ The complete packet is capped at 8,000 characters (about 2,000 tokens). Samples 
 
 Editing requests also receive a separate 2,600-character document-flow map built locally from headings, section boundaries, opening and ending passages, and sparse checkpoints. This gives paragraph and section suggestions awareness of the essay's larger argument without resending the entire document.
 
+Learning history is compacted locally: the source library is capped at 50 samples, imported samples and unreviewed profile evidence are preserved, and old processed edit telemetry rolls into a bounded recent window. **Delete Learning History** removes that evidence but keeps the writer-maintained editable style reference.
+
 See [Personalization](docs/PERSONALIZATION.md) for the exact privacy and precedence rules.
 
 ## Build from source
@@ -66,6 +68,17 @@ cd shakespeare
 make install
 open /Applications/Shakespeare.app
 ```
+
+## Development and delivery
+
+GitHub `main` is the source of truth for the complete codebase. The normal flow is deliberately small:
+
+1. Work on a feature branch.
+2. Run `make check` locally.
+3. Commit, push to GitHub, and merge through a pull request.
+4. Cloudflare Workers Builds deploys `Website/` changes from `main` and reports the result back to GitHub.
+
+Native app changes are stored in the same GitHub history but are not published on every push. A signed release is an explicit `make release` from a clean Mac checkout that exactly matches `origin/main`. This keeps Apple credentials on the trusted Mac and prevents routine website edits from triggering expensive macOS builds.
 
 Important commands:
 
@@ -81,7 +94,7 @@ Important commands:
 | `make evals` | Run edit, storage, style, connection, privacy, and wire-contract evals |
 | `make live-writing-evals` | Optionally run three capped OpenRouter quality checks using `OPENROUTER_API_KEY` |
 | `make build` | Build the release binary |
-| `make deploy-site` | Validate and deploy the site to Cloudflare Workers |
+| `make deploy-site` | Recovery-only site deploy from clean, current `main` |
 | `make release` | Sign, notarize, publish to Cloudflare R2, verify, and tag a release |
 | `make clean` | Remove generated build artifacts |
 
@@ -101,4 +114,4 @@ shakespeare/
 
 The TypeScript editor and Swift app communicate through one `WKScriptMessageHandler` named `editorBridge`. Release automation builds a universal, hardened-runtime app, signs and notarizes it, and publishes a ZIP containing only `Shakespeare.app`.
 
-GitHub Actions is intentionally unused. Cloudflare Workers Builds deploys the tiny website, Cloudflare R2 keeps versioned release archives, and `make release` performs the Apple-only build and notarization locally before atomically advancing the public download. It then downloads the live URL and proves its SHA-256 matches the signed source artifact. See [Releasing](docs/RELEASING.md).
+GitHub Actions is intentionally unused. Cloudflare handles website CI/CD and versioned release storage without GitHub-hosted runner minutes. See [Development and releasing](docs/RELEASING.md) for the canonical configuration, release sequence, and rollback behavior.

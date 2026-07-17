@@ -142,31 +142,6 @@ export interface EditContextSnapshot {
   placeholders: EditContextPlaceholder[];
 }
 
-export interface ProposedEditTarget {
-  block_id?: string;
-  exact_original?: string;
-  prefix?: string;
-  suffix?: string;
-  occurrence_index?: number;
-  document_revision?: number;
-  document_hash?: string;
-}
-
-export interface SelectionEditTarget {
-  from?: number;
-  to?: number;
-  text?: string;
-  position?: number;
-  document_revision?: number;
-  document_hash?: string;
-}
-
-export interface SentenceRange {
-  from: number;
-  to: number;
-  text: string;
-}
-
 // --- Pending Edits (Cursor-like diff review) ---
 export type PendingEditKind = 'selection' | 'insert' | 'findReplace' | 'delete';
 export type PendingEditStatus = 'pending' | 'conflicted';
@@ -216,18 +191,11 @@ export interface PersonalizationOutcomeSnapshot {
 // --- Limits ---
 export const MAX_SEARCH_RESULTS = 500;
 export const MAX_PENDING_EDITS = 120;
-export const MAX_PENDING_FIND_REPLACE_MATCHES = 60;
 export const MAX_EDIT_CONTEXT_BLOCKS = 160;
 export const MAX_EDIT_CONTEXT_BLOCK_TEXT = 900;
 export const NEARBY_EDIT_CONTEXT_CHARS = 900;
 
-// Tool execution result codes returned to Swift from the editorAPI edit
-// methods. Must match ToolExecutionResult in AssistantChatViewModel.swift.
-export const TOO_MANY_MATCHES = -1;
 export const TOO_MANY_PENDING_EDITS = -2;
-export const AMBIGUOUS_EDIT_TARGET = -3;
-export const STALE_EDIT_TARGET = -4;
-export const INVALID_EDIT_TARGET = -5;
 
 export const ACCEPTED_LLM_EDIT_COLOR = '#319795';
 export const FOOTNOTE_NODE_NAME = 'footnote';

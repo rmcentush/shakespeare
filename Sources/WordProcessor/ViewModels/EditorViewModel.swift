@@ -451,12 +451,6 @@ final class EditorViewModel {
 
     // MARK: - Snapshot Capture
 
-    func getContent(completion: @escaping (String?) -> Void) {
-        callEditorAPI("getContent") { result in
-            completion(result as? String)
-        }
-    }
-
     func getDocumentSnapshot(completion: @escaping (DocumentFileStore.FileSnapshot?) -> Void) {
         callEditorAPI("getDocumentSnapshot") { [weak self] result in
             if let dictionary = result as? [String: Any] {
@@ -649,56 +643,7 @@ final class EditorViewModel {
         callEditorAPI("deleteSelection")
     }
 
-    func findAndReplaceText(find: String, replaceHTML: String, replaceAll: Bool, completion: @escaping (Int) -> Void) {
-        callEditorAPI("findAndReplaceText", arguments: [find, replaceHTML, replaceAll]) { result in
-            completion(result as? Int ?? 0)
-        }
-    }
-
     // MARK: - Pending Edits (Cursor-like diff review)
-
-    func pendingReplaceSelection(
-        id: String,
-        html: String,
-        target: [String: Any]? = nil,
-        metadata: [String: Any] = [:],
-        completion: @escaping (Int) -> Void
-    ) {
-        callEditorAPI("pendingReplaceSelection", arguments: [id, html, target ?? [:], metadata]) { result in
-            completion(result as? Int ?? 0)
-        }
-    }
-
-    func pendingInsertAtCursor(
-        id: String,
-        html: String,
-        target: [String: Any]? = nil,
-        metadata: [String: Any] = [:],
-        completion: @escaping (Int) -> Void
-    ) {
-        callEditorAPI("pendingInsertAtCursor", arguments: [id, html, target ?? [:], metadata]) { result in
-            completion(result as? Int ?? 0)
-        }
-    }
-
-    func pendingFindAndReplace(id: String, find: String, replaceHTML: String, replaceAll: Bool, completion: @escaping (Int) -> Void) {
-        callEditorAPI("pendingFindAndReplace", arguments: [id, find, replaceHTML, replaceAll]) { result in
-            completion(result as? Int ?? 0)
-        }
-    }
-
-    func pendingProposeEdit(
-        id: String,
-        target: [String: Any],
-        replacementHTML: String,
-        replaceAll: Bool,
-        metadata: [String: Any] = [:],
-        completion: @escaping (Int) -> Void
-    ) {
-        callEditorAPI("pendingProposeEdit", arguments: [id, target, replacementHTML, replaceAll, metadata]) { result in
-            completion(result as? Int ?? 0)
-        }
-    }
 
     func acceptAllPendingEdits() {
         callEditorAPI("acceptAllPendingEdits")

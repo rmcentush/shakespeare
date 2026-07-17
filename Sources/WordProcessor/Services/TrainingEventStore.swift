@@ -39,6 +39,7 @@ final class TrainingEventStore: @unchecked Sendable {
     static let currentSchemaVersion = 2
     static let maximumWritingSampleCharacters = 100_000
     static let minimumWritingSampleWords = 300
+    static let maximumWritingSamples = 50
 
     struct Consent: Codable, Equatable, Sendable {
         let collectionEnabled: Bool
@@ -141,6 +142,7 @@ final class TrainingEventStore: @unchecked Sendable {
         case tooShort
         case tooLong
         case insufficientStructure
+        case sampleLimitReached
     }
 
     private static let styleKinds: Set<String> = [
@@ -150,7 +152,9 @@ final class TrainingEventStore: @unchecked Sendable {
     private let decoder = JSONDecoder()
     private let lock = NSLock()
     private var cachedEvents: [Event]?
+    private var cachedEventIDs: Set<String>?
     private var cachedEventLogSize: UInt64?
+    private var lastCompactionAttemptEventCount = 0
 
     var eventLogURL: URL {
         try? ShakespeareStorage.prepare()
@@ -288,6 +292,11 @@ final class TrainingEventStore: @unchecked Sendable {
                 print("TrainingEventStore: failed to append outcome: \(error)")
             }
         }
+        do {
+            try compactIfNeededUnlocked()
+        } catch {
+            print("TrainingEventStore: failed to compact outcomes: \(error)")
+        }
         return acknowledged
     }
 
@@ -314,6 +323,13 @@ final class TrainingEventStore: @unchecked Sendable {
             $0.contentHash == contentHash && $0.provenance.capture == "writing_sample_import"
         }) else {
             return .duplicate
+        }
+        let writingSampleCount = events.lazy.filter {
+            $0.eventType == "document_snapshot"
+                && $0.provenance.capture == "writing_sample_import"
+        }.count
+        guard writingSampleCount < Self.maximumWritingSamples else {
+            return .sampleLimitReached
         }
 
         let documentID = "writing-sample-\(contentHash)"
@@ -346,6 +362,7 @@ final class TrainingEventStore: @unchecked Sendable {
             trainingEligible: true
         )
         try appendUnlocked(event)
+        try compactIfNeededUnlocked()
         return .imported
     }
 
@@ -399,10 +416,13 @@ final class TrainingEventStore: @unchecked Sendable {
         defer { lock.unlock() }
         let events = allEventsUnlocked()
         let outcomes = events.filter { $0.eventType == "edit_outcome" }
-        let eligible = outcomes.filter { $0.trainingEligible == true && ($0.confidence ?? 0) >= 0.8 }
-        let legacyEligible = events.filter {
-            $0.schemaVersion == 1 && $0.eventType == "edit_decision"
-                && $0.decision == "accept" && $0.finalText != nil
+        let eligible = outcomes.filter {
+            StyleLearningPolicy.isDurableStyleEvidence(
+                outcome: $0.outcome,
+                finalText: $0.finalText,
+                trainingEligible: $0.trainingEligible,
+                confidence: $0.confidence
+            )
         }
         let writingSamples = events.filter {
             $0.eventType == "document_snapshot"
@@ -419,7 +439,7 @@ final class TrainingEventStore: @unchecked Sendable {
         return Readiness(
             eventCount: events.count,
             resolvedEditCount: outcomes.count,
-            eligibleExampleCount: eligible.count + legacyEligible.count,
+            eligibleExampleCount: eligible.count,
             styleDecisionCount: styleCount,
             confirmedRewriteCount: confirmedRewriteCount,
             bootstrapSampleCount: writingSamples.count
@@ -532,6 +552,7 @@ final class TrainingEventStore: @unchecked Sendable {
         let data = try encoder.encode(Array(processed).sorted())
         try data.write(to: processedIDsURL, options: .atomic)
         try Self.protectFile(at: processedIDsURL)
+        try compactIfNeededUnlocked()
     }
 
     func learnedPreferences() -> String {
@@ -548,7 +569,9 @@ final class TrainingEventStore: @unchecked Sendable {
         try ShakespeareStorage.resetPersonalization()
         AuthorStyleReference.reload()
         cachedEvents = []
+        cachedEventIDs = []
         cachedEventLogSize = 0
+        lastCompactionAttemptEventCount = 0
         UserDefaults.standard.removeObject(forKey: "personalizationSnapshotHashes")
     }
 
@@ -569,14 +592,13 @@ final class TrainingEventStore: @unchecked Sendable {
                   !action.originalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { return nil }
 
-            if action.schemaVersion == 1, action.decision == "accept", action.finalText != nil {
-                return Self.summary(from: action)
-            }
             guard let outcome = outcomes[action.id],
-                  outcome.trainingEligible == true,
-                  (outcome.confidence ?? 0) >= 0.8,
-                  ["accepted_unchanged", "accepted_modified", "later_accepted", "rejected_rewritten"]
-                    .contains(outcome.outcome ?? "")
+                  StyleLearningPolicy.isDurableStyleEvidence(
+                    outcome: outcome.outcome,
+                    finalText: outcome.finalText,
+                    trainingEligible: outcome.trainingEligible,
+                    confidence: outcome.confidence
+                  )
             else { return nil }
 
             return DecisionSummary(
@@ -626,10 +648,12 @@ final class TrainingEventStore: @unchecked Sendable {
         let fileSize = ((try? FileManager.default.attributesOfItem(atPath: eventLogURL.path)[.size])
             as? NSNumber)?.uint64Value ?? 0
         if let cachedEvents, cachedEventLogSize == fileSize {
+            if cachedEventIDs == nil { cachedEventIDs = Set(cachedEvents.map(\.id)) }
             return cachedEvents
         }
         guard let raw = try? String(contentsOf: eventLogURL, encoding: .utf8) else {
             cachedEvents = []
+            cachedEventIDs = []
             cachedEventLogSize = 0
             return []
         }
@@ -637,6 +661,7 @@ final class TrainingEventStore: @unchecked Sendable {
             try? decoder.decode(Event.self, from: Data(line.utf8))
         }
         cachedEvents = events
+        cachedEventIDs = Set(events.map(\.id))
         cachedEventLogSize = fileSize
         return events
     }
@@ -645,9 +670,10 @@ final class TrainingEventStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         do {
-            let existingIDs = Set(allEventsUnlocked().map(\.id))
-            guard !existingIDs.contains(event.id) else { return }
+            _ = allEventsUnlocked()
+            guard cachedEventIDs?.contains(event.id) != true else { return }
             try appendUnlocked(event)
+            try compactIfNeededUnlocked()
         } catch {
             print("TrainingEventStore: failed to append event: \(error)")
         }
@@ -670,8 +696,73 @@ final class TrainingEventStore: @unchecked Sendable {
         }
         try Self.protectFile(at: eventLogURL)
         cachedEvents?.append(event)
+        cachedEventIDs?.insert(event.id)
         cachedEventLogSize = ((try? FileManager.default.attributesOfItem(atPath: eventLogURL.path)[.size])
             as? NSNumber)?.uint64Value
+    }
+
+    private func compactIfNeededUnlocked() throws {
+        let events = allEventsUnlocked()
+        let fileSize = cachedEventLogSize ?? 0
+        let exceedsLimit = events.count > PersonalizationLedgerRetentionPolicy.maximumEventCount
+            || fileSize > PersonalizationLedgerRetentionPolicy.maximumEventLogBytes
+        guard exceedsLimit else { return }
+        guard lastCompactionAttemptEventCount == 0
+                || events.count >= lastCompactionAttemptEventCount + 250
+        else { return }
+        let processed = processedIDsUnlocked()
+        let records = events.map { event in
+            let requiresProfileProcessing: Bool
+            if event.eventType == "edit_outcome" {
+                requiresProfileProcessing = StyleLearningPolicy.isDurableStyleEvidence(
+                    outcome: event.outcome,
+                    finalText: event.finalText,
+                    trainingEligible: event.trainingEligible,
+                    confidence: event.confidence
+                )
+            } else {
+                // Legacy action-only records cannot prove the writer changed
+                // model prose, so they remain history rather than profile evidence.
+                requiresProfileProcessing = false
+            }
+            return PersonalizationLedgerRetentionRecord(
+                id: event.id,
+                parentEventID: event.parentEventID,
+                eventType: event.eventType,
+                recordedAt: event.recordedAt,
+                requiresProfileProcessing: requiresProfileProcessing
+            )
+        }
+        let retainedIndices = PersonalizationLedgerRetentionPolicy.retainedIndices(
+            records: records,
+            processedIDs: processed
+        )
+        let retainedEvents = retainedIndices.map { events[$0] }
+        guard retainedEvents.count < events.count else {
+            lastCompactionAttemptEventCount = events.count
+            return
+        }
+
+        var compactedData = Data()
+        for event in retainedEvents {
+            compactedData.append(try encoder.encode(event))
+            compactedData.append(0x0a)
+        }
+        try compactedData.write(to: eventLogURL, options: .atomic)
+        try Self.protectFile(at: eventLogURL)
+
+        let retainedEventIDs = Set(retainedEvents.map(\.id))
+        let retainedProcessedIDs = processed.intersection(retainedEventIDs)
+        if retainedProcessedIDs != processed {
+            let processedData = try encoder.encode(Array(retainedProcessedIDs).sorted())
+            try processedData.write(to: processedIDsURL, options: .atomic)
+            try Self.protectFile(at: processedIDsURL)
+        }
+
+        cachedEvents = retainedEvents
+        cachedEventIDs = retainedEventIDs
+        cachedEventLogSize = UInt64(compactedData.count)
+        lastCompactionAttemptEventCount = events.count
     }
 
     private func ensureStorageUnlocked() throws {

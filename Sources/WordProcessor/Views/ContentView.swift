@@ -72,55 +72,65 @@ struct ContentView: View {
     var body: some View {
         mainLayout
             .navigationTitle(document.windowTitle)
-            .toolbar(isDistractionFree ? .hidden : .automatic)
             .toolbar {
-                if !isDistractionFree {
+                ToolbarItem(placement: .automatic) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            showVersionHistory.toggle()
+                        }
+                    } label: {
+                        Image(systemName: "clock.arrow.circlepath")
+                    }
+                    .help("Version History (Cmd+Shift+V)")
+                    .opacity(isDistractionFree ? 0 : 1)
+                    .disabled(isDistractionFree)
+                }
+                ToolbarItem(placement: .automatic) {
+                    Button {
+                        toggleSidebar(.chat)
+                    } label: {
+                        Image(systemName: "bubble.right")
+                    }
+                    .help("Toggle Research Chat (Cmd+\\)")
+                    .opacity(isDistractionFree ? 0 : 1)
+                    .disabled(isDistractionFree)
+                }
+                ToolbarItem(placement: .automatic) {
+                    Button {
+                        if editorViewModel.selectionState.hasSelection {
+                            editorViewModel.addComment()
+                            withAnimation(Layout.sidebarAnimation) {
+                                activeSidebar = .comments
+                            }
+                        } else {
+                            toggleSidebar(.comments)
+                        }
+                    } label: {
+                        Image(systemName: activeSidebar == .comments ? "quote.bubble.fill" : "quote.bubble")
+                    }
+                    .help(editorViewModel.selectionState.hasSelection ? "Add Comment (Cmd+Shift+M)" : "Toggle Comments")
+                    .opacity(isDistractionFree ? 0 : 1)
+                    .disabled(isDistractionFree)
+                }
+                if editorViewModel.pendingEditCount > 0 {
                     ToolbarItem(placement: .automatic) {
                         Button {
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                showVersionHistory.toggle()
-                            }
+                            toggleSidebar(.suggestions)
                         } label: {
-                            Image(systemName: "clock.arrow.circlepath")
+                            Image(systemName: activeSidebar == .suggestions ? "list.bullet.rectangle.portrait.fill" : "list.bullet.rectangle.portrait")
                         }
-                        .help("Version History (Cmd+Shift+V)")
-                    }
-                    ToolbarItem(placement: .automatic) {
-                        Button {
-                            toggleSidebar(.chat)
-                        } label: {
-                            Image(systemName: "bubble.right")
-                        }
-                        .help("Toggle Research Chat (Cmd+\\)")
-                    }
-                    ToolbarItem(placement: .automatic) {
-                        Button {
-                            if editorViewModel.selectionState.hasSelection {
-                                editorViewModel.addComment()
-                                withAnimation(Layout.sidebarAnimation) {
-                                    activeSidebar = .comments
-                                }
-                            } else {
-                                toggleSidebar(.comments)
-                            }
-                        } label: {
-                            Image(systemName: activeSidebar == .comments ? "quote.bubble.fill" : "quote.bubble")
-                        }
-                        .help(editorViewModel.selectionState.hasSelection ? "Add Comment (Cmd+Shift+M)" : "Toggle Comments")
-                    }
-                    if editorViewModel.pendingEditCount > 0 {
-                        ToolbarItem(placement: .automatic) {
-                            Button {
-                                toggleSidebar(.suggestions)
-                            } label: {
-                                Image(systemName: activeSidebar == .suggestions ? "list.bullet.rectangle.portrait.fill" : "list.bullet.rectangle.portrait")
-                            }
-                            .help("Review Suggestions")
-                        }
+                        .help("Review Suggestions")
+                        .opacity(isDistractionFree ? 0 : 1)
+                        .disabled(isDistractionFree)
                     }
                 }
             }
-            .background { keyboardShortcuts }
+            .background {
+                keyboardShortcuts
+                FocusModeEscapeMonitor(isEnabled: isDistractionFree) {
+                    toggleFocusMode()
+                }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .editorContentUpdated, object: editorViewModel)) { notification in
                 guard let html = notification.userInfo?["html"] as? String,
                       let text = notification.userInfo?["text"] as? String,

@@ -11,26 +11,14 @@ import { Plugin } from '@tiptap/pm/state';
 import { sendToSwift, registerSwiftCallbacks } from './bridge';
 import { setEditorInstance } from './instance';
 import {
-  AMBIGUOUS_EDIT_TARGET,
-  INVALID_EDIT_TARGET,
-  MAX_PENDING_FIND_REPLACE_MATCHES,
-  PendingEditMetadata,
-  ProposedEditTarget,
-  STALE_EDIT_TARGET,
-  SelectionEditTarget,
-  TOO_MANY_MATCHES,
-} from './types';
-import {
   SmartQuotes,
   contextCharacterBefore,
   normalizeDocumentSmartQuotes,
-  prepareReplacementHTMLForRange,
   smartifyHTMLFragment,
   smartifyQuotesWithContext,
 } from './smartQuotes';
 import {
   SearchHighlight,
-  findTextInDoc,
   runClearFind,
   runFindInDocument,
   runFindNext,
@@ -91,7 +79,6 @@ import {
   addComment,
   addCommentAtRangeFromJSON,
   attachCommentActivation,
-  collectComments,
   emitCommentsChanged,
   focusComment,
   pendingReplaceComment,
@@ -107,19 +94,11 @@ import {
   acceptPendingEdit,
   acknowledgePersonalizationOutcomes,
   collectPersonalizationOutcomes,
-  createPendingEdit,
   focusPendingEdit,
   focusRelativePendingEdit,
-  getPendingEditsState,
-  pendingEditsSummaryJSON,
-  positionFromInsertionTarget,
-  queuePendingEdits,
-  queueProposedEdit,
-  rangeFromSelectionTarget,
   rejectAllPendingEdits,
   rejectPendingEdit,
   resetPersonalizationOutcomeTracking,
-  replacementPendingEdits,
 } from './pendingEdits';
 import { buildEditContextSnapshot } from './editContext';
 import { attachProofreading } from './proofreading';
@@ -349,9 +328,6 @@ registerSwiftCallbacks({
       console.error('Failed to load JSON content into editor', error);
     }
   },
-  getContent(): string {
-    return serializeDocumentHTML(editor);
-  },
   getDocumentSnapshot(): unknown {
     const snapshot = getDocumentTextSnapshot(editor);
     return {
@@ -504,9 +480,6 @@ registerSwiftCallbacks({
   resetProofreadingDictionary() {
     proofreading.resetDictionary();
   },
-  getProofreadingState(): string {
-    return proofreading.stateJSON();
-  },
   getGrammarContextSnapshot(): string {
     return proofreading.grammarContextJSON();
   },
@@ -515,9 +488,6 @@ registerSwiftCallbacks({
   },
   setZoomScale(scale: number) {
     setEditorZoomScale(scale);
-  },
-  setEditable(editable: boolean) {
-    editor.setEditable(editable);
   },
   getSelectedText(): string {
     const { from, to } = editor.state.selection;
@@ -572,103 +542,6 @@ registerSwiftCallbacks({
     ).run();
     normalizeDocumentSmartQuotes(editor);
   },
-  findAndReplaceText(find: string, replaceHtml: string, replaceAllOccurrences: boolean): number {
-    const maxMatches = replaceAllOccurrences ? MAX_PENDING_FIND_REPLACE_MATCHES + 1 : 2;
-    const matches = findTextInDoc(editor.state.doc, find, maxMatches);
-    if (matches.length === 0) return 0;
-    if (!replaceAllOccurrences && matches.length > 1) {
-      return AMBIGUOUS_EDIT_TARGET;
-    }
-    if (replaceAllOccurrences && matches.length > MAX_PENDING_FIND_REPLACE_MATCHES) {
-      return TOO_MANY_MATCHES;
-    }
-    const toReplace = replaceAllOccurrences ? matches : [matches[0]];
-    // Replace from end to start to preserve positions
-    for (let i = toReplace.length - 1; i >= 0; i--) {
-      const normalizedReplaceHtml = prepareReplacementHTMLForRange(
-        editor,
-        toReplace[i].from,
-        toReplace[i].to,
-        replaceHtml,
-      );
-      editor.chain()
-        .insertContentAt({ from: toReplace[i].from, to: toReplace[i].to }, normalizedReplaceHtml)
-        .run();
-    }
-    normalizeDocumentSmartQuotes(editor);
-    return toReplace.length;
-  },
-
-  // --- Pending Edits API (Cursor-like diff review) ---
-  pendingReplaceSelection(
-    id: string,
-    newHtml: string,
-    target?: SelectionEditTarget,
-    metadata?: PendingEditMetadata
-  ): number {
-    const targetedRange = rangeFromSelectionTarget(editor, target ?? null);
-    if (typeof targetedRange === 'number') return targetedRange;
-
-    const { from, to } = targetedRange ?? editor.state.selection;
-    if (from === to) return 0;
-    const edits = replacementPendingEdits(editor, id, { from, to }, newHtml, 'selection').map((edit) => ({
-      ...edit,
-      learningCategory: metadata?.learningCategory ?? '',
-      rationale: metadata?.rationale ?? '',
-      instruction: metadata?.instruction ?? '',
-    }));
-    return queuePendingEdits(editor, edits, edits[0]?.id ?? null);
-  },
-  pendingInsertAtCursor(
-    id: string,
-    newHtml: string,
-    target?: SelectionEditTarget,
-    metadata?: PendingEditMetadata
-  ): number {
-    const targetedPosition = positionFromInsertionTarget(editor, target ?? null);
-    if (targetedPosition === STALE_EDIT_TARGET || targetedPosition === INVALID_EDIT_TARGET) {
-      return targetedPosition;
-    }
-
-    const from = targetedPosition ?? editor.state.selection.from;
-    return queuePendingEdits(editor, [
-      createPendingEdit(editor, {
-        id,
-        groupId: id,
-        kind: 'insert',
-        from,
-        to: from,
-        newHtml,
-        metadata,
-      }),
-    ], id);
-  },
-  pendingFindAndReplace(id: string, find: string, replaceHtml: string, replaceAll: boolean): number {
-    const maxMatches = replaceAll ? MAX_PENDING_FIND_REPLACE_MATCHES + 1 : 2;
-    const matches = findTextInDoc(editor.state.doc, find, maxMatches);
-    if (matches.length === 0) return 0;
-    if (!replaceAll && matches.length > 1) {
-      return AMBIGUOUS_EDIT_TARGET;
-    }
-    if (replaceAll && matches.length > MAX_PENDING_FIND_REPLACE_MATCHES) {
-      return TOO_MANY_MATCHES;
-    }
-    const toAdd = replaceAll ? matches : [matches[0]];
-    const edits = toAdd.flatMap((match, i) => {
-      const groupId = replaceAll ? `${id}_${i}` : id;
-      return replacementPendingEdits(editor, groupId, match, replaceHtml, 'findReplace');
-    });
-    return queuePendingEdits(editor, edits, edits[0]?.id ?? null);
-  },
-  pendingProposeEdit(
-    id: string,
-    target: ProposedEditTarget,
-    replaceHtml: string,
-    replaceAll: boolean,
-    metadata?: PendingEditMetadata
-  ): number {
-    return queueProposedEdit(editor, id, target ?? {}, replaceHtml, replaceAll, metadata);
-  },
   acceptAllPendingEdits() { acceptAllPendingEdits(editor); },
   rejectAllPendingEdits() { rejectAllPendingEdits(editor); },
   acceptPendingEdit(id: string): boolean { return acceptPendingEdit(editor, id); },
@@ -676,8 +549,6 @@ registerSwiftCallbacks({
   focusPendingEdit(id: string): boolean { return focusPendingEdit(editor, id); },
   focusNextPendingEdit(): boolean { return focusRelativePendingEdit(editor, 1); },
   focusPreviousPendingEdit(): boolean { return focusRelativePendingEdit(editor, -1); },
-  getPendingEdits(): string { return pendingEditsSummaryJSON(getPendingEditsState(editor.state)); },
-  getPendingEditCount(): number { return getPendingEditsState(editor.state).edits.length; },
   getEditContextSnapshot(): string { return JSON.stringify(buildEditContextSnapshot(editor)); },
   addComment(commentId: string): boolean { return addComment(editor, commentId); },
   addCommentAtRange(commentJSON: string): boolean { return addCommentAtRangeFromJSON(editor, commentJSON); },
@@ -688,7 +559,6 @@ registerSwiftCallbacks({
   pendingReplaceComment(commentId: string, editId: string, html: string): number {
     return pendingReplaceComment(editor, commentId, editId, html);
   },
-  getComments(): string { return JSON.stringify(collectComments(editor)); },
 });
 
 attachLinkHoverPreview(editor);
