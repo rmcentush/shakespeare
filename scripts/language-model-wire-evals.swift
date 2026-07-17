@@ -8,6 +8,7 @@ struct LanguageModelWireEvals {
         rejectsUnsafeCitationURLs()
         buildsPrivateStructuredRequest()
         enablesBoundedWebSearchForChatOnly()
+        allowsChatToSkipWebSearch()
         validatesCuratedModelCatalog()
         configuresBoundedModelWaterfall()
         boundsClientRetriesAroundProviderWaterfall()
@@ -105,11 +106,34 @@ struct LanguageModelWireEvals {
         )
         let tools = body["tools"] as? [[String: Any]]
         let parameters = tools?.first?["parameters"] as? [String: Any]
+        let provider = body["provider"] as? [String: Any]
+        let reasoning = body["reasoning"] as? [String: Any]
         precondition(tools?.first?["type"] as? String == "openrouter:web_search")
         precondition(parameters?["engine"] as? String == "parallel")
-        precondition(parameters?["max_results"] as? Int == 4)
-        precondition(parameters?["max_total_results"] as? Int == 8)
-        precondition(parameters?["max_characters"] as? Int == 2_000)
+        precondition(parameters?["max_results"] as? Int == 3)
+        precondition(parameters?["max_total_results"] as? Int == 3)
+        precondition(parameters?["max_characters"] as? Int == 900)
+        precondition(provider?["sort"] as? String == "throughput")
+        precondition(reasoning?["effort"] as? String == "minimal")
+        precondition(reasoning?["exclude"] as? Bool == true)
+        precondition(body["verbosity"] as? String == "low")
+    }
+
+    private static func allowsChatToSkipWebSearch() {
+        let body = LanguageModelService.requestBody(
+            runtime: InferenceSettings.runtime(purpose: .chat),
+            messages: [["role": "user", "content": "Tighten this paragraph."]],
+            systemPrompt: nil,
+            outputFormat: nil,
+            temperature: 0.2,
+            maxTokens: 512,
+            webSearchEnabled: false
+        )
+        let provider = body["provider"] as? [String: Any]
+        precondition(body["tools"] == nil)
+        precondition(body["reasoning"] == nil)
+        precondition(body["verbosity"] == nil)
+        precondition(provider?["sort"] == nil)
     }
 
     private static func configuresBoundedModelWaterfall() {
@@ -172,6 +196,7 @@ struct LanguageModelWireEvals {
     private static func validatesCuratedModelCatalog() {
         let expectedIDs = [
             "moonshotai/kimi-k3",
+            "anthropic/claude-haiku-4.5",
             "x-ai/grok-4.5",
             "openai/gpt-5.6-sol",
             "anthropic/claude-fable-5",
@@ -182,6 +207,7 @@ struct LanguageModelWireEvals {
         precondition(options.map(\.id) == expectedIDs)
         precondition(options.map(\.name) == [
             "Kimi K3",
+            "Claude Haiku 4.5",
             "Grok 4.5",
             "GPT-5.6 Sol",
             "Claude Fable 5",
@@ -190,12 +216,12 @@ struct LanguageModelWireEvals {
         ])
         precondition(Set(options.map(\.id)).count == options.count)
         precondition(InferenceSettings.defaultWritingModel == InferenceSettings.kimiModel)
-        precondition(InferenceSettings.defaultResearchModel == InferenceSettings.grokModel)
+        precondition(InferenceSettings.defaultResearchModel == InferenceSettings.haikuModel)
         let chatRuntime = InferenceSettings.runtime(
             purpose: .chat,
             modelOverride: InferenceSettings.defaultResearchModel
         )
-        precondition(chatRuntime.model == InferenceSettings.grokModel)
+        precondition(chatRuntime.model == InferenceSettings.haikuModel)
         precondition(chatRuntime.fallbackModels.first == InferenceSettings.kimiModel)
         precondition(chatRuntime.webSearchEnabled)
         precondition(InferenceSettings.normalizedModelID("~x-ai/grok-latest") == "x-ai/grok-4.5")

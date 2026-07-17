@@ -1,4 +1,4 @@
-.PHONY: all build run clean editor editor-tests typecheck privacy-check delivery-contract-check release-script-check website-check cloud-ci check swift install update package deploy-site release-readiness release evals document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals storage-layout-evals style-context-evals chat-context-evals style-profile-evals ledger-retention-evals writing-quality-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
+.PHONY: all build run clean editor editor-tests typecheck privacy-check delivery-contract-check release-script-check website-check cloud-ci check swift install update package deploy-site release-readiness release evals document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals storage-layout-evals style-context-evals chat-context-evals chat-search-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 all: build
 
@@ -82,6 +82,10 @@ chat-context-evals:
 	swiftc Sources/WordProcessor/Services/ChatDocumentContextAssembler.swift scripts/chat-context-evals.swift -o /tmp/chat-context-evals
 	/tmp/chat-context-evals
 
+chat-search-policy-evals:
+	swiftc Sources/WordProcessor/Services/ChatSearchPolicy.swift scripts/chat-search-policy-evals.swift -o /tmp/chat-search-policy-evals
+	/tmp/chat-search-policy-evals
+
 style-profile-evals:
 	swiftc Sources/WordProcessor/Services/PackageFileSafety.swift Sources/WordProcessor/Services/StyleProfileCompiler.swift Sources/WordProcessor/Services/StyleProfileDraftStore.swift scripts/style-profile-evals.swift -o /tmp/style-profile-evals
 	/tmp/style-profile-evals
@@ -115,7 +119,7 @@ focus-mode-escape-evals:
 	swiftc -parse-as-library Sources/WordProcessor/Views/FocusModeEscapeMonitor.swift scripts/focus-mode-escape-evals.swift -o /tmp/focus-mode-escape-evals
 	/tmp/focus-mode-escape-evals
 
-evals: release-script-check editor-tests document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals storage-layout-evals style-context-evals chat-context-evals style-profile-evals ledger-retention-evals writing-quality-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
+evals: release-script-check editor-tests document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals storage-layout-evals style-context-evals chat-context-evals chat-search-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 # Build release
 build: copy-assets
