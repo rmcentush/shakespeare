@@ -17,8 +17,8 @@ test("ships responsive full-page scenes, one message, and one download action", 
   assert.match(html, /sea-desk-hero\.jpg/);
   assert.match(html, /sea-desk-hero-portrait\.jpg/);
   assert.match(html, /<picture class="scene-art">/);
-  assert.match(html, /<h1>Your voice, on the page\.<\/h1>/);
-  assert.match(html, /A thoughtful writing app for Mac\./);
+  assert.match(html, /<h1>Write like yourself\.<\/h1>/);
+  assert.match(html, /A local-first writing app for Mac\./);
   assert.match(html, /Download for Mac/);
   assert.match(html, /Shakespeare-latest\.zip/);
   assert.equal((html.match(/<a\b/g) ?? []).length, 1);
