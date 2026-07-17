@@ -121,32 +121,24 @@ struct SettingsView: View {
 
     private var myStyleSettings: some View {
         SettingsPage {
-            SettingsCard(title: "How My Style Works") {
-                Text("Shakespeare combines a reviewed 1,800-character profile with relevant reference sections, at most two imported excerpts, and at most two user-authored saved rewrites. The complete style packet stays under 8,000 characters; project context remains temporary.")
-                    .settingsDescriptionStyle()
-            }
-
-            SettingsCard(title: "Learn From My Writing") {
+            SettingsCard(title: "Personalization") {
                 Toggle(isOn: $personalizationEnabled) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Learn from saved rewrites and samples")
+                        Text("Make suggestions sound like me")
                             .fontWeight(.medium)
-                        Text("On by default. Turn off anytime.")
+                        Text("Learns from writing samples and rewrites you save.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
 
-                Text("A suggestion is not treated as a durable style signal when you click Accept or Reject. Shakespeare waits until the document is saved, then records whether you kept, revised, reverted, or rewrote it.")
-                    .settingsDescriptionStyle()
-
                 Divider()
 
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Bootstrap from finished writing")
+                        Text("Writing samples")
                             .fontWeight(.medium)
-                        Text("Import separate .txt or .md files that you wrote and consider representative.")
+                        Text(styleSourceSummary)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -157,9 +149,6 @@ struct SettingsView: View {
                     }
                     .disabled(!personalizationEnabled)
                 }
-
-                Text("Samples stay local. At most two short, relevant excerpts can accompany a style-aware request, and a bounded cross-document sample can seed the reviewed profile. Five substantial pieces are a useful start; include only writing you own.")
-                    .settingsDescriptionStyle()
 
                 if !writingSampleImportMessage.isEmpty {
                     Label(
@@ -174,71 +163,39 @@ struct SettingsView: View {
 
                 Divider()
 
-                HStack(alignment: .firstTextBaseline) {
-                    Text(personalizationReadiness.status)
-                        .fontWeight(.medium)
-                    Spacer()
-                    Text("\(personalizationReadiness.eligibleExampleCount) reliable examples")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                ProgressView(value: personalizationReadiness.progress)
-                    .tint(.accentColor)
-
-                HStack(spacing: 10) {
-                    SettingsMetric(
-                        value: personalizationReadiness.resolvedEditCount,
-                        label: "Resolved edits",
-                        systemImage: "checkmark.circle"
-                    )
-                    SettingsMetric(
-                        value: personalizationReadiness.confirmedRewriteCount,
-                        label: "Rewrites",
-                        systemImage: "pencil.and.outline"
-                    )
-                    SettingsMetric(
-                        value: personalizationReadiness.bootstrapSampleCount,
-                        label: "Samples",
-                        systemImage: "doc.on.doc"
-                    )
-                }
-            }
-
-            SettingsCard(title: "What Shakespeare Learned") {
-                HStack {
-                    Label("New profile evidence", systemImage: "waveform.path.ecg")
-                    Spacer()
-                    Text("\(pendingProfileEvidenceCount)")
-                        .font(.callout.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(pendingProfileEvidenceCount >= 20 ? .orange : .secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(.quaternary, in: Capsule())
-                }
-
-                Text("Imported samples can seed the profile; repeated, high-confidence saved outcomes refine it. Saved rewrites also improve the next review immediately through a tiny confirmed-example layer. You approve every durable profile update.")
-                    .settingsDescriptionStyle()
-
-                Button {
-                    Task { await updateStylePreferences() }
-                } label: {
-                    if isUpdatingStylePreferences {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("Reviewing…")
-                        }
-                    } else {
-                        Text("Refine Style Profile")
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Style profile")
+                            .fontWeight(.medium)
+                        Text(styleProfileStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                    Spacer()
+                    Button {
+                        Task { await updateStylePreferences() }
+                    } label: {
+                        if isUpdatingStylePreferences {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Preparing…")
+                            }
+                        } else {
+                            Text("Review Update")
+                        }
+                    }
+                    .disabled(
+                        !personalizationEnabled ||
+                        isUpdatingStylePreferences ||
+                        pendingProfileEvidenceCount == 0
+                    )
                 }
-                .disabled(isUpdatingStylePreferences || pendingProfileEvidenceCount == 0)
 
                 if !learnedPreferencesPreview.isEmpty {
                     Text(learnedPreferencesPreview)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(5)
+                        .lineLimit(3)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10)
@@ -253,30 +210,52 @@ struct SettingsView: View {
                 }
             }
 
-            SettingsCard(title: "Files and Privacy") {
-                SettingsPathRow(title: "Style reference", path: styleReferencePath)
-                SettingsPathRow(title: "Learned preferences", path: learnedPreferencesPath)
+            SettingsCard(title: "Privacy & Data") {
+                Text("Your style data stays on this Mac. Only short, relevant excerpts are sent with writing requests.")
+                    .settingsDescriptionStyle()
 
-                Divider()
+                DisclosureGroup("Local files and controls") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SettingsPathRow(title: "Style reference", path: styleReferencePath)
+                        SettingsPathRow(title: "Style profile", path: learnedPreferencesPath)
 
-                HStack {
-                    Label("Local learning events", systemImage: "internaldrive")
-                    Spacer()
-                    Text("\(personalizationReadiness.eventCount)")
-                        .font(.callout.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
+                        HStack {
+                            Text("Learning history")
+                            Spacer()
+                            Text("\(personalizationReadiness.eventCount) events")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
 
-                HStack {
-                    Button("Reveal Shakespeare Folder") {
-                        revealPersonalizationData()
+                        HStack {
+                            Button("Reveal Folder") {
+                                revealPersonalizationData()
+                            }
+                            Button("Delete Learning History", role: .destructive) {
+                                showDeleteEventsConfirmation = true
+                            }
+                        }
                     }
-                    Button("Delete Learning History", role: .destructive) {
-                        showDeleteEventsConfirmation = true
-                    }
+                    .padding(.top, 8)
                 }
             }
         }
+    }
+
+    private var styleSourceSummary: String {
+        let samples = personalizationReadiness.bootstrapSampleCount
+        let rewrites = personalizationReadiness.confirmedRewriteCount
+        if samples == 0, rewrites == 0 { return "Add finished .txt or .md files to get started." }
+        return "\(samples) sample\(samples == 1 ? "" : "s") · \(rewrites) saved rewrite\(rewrites == 1 ? "" : "s")"
+    }
+
+    private var styleProfileStatus: String {
+        guard personalizationEnabled else { return "Paused" }
+        if pendingProfileEvidenceCount > 0 {
+            return "\(pendingProfileEvidenceCount) new pattern\(pendingProfileEvidenceCount == 1 ? "" : "s") ready to review"
+        }
+        if !learnedPreferencesPreview.isEmpty { return "Active and up to date" }
+        return "Builds as you save rewrites"
     }
 
     private var typographySettings: some View {
@@ -860,28 +839,6 @@ private struct SettingsPage<Content: View>: View {
             .padding(24)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-    }
-}
-
-private struct SettingsMetric: View {
-    let value: Int
-    let label: String
-    let systemImage: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: systemImage)
-                .foregroundStyle(.secondary)
-            Text("\(value)")
-                .font(.callout.monospacedDigit().weight(.semibold))
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
