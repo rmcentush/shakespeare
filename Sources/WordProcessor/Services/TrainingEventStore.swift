@@ -6,7 +6,12 @@ enum PersonalizationSettings {
     private static let writerIDDefaultsKey = "personalizationWriterID"
 
     static var isEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: enabledDefaultsKey) }
+        get {
+            guard UserDefaults.standard.object(forKey: enabledDefaultsKey) != nil else {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: enabledDefaultsKey)
+        }
         set { UserDefaults.standard.set(newValue, forKey: enabledDefaultsKey) }
     }
 

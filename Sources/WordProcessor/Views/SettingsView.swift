@@ -22,7 +22,7 @@ struct SettingsView: View {
     @AppStorage(SettingsDestination.defaultsKey) private var selectedTab = SettingsDestination.apiKeys
     @AppStorage(InferenceSettings.writingModelDefaultsKey) private var writingModel = InferenceSettings.defaultWritingModel
     @AppStorage(InferenceSettings.researchModelDefaultsKey) private var researchModel = InferenceSettings.defaultResearchModel
-    @AppStorage(PersonalizationSettings.enabledDefaultsKey) private var personalizationEnabled = false
+    @AppStorage(PersonalizationSettings.enabledDefaultsKey) private var personalizationEnabled = true
     @State private var personalizationReadiness = TrainingEventStore.Readiness(
         eventCount: 0,
         resolvedEditCount: 0,
@@ -127,7 +127,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Learn from saved rewrites and samples")
                             .fontWeight(.medium)
-                        Text("Off by default. No background uploads or training jobs.")
+                        Text("On by default. Turn off anytime.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

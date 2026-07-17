@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 enum OnboardingSettings {
     static let completedVersionKey = "onboardingCompletedVersion"
-    static let currentVersion = 3
+    static let currentVersion = 4
     @MainActor private static var presentingWindowID: UUID?
 
     static var shouldPresent: Bool {
@@ -39,7 +39,7 @@ struct OnboardingView: View {
     @State private var isConnecting = false
     @State private var connectionError = ""
     @State private var requiresBilling = false
-    @State private var personalizationEnabled = false
+    @State private var personalizationEnabled = true
     @State private var showWritingSampleImporter = false
     @State private var writingSampleImportMessage = ""
     @State private var writingSampleImportFailed = false
@@ -55,7 +55,7 @@ struct OnboardingView: View {
             Divider()
             footer
         }
-        .frame(width: 740, height: 660)
+        .frame(width: 640)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             hasKey = APIKeyStore.shared.getAPIKey(service: "openrouter") != nil
@@ -80,47 +80,29 @@ struct OnboardingView: View {
         HStack(spacing: 14) {
             ShakespeareMark()
             VStack(alignment: .leading, spacing: 3) {
-                Text("Welcome to Shakespeare")
+                Text("Set up Shakespeare")
                     .font(.system(size: 15, weight: .semibold))
-                Text("One connection. Your writing, your way.")
+                Text("One key. Personal writing help.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Label(hasKey ? "Ready" : "One quick setup", systemImage: hasKey ? "checkmark.circle.fill" : "key")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(hasKey ? .green : .secondary)
         }
-        .padding(.horizontal, 32)
-        .padding(.vertical, 18)
+        .padding(.horizontal, 28)
+        .padding(.vertical, 16)
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Connect OpenRouter.")
-                    .font(.system(size: 31, weight: .semibold, design: .serif))
-                Text("A single OpenRouter API key powers drafting, revision, grammar, style review, and cited research. No training service or second account is required.")
-                    .onboardingDescription()
-            }
-
-            HStack(spacing: 10) {
-                ConnectionCapability(icon: "sparkles", title: "Write", detail: "Draft and revise")
-                ConnectionCapability(icon: "text.badge.checkmark", title: "Polish", detail: "Grammar and style")
-                ConnectionCapability(icon: "globe.americas", title: "Research", detail: "Current sources")
-            }
-
+        VStack(alignment: .leading, spacing: 14) {
             credentialCard
-
             personalizationCard
 
-            PrivacyNote(text: "The key is stored in macOS Keychain. OpenRouter bills model and search usage directly to your account. Samples and learning history remain local; only bounded evidence is sent for style-aware features, with provider data collection disabled.")
+            PrivacyNote(text: "Key in Keychain. Style history stays on this Mac. Only short, relevant excerpts go to OpenRouter. Usage is billed to your account.")
 
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 32)
-        .padding(.top, 24)
-        .padding(.bottom, 18)
+        .padding(.horizontal, 28)
+        .padding(.top, 18)
+        .padding(.bottom, 14)
     }
 
     private var personalizationCard: some View {
@@ -128,8 +110,8 @@ struct OnboardingView: View {
             HStack(spacing: 12) {
                 Toggle(isOn: $personalizationEnabled) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Make suggestions sound like me").font(.headline)
-                        Text("Optional, off by default").font(.caption).foregroundStyle(.secondary)
+                        Text("2. Make it sound like me").font(.headline)
+                        Text("On by default. Turn off anytime.").font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
@@ -140,7 +122,7 @@ struct OnboardingView: View {
                 .disabled(!personalizationEnabled)
             }
 
-            Text("Import 3–5 finished .txt or .md pieces you wrote. Shakespeare uses at most two small excerpts per review and learns from rewrites that survive a save—never from a click alone.")
+            Text("Add a few finished .txt or .md pieces. Shakespeare also learns from rewrites you keep after saving.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -162,8 +144,8 @@ struct OnboardingView: View {
     private var credentialCard: some View {
         if hasKey && !isReplacingKey {
             ConnectedCredentialCard(
-                title: "OpenRouter is ready",
-                detail: "Your API key is saved in secure local credential storage.",
+                title: "1. OpenRouter connected",
+                detail: "Writing and web research are ready.",
                 onReplace: {
                     connectionError = ""
                     requiresBilling = false
@@ -174,7 +156,7 @@ struct OnboardingView: View {
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Text("OpenRouter API key").font(.headline)
+                    Text("1. OpenRouter key").font(.headline)
                     Spacer()
                     Link("Get a key ↗", destination: InferenceSettings.openRouterKeysURL).font(.caption)
                 }
@@ -239,9 +221,9 @@ struct OnboardingView: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
-            Button("Set Up Later") { finish() }
+            Button("Skip for Now") { finish() }
                 .disabled(isConnecting)
-            Button("Open a Document") {
+            Button("Open Document") {
                 OnboardingSettings.markCompleted()
                 onOpenDocument()
             }
@@ -259,8 +241,8 @@ struct OnboardingView: View {
                     .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isConnecting)
             }
         }
-        .padding(.horizontal, 32)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 28)
+        .padding(.vertical, 14)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.45))
     }
 
@@ -333,33 +315,6 @@ private struct ShakespeareMark: View {
     }
 }
 
-private struct ConnectionCapability: View {
-    let icon: String
-    let title: String
-    let detail: String
-
-    var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 28, height: 28)
-                .background(Color.accentColor.opacity(0.1), in: Circle())
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.caption.weight(.semibold))
-                Text(detail).font(.system(size: 10.5)).foregroundStyle(.secondary)
-            }
-            .lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 11)
-        .padding(.vertical, 10)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
-        .overlay { RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.055), lineWidth: 1) }
-    }
-}
-
 private struct ConnectedCredentialCard: View {
     let title: String
     let detail: String
@@ -400,14 +355,6 @@ private extension View {
         padding(16)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
             .overlay { RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.07), lineWidth: 1) }
-    }
-
-    func onboardingDescription() -> some View {
-        font(.system(size: 15))
-            .lineSpacing(3)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: 650, alignment: .leading)
     }
 }
 

@@ -7,7 +7,7 @@ Reviewed July 16, 2026. Shakespeare is now a compact local macOS application wit
 - The editor, offline Harper spelling, file I/O, recovery, and version history work without an API key.
 - One validated OpenRouter key is stored in macOS Keychain with an owner-only development fallback.
 - Model requests deny provider data collection, use bounded context, and keep research isolated from the permanent style profile.
-- Personalization is opt-in, locally stored, reviewable, bounded, and deletable.
+- Personalization is enabled by default, clearly disclosed, locally stored, reviewable, bounded, pausable, and deletable.
 - Document packages use size limits, atomic writes, path/symlink checks, and custom-scheme asset loading.
 - Model edits remain reviewable proposals rather than silent document mutations.
 - CI type-checks the editor, builds the release app, verifies the universal app bundle, and runs deterministic regression evals.

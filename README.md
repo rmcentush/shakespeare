@@ -8,7 +8,7 @@ Shakespeare combines a native SwiftUI workspace with a TipTap editor. Drafting, 
 
 Download the ZIP from the [latest Shakespeare release](https://github.com/rmcentush/shakespeare/releases/latest), open it, and drag **Shakespeare.app** into **Applications**. The archive contains one self-contained, signed app; there are no separate runtimes, model services, or support folders to install. Each release also includes a SHA-256 checksum.
 
-On first launch, paste an OpenRouter API key. Shakespeare validates it before storing it in macOS Keychain. The same screen offers an optional, off-by-default style-learning toggle and `.txt`/`.md` sample import. You can skip either setup and return later through **Settings → Connections** or **Settings → My Style**.
+On first launch, paste an OpenRouter API key. Shakespeare validates it before storing it in macOS Keychain. Personal style learning starts on and can be switched off immediately; `.txt`/`.md` samples are optional. You can skip setup and return later through **Settings → Connections** or **Settings → My Style**.
 
 Shakespeare creates one private data folder:
 
@@ -16,7 +16,7 @@ Shakespeare creates one private data folder:
 ~/Library/Application Support/Shakespeare/
 ├── README.txt
 ├── documents/       # working copies, recovery drafts, version history
-├── personalization/ # opt-in local style signals, samples, preferences
+├── personalization/ # local style signals, samples, preferences
 └── credentials/     # development fallback; normal keys use Keychain
 ```
 
@@ -42,7 +42,7 @@ To update, quit Shakespeare and replace the copy in **Applications** with the ne
 
 ## Personal style
 
-Style learning is off by default and can be enabled under **Settings → My Style**. It does not fine-tune a remote model. Instead, Shakespeare builds a compact, reviewable style packet from:
+Style learning is on by default and can be paused under **Settings → My Style**. It does not fine-tune a remote model. Instead, Shakespeare builds a compact, reviewable style packet from:
 
 1. the current request and relevant draft context;
 2. preferences the writer has reviewed and approved;

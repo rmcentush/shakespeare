@@ -31,7 +31,7 @@ This provides value immediately; there is no training job, uploaded dataset, che
 
 ## Learning from edits
 
-Collection is off by default. When enabled:
+Learning is on by default and can be paused at any time. An explicit disabled choice is preserved. While enabled:
 
 1. Shakespeare records a proposed edit decision locally.
 2. Accepting or rejecting it does not by itself create a durable preference.

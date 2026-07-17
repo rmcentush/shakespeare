@@ -53,7 +53,7 @@ All communication uses one handler named `editorBridge`.
 
 ## Personal style context
 
-Style collection is off by default. `StyleContextAssembler` creates a deterministic local packet under an 8,000-character ceiling from the reviewed profile, relevant reference sections, general guidance, up to two writing-sample excerpts, and up to two confirmed user rewrites. A separate 2,600-character flow map supplies headings, section boundaries, target-adjacent continuity, and sparse document checkpoints. Explicit meaning and facts always outrank style. Accepted-unchanged model prose must never enter the confirmed-rewrite layer.
+Style learning is on by default, clearly disclosed in onboarding, and can be paused at any time. Preserve an explicit disabled choice. `StyleContextAssembler` creates a deterministic local packet under an 8,000-character ceiling from the reviewed profile, relevant reference sections, general guidance, up to two writing-sample excerpts, and up to two confirmed user rewrites. A separate 2,600-character flow map supplies headings, section boundaries, target-adjacent continuity, and sparse document checkpoints. Explicit meaning and facts always outrank style. Accepted-unchanged model prose must never enter the confirmed-rewrite layer.
 
 Never upload the raw learning ledger implicitly, weaken owner-only permissions, learn from ambiguous outcomes, append whole sample libraries to prompts, or copy facts and distinctive phrases from samples. Any durable preference remains user-reviewed.
 
