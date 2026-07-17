@@ -712,7 +712,7 @@ final class EditorViewModel {
         callEditorAPI("deleteSelection")
     }
 
-    // MARK: - Pending Edits (Cursor-like diff review)
+    // MARK: - Pending edit diff review
 
     func acceptAllPendingEdits() {
         callEditorAPI("acceptAllPendingEdits")
