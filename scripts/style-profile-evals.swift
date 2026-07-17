@@ -8,7 +8,8 @@ struct StyleProfileEvals {
         try enforcesEvidenceThresholdsAndCopySafety()
         try preservesReviewedRulesWithoutInventedSupport()
         rejectsMalformedProfiles()
-        print("Style-profile evals passed (5 cases: evidence bounds, feedback-loop safety, thresholds, copy safety, carry-forward).")
+        try persistsOnePrivateReviewDraft()
+        print("Style-profile evals passed (6 cases: evidence bounds, feedback-loop safety, thresholds, copy safety, carry-forward, private draft persistence).")
     }
 
     private static func excludesModelAuthoredFeedbackLoops() {
@@ -148,6 +149,30 @@ struct StyleProfileEvals {
         } catch {
             // Expected.
         }
+    }
+
+    private static func persistsOnePrivateReviewDraft() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shakespeare-style-draft-eval-(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = StyleProfileDraftStore(
+            fileURL: directory.appendingPathComponent("pending_style_profile.json")
+        )
+        let draft = StyleProfileDraft(
+            proposedMarkdown: "## Established\n- Prefer direct openings.",
+            eventIDs: ["sample-1", "edit-2"],
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        try store.save(draft)
+        let loadedDraft = try store.load()
+        require(loadedDraft == draft, "prepared draft did not round-trip")
+        let attributes = try FileManager.default.attributesOfItem(atPath: store.fileURL.path)
+        let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue
+        require(permissions == 0o600, "prepared draft was not owner-only")
+        try store.delete()
+        let deletedDraft = try store.load()
+        require(deletedDraft == nil, "discarded draft remained on disk")
     }
 
     private static func require(_ condition: @autoclosure () -> Bool, _ message: String) {

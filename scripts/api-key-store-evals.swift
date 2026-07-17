@@ -8,8 +8,20 @@ struct APIKeyStoreEvals {
         let expected = "temporary-test-key"
         defer { APIKeyStore.shared.deleteAPIKey(service: service) }
 
+        guard !APIKeyStore.shared.hasAPIKey(service: service) else {
+            print("API key store eval failed: temporary service should start empty")
+            exit(1)
+        }
         guard APIKeyStore.shared.setAPIKey(expected, service: service) else {
             print("API key store eval failed: could not save a temporary key")
+            exit(1)
+        }
+        guard APIKeyStore.shared.hasAPIKey(service: service) else {
+            print("API key store eval failed: saved key was not detected")
+            exit(1)
+        }
+        guard APIKeyStore.shared.hasAuthorizedAPIKeyInSession(service: service) else {
+            print("API key store eval failed: saved key was not available to authorized background work")
             exit(1)
         }
         guard APIKeyStore.shared.getAPIKey(service: service) == expected else {
@@ -18,6 +30,14 @@ struct APIKeyStoreEvals {
         }
 
         APIKeyStore.shared.deleteAPIKey(service: service)
+        guard !APIKeyStore.shared.hasAPIKey(service: service) else {
+            print("API key store eval failed: deleted key was still detected")
+            exit(1)
+        }
+        guard !APIKeyStore.shared.hasAuthorizedAPIKeyInSession(service: service) else {
+            print("API key store eval failed: deleted key remained in the session cache")
+            exit(1)
+        }
         guard APIKeyStore.shared.getAPIKey(service: service) == nil else {
             print("API key store eval failed: temporary key was not deleted")
             exit(1)

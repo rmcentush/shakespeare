@@ -40,6 +40,7 @@ struct SettingsView: View {
     @State private var isUpdatingStylePreferences = false
     @State private var styleUpdateError = ""
     @State private var showStyleProposal = false
+    @State private var preparedStyleDraft: StyleProfileDraft?
     @State private var showWritingSampleImporter = false
     @State private var writingSampleImportMessage = ""
     @State private var writingSampleImportFailed = false
@@ -49,7 +50,6 @@ struct SettingsView: View {
     // Font settings
     @State private var fontManager = FontManager.shared
     @State private var textCheckingSettings = TextCheckingSettings.shared
-    private let styleGuideUpdater = StyleGuideUpdater()
     private let openRouterConnectionValidator = OpenRouterConnectionValidator()
 
     var body: some View {
@@ -72,10 +72,11 @@ struct SettingsView: View {
         }
         .frame(width: 680, height: 640)
         .onAppear {
-            openRouterConnected = APIKeyStore.shared.getAPIKey(service: "openrouter") != nil
+            openRouterConnected = APIKeyStore.shared.hasAPIKey(service: "openrouter")
             writingModel = InferenceSettings.normalizedModelID(writingModel)
             researchModel = InferenceSettings.normalizedModelID(researchModel)
             refreshStyleContext()
+            Task { await refreshPreparedStyleDraft() }
         }
         .onChange(of: personalizationEnabled) { _, enabled in
             PersonalizationSettings.isEnabled = enabled
@@ -117,6 +118,9 @@ struct SettingsView: View {
             allowsMultipleSelection: true,
             onCompletion: importWritingSamples
         )
+        .onReceive(NotificationCenter.default.publisher(for: .styleProfileDraftChanged)) { _ in
+            Task { await refreshPreparedStyleDraft() }
+        }
     }
 
     private var myStyleSettings: some View {
@@ -173,7 +177,11 @@ struct SettingsView: View {
                     }
                     Spacer()
                     Button {
-                        Task { await updateStylePreferences() }
+                        if let preparedStyleDraft {
+                            presentStyleDraft(preparedStyleDraft)
+                        } else {
+                            Task { await updateStylePreferences() }
+                        }
                     } label: {
                         if isUpdatingStylePreferences {
                             HStack(spacing: 6) {
@@ -251,6 +259,7 @@ struct SettingsView: View {
 
     private var styleProfileStatus: String {
         guard personalizationEnabled else { return "Paused" }
+        if preparedStyleDraft != nil { return "Update ready to review" }
         if pendingProfileEvidenceCount > 0 {
             return "\(pendingProfileEvidenceCount) new pattern\(pendingProfileEvidenceCount == 1 ? "" : "s") ready to review"
         }
@@ -647,11 +656,11 @@ struct SettingsView: View {
 
             HStack {
                 Spacer()
-                Button("Discard") {
+                Button("Later") {
                     showStyleProposal = false
                 }
                 Button("Approve") {
-                    approveStyleProposal()
+                    Task { await approveStyleProposal() }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(proposedLearnedPreferences.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -690,6 +699,7 @@ struct SettingsView: View {
             openRouterConnected = true
             openRouterSaved = true
             NotificationCenter.default.post(name: .openRouterConnectionChanged, object: nil)
+            Task { await StyleProfileRefinementCoordinator.shared.prepareIfNeeded() }
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 openRouterSaved = false
             }
@@ -734,12 +744,16 @@ struct SettingsView: View {
         writingSampleImportFailed = importResult.isFailure
         writingSampleImportMessage = importResult.message
         refreshStyleContext()
+        if importResult.imported > 0 {
+            Task { await StyleProfileRefinementCoordinator.shared.prepareIfNeeded() }
+        }
     }
 
     private func deleteTrainingEvents() {
         do {
             try TrainingEventStore.shared.deleteAll()
             refreshStyleContext()
+            Task { await refreshPreparedStyleDraft() }
         } catch {
             styleUpdateError = error.localizedDescription
         }
@@ -764,27 +778,23 @@ struct SettingsView: View {
 
         do {
             let current = AuthorStyleReference.learnedPreferences
-            let proposal = try await styleGuideUpdater.proposeUpdate()
-            proposedLearnedPreferences = proposal.proposedMarkdown
-            proposedLearnedPreferencesDiff = StyleGuideUpdater.unifiedDiff(
-                old: current,
-                new: proposal.proposedMarkdown
-            )
-            proposalEventIDs = proposal.eventIDs
-            showStyleProposal = true
+            let draft = try await StyleProfileRefinementCoordinator.shared.prepareNow()
+            preparedStyleDraft = draft
+            presentStyleDraft(draft, currentProfile: current)
         } catch {
             styleUpdateError = error.localizedDescription
         }
     }
 
-    private func approveStyleProposal() {
+    @MainActor
+    private func approveStyleProposal() async {
         do {
-            let proposal = StyleGuideUpdater.Proposal(
+            try await StyleProfileRefinementCoordinator.shared.approve(
                 proposedMarkdown: proposedLearnedPreferences,
                 eventIDs: proposalEventIDs
             )
-            try styleGuideUpdater.approve(proposal)
             showStyleProposal = false
+            preparedStyleDraft = nil
             proposedLearnedPreferences = ""
             proposedLearnedPreferencesDiff = ""
             proposalEventIDs = []
@@ -792,6 +802,24 @@ struct SettingsView: View {
         } catch {
             styleUpdateError = error.localizedDescription
         }
+    }
+
+    @MainActor
+    private func refreshPreparedStyleDraft() async {
+        preparedStyleDraft = await StyleProfileRefinementCoordinator.shared.preparedDraft()
+    }
+
+    private func presentStyleDraft(
+        _ draft: StyleProfileDraft,
+        currentProfile: String = AuthorStyleReference.learnedPreferences
+    ) {
+        proposedLearnedPreferences = draft.proposedMarkdown
+        proposedLearnedPreferencesDiff = StyleGuideUpdater.unifiedDiff(
+            old: currentProfile,
+            new: draft.proposedMarkdown
+        )
+        proposalEventIDs = draft.eventIDs
+        showStyleProposal = true
     }
 }
 

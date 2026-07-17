@@ -26,7 +26,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: Editor/package-lock.json
+          cache-dependency-path: |
+            Editor/package-lock.json
+            Website/package-lock.json
 
       - name: Install editor dependencies
         working-directory: Editor
@@ -34,6 +36,7 @@ jobs:
 
       - name: Validate sources
         run: |
+          make privacy-check
           make typecheck
           make evals
 
@@ -46,8 +49,10 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          for value in BUILD_CERTIFICATE_BASE64 P12_PASSWORD KEYCHAIN_PASSWORD CODESIGN_IDENTITY APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD; do
+          for value in BUILD_CERTIFICATE_BASE64 P12_PASSWORD KEYCHAIN_PASSWORD CODESIGN_IDENTITY APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
             test -n "${!value}" || { echo "Missing required release secret: $value" >&2; exit 1; }
           done
 
@@ -105,6 +110,20 @@ jobs:
             ${{ steps.archive.outputs.path }}.sha256
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish notarized download site
+        env:
+          ARCHIVE: ${{ steps.archive.outputs.path }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          bash scripts/stage-website-download.sh "$ARCHIVE"
+          cd Website
+          npm ci
+          npm run lint
+          npm test
+          npm run verify-download
+          npx wrangler deploy --config wrangler.jsonc
 
       - name: Publish GitHub release
         env:

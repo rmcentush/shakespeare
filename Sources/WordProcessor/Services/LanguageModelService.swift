@@ -1,6 +1,8 @@
 import Foundation
 
 final class LanguageModelService: Sendable {
+    static let maximumTransportRetryCount = 1
+
     private let purpose: InferencePurpose
     private let modelOverride: String?
     private let session: URLSession
@@ -49,9 +51,7 @@ final class LanguageModelService: Sendable {
                     temperature: temperature,
                     maxTokens: maxTokens
                 )
-
                 var attempt = 0
-                let maxRetries = 3
 
                 while true {
                     var hasYieldedChunk = false
@@ -71,11 +71,6 @@ final class LanguageModelService: Sendable {
                         }
 
                         guard httpResponse.statusCode == 200 else {
-                            if Self.isRetryableStatus(httpResponse.statusCode), attempt < maxRetries {
-                                attempt += 1
-                                try await Self.backoff(attempt: attempt, response: httpResponse)
-                                continue
-                            }
                             var errorBody = ""
                             for try await line in bytes.lines { errorBody += line }
                             continuation.finish(throwing: APIError.httpError(httpResponse.statusCode, errorBody))
@@ -120,10 +115,12 @@ final class LanguageModelService: Sendable {
                         continuation.finish(throwing: CancellationError())
                         return
                     } catch {
-                        if !hasYieldedChunk, attempt < maxRetries, Self.isRetryableTransportError(error) {
+                        if !hasYieldedChunk,
+                           attempt < Self.maximumTransportRetryCount,
+                           Self.isRetryableTransportError(error) {
                             attempt += 1
                             do {
-                                try await Self.backoff(attempt: attempt, response: nil)
+                                try await Self.backoff(attempt: attempt)
                                 continue
                             } catch {
                                 continuation.finish(throwing: CancellationError())
@@ -303,10 +300,6 @@ final class LanguageModelService: Sendable {
         return URL(string: url)?.host ?? "Source"
     }
 
-    private static func isRetryableStatus(_ code: Int) -> Bool {
-        code == 429 || code == 529 || (500...599).contains(code)
-    }
-
     private static func isRetryableTransportError(_ error: Error) -> Bool {
         guard let urlError = error as? URLError else { return false }
         switch urlError.code {
@@ -318,12 +311,8 @@ final class LanguageModelService: Sendable {
         }
     }
 
-    private static func backoff(attempt: Int, response: HTTPURLResponse?) async throws {
-        var seconds = min(pow(2.0, Double(attempt - 1)), 8.0) + Double.random(in: 0...0.5)
-        if let retryAfter = response?.value(forHTTPHeaderField: "retry-after"),
-           let parsed = Double(retryAfter) {
-            seconds = max(seconds, min(parsed, 30))
-        }
+    private static func backoff(attempt: Int) async throws {
+        let seconds = min(pow(2.0, Double(attempt - 1)), 8.0) + Double.random(in: 0...0.5)
         try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 

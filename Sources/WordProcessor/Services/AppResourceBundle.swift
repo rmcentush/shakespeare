@@ -16,6 +16,10 @@ extension Bundle {
             }
         }
 
-        return .module
+        // Both app bundles and direct SwiftPM executables place the resource
+        // bundle beside the running product. Avoid Bundle.module here because
+        // SwiftPM's generated fallback embeds the developer's absolute build path
+        // in the release binary.
+        return Bundle.main
     }()
 }

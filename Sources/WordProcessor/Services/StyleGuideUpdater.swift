@@ -1,7 +1,7 @@
 import Foundation
 
 final class StyleGuideUpdater {
-    struct Proposal: Equatable {
+    struct Proposal: Equatable, Sendable {
         let proposedMarkdown: String
         let eventIDs: [String]
     }
@@ -97,7 +97,7 @@ final class StyleGuideUpdater {
             systemPrompt: systemPrompt,
             outputFormat: ["type": "json_schema", "schema": StyleProfileCompiler.outputSchema],
             temperature: 0,
-            maxTokens: 3_072
+            maxTokens: 1_536
         ) {
             if case .text(let text) = chunk { response += text }
         }

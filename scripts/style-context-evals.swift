@@ -23,7 +23,7 @@ struct StyleContextEvals {
         )
         let guidance = try String(
             contentsOf: root.appendingPathComponent(
-                "Sources/WordProcessor/Resources/ai_tropes.md"
+                "Sources/WordProcessor/Resources/writing_quality_guidance.md"
             ),
             encoding: .utf8
         )

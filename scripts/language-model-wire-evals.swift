@@ -10,7 +10,8 @@ struct LanguageModelWireEvals {
         enablesBoundedWebSearchForChatOnly()
         validatesCuratedModelCatalog()
         configuresFullModelWaterfall()
-        print("Language-model wire evals passed (7 cases).")
+        boundsClientRetriesAroundProviderWaterfall()
+        print("Language-model wire evals passed (8 cases).")
     }
 
     private static func extractsStandardOpenRouterAnnotations() {
@@ -173,5 +174,9 @@ struct LanguageModelWireEvals {
             )
             precondition(runtime.supportsTemperature == option.supportsTemperature)
         }
+    }
+
+    private static func boundsClientRetriesAroundProviderWaterfall() {
+        precondition(LanguageModelService.maximumTransportRetryCount == 1)
     }
 }

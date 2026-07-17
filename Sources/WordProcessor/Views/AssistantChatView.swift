@@ -188,7 +188,7 @@ struct AssistantChatView: View {
     }
 
     private func refreshConnectionStatus() {
-        hasResearchConnection = APIKeyStore.shared.getAPIKey(service: "openrouter") != nil
+        hasResearchConnection = APIKeyStore.shared.hasAPIKey(service: "openrouter")
     }
 
     private func sendMessage() {
@@ -713,11 +713,24 @@ private struct AssistantMessageContent: View {
     var body: some View {
         Group {
             if isStreaming {
-                Text(verbatim: content)
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .font(AssistantChatFont.message)
-                    .lineSpacing(3)
+                if content.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+
+                        Text("Words, words, words…")
+                            .font(AssistantChatFont.message)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Shakespeare is preparing a response")
+                } else {
+                    Text(verbatim: content)
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .font(AssistantChatFont.message)
+                        .lineSpacing(3)
+                }
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(Array(blocks.enumerated()), id: \.offset) { entry in

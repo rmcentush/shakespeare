@@ -53,8 +53,11 @@ final class EditorViewModel {
     private static let maximumZoomScale = 2.0
     private static let defaultZoomScale = 1.0
     private static let zoomStep = 0.1
-    private static let aiTropesGuidance: String = {
-        guard let resourceURL = Bundle.shakespeareResources.url(forResource: "ai_tropes", withExtension: "md"),
+    private static let writingQualityGuidance: String = {
+        guard let resourceURL = Bundle.shakespeareResources.url(
+            forResource: "writing_quality_guidance",
+            withExtension: "md"
+        ),
               let content = try? String(contentsOf: resourceURL, encoding: .utf8)
         else { return "" }
         return content
@@ -224,28 +227,6 @@ final class EditorViewModel {
         }
 
         let blocks: [Block]
-    }
-
-    private struct AmbientReviewSuggestion: Decodable {
-        let blockID: String
-        let exactOriginal: String
-        let comment: String
-        let kind: String?
-        let severity: String?
-        let suggestedReplacement: String?
-
-        enum CodingKeys: String, CodingKey {
-            case blockID = "block_id"
-            case exactOriginal = "exact_original"
-            case comment
-            case kind
-            case severity
-            case suggestedReplacement = "suggested_replacement"
-        }
-    }
-
-    private struct AmbientReviewResponse: Decodable {
-        let comments: [AmbientReviewSuggestion]
     }
 
     private struct GrammarCheckIssue: Decodable {
@@ -1293,9 +1274,19 @@ final class EditorViewModel {
                 context: context,
                 reviewBlocks: reviewBlocks
             )
-            let suggestions = parseAmbientReviewSuggestions(from: responseText)
+            let decodedSuggestions = try AmbientReviewContract.decode(responseText)
+            let suggestions = AmbientReviewContract.validated(
+                decodedSuggestions,
+                against: reviewBlocks.map {
+                    AmbientReviewContract.Block(id: $0.id, type: $0.type, text: $0.text)
+                }
+            )
+            guard decodedSuggestions.isEmpty || !suggestions.isEmpty else {
+                throw AmbientReviewContract.ContractError.invalidResponse
+            }
             let addedCount = await addAmbientReviewComments(suggestions, context: context)
             markAmbientBlocksReviewed(reviewBlocks, currentContext: context)
+            Task { await StyleProfileRefinementCoordinator.shared.prepareIfNeeded() }
             if addedCount > 0 {
                 ambientReviewStatusText = "Added \(addedCount) suggestion\(addedCount == 1 ? "" : "s")."
             } else {
@@ -1356,34 +1347,18 @@ final class EditorViewModel {
         context: EditContextSnapshot,
         reviewBlocks: [EditContextSnapshot.Block]
     ) async throws -> String {
-        let systemPrompt: [[String: Any]] = [
-            [
-                "type": "text",
-                "text": """
-                You are an ambient editor inside a word processor. The user has explicitly enabled background review.
-                Return only compact JSON. Do not use Markdown.
-                Find at most 4 high-signal opportunities to improve clarity, structure, accuracy, tone, concision, or adherence to the user's author voice.
-                Only comment on text you can anchor to a block in the supplied edit context.
-                Treat the learned profile, confirmed rewrites, and representative samples as evidence—not text to imitate mechanically. Prefer repeated, reviewed patterns over any single example, and preserve deliberate irregularities when the passage is already effective.
-                Before suggesting an edit or rewrite, infer the target's role in the document flow. Check that the change follows the preceding movement, prepares the next movement, advances rather than repeats the thesis, and preserves the section's purpose. Use the document flow map only for orientation; never target or quote map-only text.
-                For voice suggestions, identify concrete sentence- or paragraph-level departures: rhetorical-question pivots, throat-clearing, vague abstraction, filler, generic internet-essay phrasing, weak paragraph endings, or places where a flatter declarative, sharper catalogue, more precise noun, or tighter rhythm would better fit the user's voice.
-                Voice comments must be specific and actionable. Prefer a small suggested_replacement when the fix is local. Do not ask the user to rewrite a whole section in the abstract.
-                You will receive existing comments. Treat them as already-covered feedback, even if resolved or dismissed.
-                Do not repeat, paraphrase, or add a nearby overlapping version of an existing comment. If the only useful feedback is already covered, return {"comments":[]}.
-                Schema:
-                {"comments":[{"block_id":"...","exact_original":"exact current text span","comment":"short rationale","kind":"clarity|structure|tone|voice|concision|grammar|accuracy","severity":"low|medium|high","suggested_replacement":"optional replacement HTML or plain text"}]}
-                If there is nothing worth saying, return {"comments":[]}.
-                """,
-                "cache_control": LanguageModelService.ephemeralPromptCacheControl
-            ]
-        ]
+        let systemPrompt: [[String: Any]] = [[
+            "type": "text",
+            "text": AmbientReviewContract.systemPrompt,
+            "cache_control": LanguageModelService.ephemeralPromptCacheControl,
+        ]]
 
         let stylePacket = StyleContextAssembler.assemble(
-            task: "ambient editing for voice, clarity, structure, tone, concision, accuracy, paragraph rhythm, sentence mechanics, and generic AI-writing patterns",
+            task: AmbientReviewContract.styleTask,
             documentExcerpt: reviewBlocks.map(\.text).joined(separator: "\n\n"),
             reference: AuthorStyleReference.content,
             learnedPreferences: AuthorStyleReference.learnedPreferences,
-            generalGuidance: Self.aiTropesGuidance,
+            generalGuidance: Self.writingQualityGuidance,
             writingSamples: trainingEventStore.writingSamples(),
             confirmedEdits: trainingEventStore.confirmedStyleExamples()
         )
@@ -1399,41 +1374,7 @@ final class EditorViewModel {
 
         let outputFormat: [String: Any] = [
             "type": "json_schema",
-            "schema": [
-                "type": "object",
-                "properties": [
-                    "comments": [
-                        "type": "array",
-                        "items": [
-                            "type": "object",
-                            "properties": [
-                                "block_id": ["type": "string"],
-                                "exact_original": ["type": "string"],
-                                "comment": ["type": "string"],
-                                "kind": [
-                                    "type": "string",
-                                    "enum": [
-                                        "clarity", "structure", "tone", "voice",
-                                        "concision", "grammar", "accuracy",
-                                    ],
-                                ],
-                                "severity": [
-                                    "type": "string",
-                                    "enum": ["low", "medium", "high"],
-                                ],
-                                "suggested_replacement": ["type": "string"],
-                            ],
-                            "required": [
-                                "block_id", "exact_original", "comment", "kind",
-                                "severity", "suggested_replacement",
-                            ],
-                            "additionalProperties": false,
-                        ],
-                    ],
-                ],
-                "required": ["comments"],
-                "additionalProperties": false,
-            ] as [String: Any],
+            "schema": AmbientReviewContract.outputSchema(),
         ]
 
         var text = ""
@@ -1562,31 +1503,6 @@ final class EditorViewModel {
         let prefix = String(normalized.prefix(limit - 1))
         let boundary = prefix.lastIndex(where: { $0.isWhitespace }) ?? prefix.endIndex
         return String(prefix[..<boundary]).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
-    }
-
-    private func parseAmbientReviewSuggestions(from responseText: String) -> [AmbientReviewSuggestion] {
-        let trimmed = responseText
-            .replacingOccurrences(of: "```json", with: "")
-            .replacingOccurrences(of: "```", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let candidateStrings = [
-            jsonSubstring(in: trimmed, opening: "{", closing: "}"),
-            jsonSubstring(in: trimmed, opening: "[", closing: "]"),
-            trimmed,
-        ].compactMap { $0 }
-
-        for candidate in candidateStrings {
-            guard let data = candidate.data(using: .utf8) else { continue }
-            if let response = try? JSONDecoder().decode(AmbientReviewResponse.self, from: data) {
-                return response.comments
-            }
-            if let comments = try? JSONDecoder().decode([AmbientReviewSuggestion].self, from: data) {
-                return comments
-            }
-        }
-
-        return []
     }
 
     private func jsonObjectData(from responseText: String) -> Data? {
@@ -2132,6 +2048,7 @@ final class EditorViewModel {
             )
             if !acknowledgedOutcomes.isEmpty {
                 callEditorAPI("acknowledgePersonalizationOutcomes", arguments: [acknowledgedOutcomes])
+                Task { await StyleProfileRefinementCoordinator.shared.prepareIfNeeded() }
             }
             if !document.isDirty {
                 try? await RecoveryDraftStore.shared.deleteDraft(documentID: persistedSnapshot.documentID)

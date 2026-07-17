@@ -1,4 +1,4 @@
-.PHONY: all build run clean editor typecheck swift install package evals document-asset-evals storage-layout-evals style-context-evals style-profile-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
+.PHONY: all build run clean editor typecheck privacy-check swift install package evals document-asset-evals storage-layout-evals style-context-evals style-profile-evals writing-quality-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
 
 all: build
 
@@ -12,6 +12,9 @@ editor: Editor/node_modules/.package-lock.json
 
 typecheck: Editor/node_modules/.package-lock.json
 	cd Editor && npm run typecheck
+
+privacy-check:
+	bash scripts/verify-source-privacy.sh
 
 # Copy editor bundles to Swift resources
 copy-assets: editor
@@ -42,8 +45,17 @@ style-context-evals:
 	/tmp/style-context-evals
 
 style-profile-evals:
-	swiftc Sources/WordProcessor/Services/StyleProfileCompiler.swift scripts/style-profile-evals.swift -o /tmp/style-profile-evals
+	swiftc Sources/WordProcessor/Services/StyleProfileCompiler.swift Sources/WordProcessor/Services/StyleProfileDraftStore.swift scripts/style-profile-evals.swift -o /tmp/style-profile-evals
 	/tmp/style-profile-evals
+
+writing-quality-evals:
+	swiftc Sources/WordProcessor/Services/AmbientReviewContract.swift scripts/writing-quality-evals.swift -o /tmp/writing-quality-evals
+	/tmp/writing-quality-evals
+
+# Optional and cost-capped: three requests, one selected model, 768 output tokens each.
+live-writing-evals:
+	swiftc -parse-as-library Sources/WordProcessor/Services/AmbientReviewContract.swift scripts/live-writing-quality-evals.swift -o /tmp/live-writing-quality-evals
+	/tmp/live-writing-quality-evals
 
 openrouter-connection-evals:
 	swiftc -parse-as-library Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/OpenRouterConnectionValidator.swift scripts/openrouter-connection-evals.swift -o /tmp/openrouter-connection-evals
@@ -57,7 +69,7 @@ language-model-wire-evals:
 	swiftc Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/APIKeyStore.swift Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/LanguageModelService.swift scripts/language-model-wire-evals.swift -o /tmp/language-model-wire-evals
 	/tmp/language-model-wire-evals
 
-evals: document-asset-evals storage-layout-evals style-context-evals style-profile-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
+evals: document-asset-evals storage-layout-evals style-context-evals style-profile-evals writing-quality-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
 
 # Build release
 build: copy-assets
