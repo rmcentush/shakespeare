@@ -5,46 +5,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Shakespeare for Mac</title>
     <meta name="description" content="A quiet writing app for macOS.">
-    <meta name="theme-color" content="#8fb8c4">
+    <meta name="theme-color" content="#8eaab3">
     <link rel="canonical" href="https://writeshakespeare.com/">
+    <link rel="preload" href="/sea-desk-hero.jpg" as="image" fetchpriority="high">
     <meta property="og:type" content="website">
     <meta property="og:title" content="Shakespeare for Mac">
     <meta property="og:description" content="A quiet writing app for macOS.">
     <meta property="og:url" content="https://writeshakespeare.com/">
-    <meta name="twitter:card" content="summary">
+    <meta property="og:image" content="https://writeshakespeare.com/sea-desk-hero.jpg">
+    <meta property="og:image:alt" content="A blank sheet of paper and fountain pen on a wooden desk overlooking the sea.">
+    <meta name="twitter:card" content="summary_large_image">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <main class="scene">
       <h1 class="sr-only">Shakespeare for Mac</h1>
-
-      <div class="window" aria-hidden="true">
-        <div class="view">
-          <div class="sky">
-            <span class="sun"></span>
-            <span class="cloud cloud-one"></span>
-            <span class="cloud cloud-two"></span>
-          </div>
-          <div class="sea">
-            <span class="sea-light"></span>
-            <span class="wave wave-one"></span>
-            <span class="wave wave-two"></span>
-            <span class="wave wave-three"></span>
-          </div>
-        </div>
-        <span class="mullion mullion-vertical"></span>
-        <span class="mullion mullion-horizontal"></span>
-        <span class="sill"></span>
-      </div>
-
-      <div class="desk" aria-hidden="true">
-        <div class="paper"></div>
-        <div class="pen">
-          <span class="pen-band"></span>
-          <span class="pen-nib"></span>
-        </div>
-      </div>
-
+      <img
+        class="scene-image"
+        src="/sea-desk-hero.jpg"
+        width="1536"
+        height="1024"
+        alt=""
+        fetchpriority="high"
+      >
       <a class="download" href="/downloads/Shakespeare-latest.zip" download>
         <span>Download Shakespeare</span>
         <span aria-hidden="true">↓</span>
