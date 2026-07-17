@@ -30,7 +30,7 @@ Connect the `shakespeare-download` Worker to GitHub with these settings:
 - Root directory: `Website`
 - Build command: `npm ci && npm run build`
 - Deploy command: `npx wrangler deploy --config wrangler.jsonc`
-- Non-production branch builds: enabled
+- Non-production branch builds: enabled (version upload only; no public preview URL)
 - Non-production deploy command: `npx wrangler versions upload --config wrangler.jsonc`
 - Build watch path: `Website/*`
 - Build cache: enabled
@@ -72,14 +72,30 @@ make release
 The command:
 
 1. Requires a clean `main` exactly matching `origin/main`.
-2. Runs `make check`.
-3. Builds, signs, notarizes, and staples the universal app.
-4. Uploads an immutable versioned archive to R2.
-5. Validates and deploys the Worker from the same checkout.
-6. Atomically advances `releases/current.json`.
-7. Downloads the public ZIP and proves its checksum, signature, and notarization.
-8. Creates and pushes the version tag.
+2. Requires a reviewed root `LICENSE` and icon provenance record containing the
+   current AppIcon SHA-256 and usage rights.
+3. Reinstalls exact npm dependencies and runs `make check`.
+4. Builds from fresh Swift scratch directories, signs, notarizes, and staples
+   the universal app.
+5. Pins the bundle identifier and Apple Team Identifier in verification and in
+   the release manifest.
+6. Uploads an immutable versioned archive to R2.
+7. Atomically advances and reads back `releases/current.json`; the Worker from
+   `main` exposes the download only for the complete verified manifest schema.
+8. Downloads the public ZIP and proves its checksum, publisher signature, and
+   notarization.
+9. Creates and pushes the version tag.
 
 If a post-switch step fails, the prior R2 manifest is restored. Existing
 versioned archives remain immutable, so rollback changes only the small
 manifest pointer.
+
+The first-ever release has no prior manifest to roll back to. After separately
+confirming the R2 bucket is empty, opt into that one case with
+`ALLOW_INITIAL_RELEASE=1`. A normal release refuses an unreadable or missing
+prior manifest because it cannot distinguish absence from a control-plane
+failure safely.
+
+`make update` trusts the Team Identifier from an already verified installed app.
+For the first verified install, supply `EXPECTED_TEAM_IDENTIFIER` explicitly;
+subsequent updates refuse a different Apple publisher.

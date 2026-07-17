@@ -21,6 +21,7 @@ temporary_directory="$(mktemp -d)"
 trap 'rm -rf "$temporary_directory"' EXIT
 public_archive="$temporary_directory/Shakespeare-latest.zip"
 public_checksum="$temporary_directory/Shakespeare-latest.zip.sha256"
+public_headers="$temporary_directory/Shakespeare-latest.headers"
 actual=""
 published=""
 
@@ -28,6 +29,7 @@ for attempt in 1 2 3 4 5 6; do
     cache_buster="release-${expected}-${attempt}"
     if curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
         "https://writeshakespeare.com/downloads/Shakespeare-latest.zip?${cache_buster}" \
+        --dump-header "$public_headers" \
         --output "$public_archive" && \
        curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
         "https://writeshakespeare.com/downloads/Shakespeare-latest.zip.sha256?${cache_buster}" \
@@ -43,6 +45,14 @@ done
 
 if [ "$actual" != "$expected" ] || [ "$published" != "$expected" ]; then
     echo "Public Cloudflare release does not match the local artifact" >&2
+    exit 1
+fi
+
+published_team="$(awk -F ': *' 'tolower($1) == "x-shakespeare-team-id" { gsub("\r", "", $2); value=$2 } END { print value }' "$public_headers")"
+published_bundle="$(awk -F ': *' 'tolower($1) == "x-shakespeare-bundle-id" { gsub("\r", "", $2); value=$2 } END { print value }' "$public_headers")"
+if [ "$published_team" != "${EXPECTED_TEAM_IDENTIFIER:-}" ] ||
+   [ "$published_bundle" != "${EXPECTED_BUNDLE_IDENTIFIER:-com.shakespeare.app}" ]; then
+    echo "Public release metadata does not match the pinned publisher." >&2
     exit 1
 fi
 

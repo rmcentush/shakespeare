@@ -94,6 +94,7 @@ final class AssistantChatViewModel {
             \(text)
             """
         }
+        apiText = Self.boundedAPIContent(apiText)
         var requestMessages = apiMessages
         requestMessages.append(["role": "user", "content": apiText])
         Self.trimAPIHistory(&requestMessages)
@@ -116,6 +117,10 @@ final class AssistantChatViewModel {
             query: text,
             quotedSelection: quotedSelection
         )
+        guard !Task.isCancelled, generation == requestGeneration else {
+            updateAssistantMessage(id: assistantMessageID, content: "Request cancelled.")
+            return
+        }
         var fullText = ""
         var citations: [(title: String, url: String)] = []
         var flushCount = 0
@@ -242,8 +247,8 @@ final class AssistantChatViewModel {
     }
 
     private static func trimAPIHistory(_ messages: inout [[String: Any]]) {
-        while messages.count > maxApiMessages ||
-            apiHistoryCharacterCount(messages) > maxAPIHistoryCharacters {
+        while messages.count > 1 && (messages.count > maxApiMessages ||
+            apiHistoryCharacterCount(messages) > maxAPIHistoryCharacters) {
             // Keep complete user/assistant turns. If the oldest entry is a user
             // message and has a paired assistant response, remove both.
             messages.removeFirst()
@@ -251,6 +256,20 @@ final class AssistantChatViewModel {
                 messages.removeFirst()
             }
         }
+        if messages.count == 1,
+           let content = messages[0]["content"] as? String,
+           apiHistoryCharacterCount(messages) > maxAPIHistoryCharacters {
+            messages[0]["content"] = boundedAPIContent(content)
+        }
+    }
+
+    private static func boundedAPIContent(_ value: String) -> String {
+        let limit = maxAPIHistoryCharacters - 256
+        guard value.count > limit else { return value }
+        let edge = limit / 2
+        return String(value.prefix(edge))
+            + "\n\n[Earlier selection content omitted to fit the request limit.]\n\n"
+            + String(value.suffix(edge))
     }
 
     private static func apiHistoryCharacterCount(_ messages: [[String: Any]]) -> Int {

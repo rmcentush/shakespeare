@@ -4,12 +4,12 @@ import test from "node:test";
 
 const root = new URL("../", import.meta.url);
 
-test("ships responsive full-page scenes, one message, and one download action", async () => {
+test("ships responsive full-page scenes and a fail-closed release action", async () => {
   const [html, css, hero, portraitHero] = await Promise.all([
     readFile(new URL("public/index.html", root), "utf8"),
-    readFile(new URL("public/styles.css", root), "utf8"),
-    readFile(new URL("public/sea-desk-hero.jpg", root)),
-    readFile(new URL("public/sea-desk-hero-portrait.jpg", root)),
+    readFile(new URL("public/v3/styles.css", root), "utf8"),
+    readFile(new URL("public/v3/sea-desk-hero.jpg", root)),
+    readFile(new URL("public/v3/sea-desk-hero-portrait.jpg", root)),
   ]);
 
   assert.match(html, /^<!doctype html>/i);
@@ -19,9 +19,10 @@ test("ships responsive full-page scenes, one message, and one download action", 
   assert.match(html, /<picture class="scene-art">/);
   assert.match(html, /<h1>Write like yourself\.<\/h1>/);
   assert.match(html, /A local-first writing app for Mac\./);
-  assert.match(html, /Download for Mac/);
-  assert.match(html, /Shakespeare-latest\.zip/);
-  assert.equal((html.match(/<a\b/g) ?? []).length, 1);
+  assert.match(html, /Release temporarily unavailable/);
+  assert.match(html, /data-release-action aria-disabled="true"/);
+  assert.doesNotMatch(html, /Shakespeare-latest\.zip/);
+  assert.equal((html.match(/<a\b/g) ?? []).length, 0);
   assert.equal((html.match(/<img\b/g) ?? []).length, 1);
   assert.equal((html.match(/<source\b/g) ?? []).length, 1);
   assert.doesNotMatch(html, /<header\b|<nav\b|<footer\b|<section\b|<script\b/i);
@@ -63,6 +64,16 @@ test("serves one release atomically from an R2 manifest", async () => {
   const sha256 = "a".repeat(64);
   const archiveKey = "releases/v1.2.3/Shakespeare.zip";
   const archive = new TextEncoder().encode("signed archive");
+  const manifest = {
+    version: "1.2.3",
+    buildNumber: 123,
+    archiveKey,
+    sha256,
+    bundleIdentifier: "com.shakespeare.app",
+    teamIdentifier: "AB12CD34EF",
+    notarized: true,
+    sourceCommit: "b".repeat(40),
+  };
   const calls = [];
   const releaseObject = {
     body: archive,
@@ -80,7 +91,7 @@ test("serves one release atomically from an R2 manifest", async () => {
       async get(key) {
         calls.push(["get", key]);
         if (key === "releases/current.json") {
-          return { json: async () => ({ version: "1.2.3", archiveKey, sha256 }) };
+          return { json: async () => manifest };
         }
         return key === archiveKey ? releaseObject : null;
       },
@@ -123,6 +134,40 @@ test("serves one release atomically from an R2 manifest", async () => {
     ["get", "releases/current.json"],
     ["head", archiveKey],
   ]);
+});
+
+test("enables the landing-page download only for a verified release manifest", async () => {
+  const { default: worker } = await import("../worker/index.js");
+  const source = await readFile(new URL("public/index.html", root), "utf8");
+  const env = {
+    ASSETS: {
+      fetch: async () => new Response(source, {
+        headers: { "Content-Type": "text/html; charset=utf-8", ETag: '"static"' },
+      }),
+    },
+    RELEASES: {
+      get: async (key) => key === "releases/current.json" ? {
+        json: async () => ({
+          version: "1.2.3",
+          buildNumber: 123,
+          archiveKey: "releases/v1.2.3/Shakespeare.zip",
+          sha256: "a".repeat(64),
+          bundleIdentifier: "com.shakespeare.app",
+          teamIdentifier: "AB12CD34EF",
+          notarized: true,
+          sourceCommit: "b".repeat(40),
+        }),
+      } : null,
+      head: async () => null,
+    },
+  };
+
+  const response = await worker.fetch(new Request("https://writeshakespeare.com/"), env);
+  const html = await response.text();
+  assert.match(html, /<a class="download" data-release-action/);
+  assert.match(html, /Shakespeare-latest\.zip/);
+  assert.doesNotMatch(html, /Release temporarily unavailable/);
+  assert.equal(response.headers.get("etag"), null);
 });
 
 test("fails closed when the R2 release manifest is invalid", async () => {

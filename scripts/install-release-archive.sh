@@ -35,6 +35,17 @@ trap cleanup EXIT
 
 cp "$archive" "$verified_archive"
 repository_root="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -z "${EXPECTED_TEAM_IDENTIFIER:-}" ] && [ -d "$install_path" ]; then
+    installed_signature="$(codesign -dvv "$install_path" 2>&1 || true)"
+    installed_team="$(sed -n 's/^TeamIdentifier=//p' <<< "$installed_signature" | head -n 1)"
+    if [[ "$installed_team" =~ ^[A-Z0-9]{10}$ ]]; then
+        export EXPECTED_TEAM_IDENTIFIER="$installed_team"
+    fi
+fi
+if [[ ! "${EXPECTED_TEAM_IDENTIFIER:-}" =~ ^[A-Z0-9]{10}$ ]]; then
+    echo "Cannot establish the trusted publisher. Set EXPECTED_TEAM_IDENTIFIER for the first verified install." >&2
+    exit 1
+fi
 if [ "$#" -eq 2 ]; then
     bash "$repository_root/scripts/verify-release-archive.sh" "$verified_archive" "$2"
 else
