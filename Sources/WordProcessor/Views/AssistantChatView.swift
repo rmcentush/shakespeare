@@ -702,6 +702,34 @@ private struct AssistantBubbleToolbar: View {
     }
 }
 
+private struct AssistantDitherMask: View {
+    var body: some View {
+        Canvas { context, size in
+            context.fill(
+                Path(CGRect(origin: .zero, size: size)),
+                with: .color(.white.opacity(0.68))
+            )
+
+            let cell: CGFloat = 2
+            let columns = Int(ceil(size.width / cell))
+            let rows = Int(ceil(size.height / cell))
+            for row in 0..<rows {
+                for column in 0..<columns where (row + column).isMultiple(of: 2) {
+                    context.fill(
+                        Path(CGRect(
+                            x: CGFloat(column) * cell,
+                            y: CGFloat(row) * cell,
+                            width: cell,
+                            height: cell
+                        )),
+                        with: .color(.white)
+                    )
+                }
+            }
+        }
+    }
+}
+
 private struct AssistantThinkingLabel: View {
     private static let dotCounts = [1, 2, 3, 3, 2, 1]
     @State private var phase = 0
@@ -712,24 +740,24 @@ private struct AssistantThinkingLabel: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            Text("Words, words, words")
+            Text(verbatim: "words, words, words")
 
-            Text("...")
+            Text(verbatim: "...")
                 .hidden()
                 .overlay(alignment: .leading) {
-                    Text(dots)
-                        .contentTransition(.opacity)
-                        .animation(.easeInOut(duration: 0.14), value: phase)
+                    Text(verbatim: dots)
                 }
         }
-        .font(AssistantChatFont.message)
-        .foregroundStyle(.secondary)
+        .font(.system(size: 11, weight: .medium, design: .monospaced))
+        .tracking(0.15)
+        .foregroundStyle(Color.secondary.opacity(0.82))
+        .mask { AssistantDitherMask() }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Shakespeare is preparing a response")
         .task {
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(nanoseconds: 380_000_000)
+                    try await Task.sleep(nanoseconds: 420_000_000)
                 } catch {
                     return
                 }
