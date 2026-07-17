@@ -27,7 +27,7 @@ Documents explicitly saved by the writer remain in the folder they chose. Reveal
 OpenRouter is the only remote model boundary:
 
 - Writing, revision, grammar, and style review use `moonshotai/kimi-k3` by default.
-- Research chat uses the same `moonshotai/kimi-k3` model with a bounded `openrouter:web_search` server tool enabled for current, source-linked answers.
+- Research chat uses `x-ai/grok-4.5` by default, with a bounded `openrouter:web_search` server tool enabled for current, source-linked answers.
 - Both writing and research use the same `OPENROUTER_API_KEY`.
 - Every request sets provider data collection to `deny`.
 - Curated writing and chat selectors live under **Settings → Connections → Advanced**. They show the exact numbered models: Kimi K3, Grok 4.5, GPT-5.6 Sol, Claude Fable 5, and Claude Opus 4.7/4.8.
@@ -76,9 +76,11 @@ GitHub `main` is the source of truth for the complete codebase. The normal flow 
 1. Work on a feature branch.
 2. Run `make check` locally.
 3. Commit, push to GitHub, and merge through a pull request.
-4. Cloudflare Workers Builds deploys `Website/` changes from `main` and reports the result back to GitHub.
+4. Cloudflare Workers Builds runs the portable repository checks on every pull request, deploys successful `main` builds, and reports the result to GitHub.
 
 Native app changes are stored in the same GitHub history but are not published on every push. A signed release is an explicit `make release` from a clean Mac checkout that exactly matches `origin/main`. This keeps Apple credentials on the trusted Mac and prevents routine website edits from triggering expensive macOS builds.
+
+Cloudflare validates the website, editor tests and types, privacy boundary, and release-script contracts. Swift/AppKit compilation and deterministic Swift evals remain in `make check` because Cloudflare builds run on Linux. GitHub-hosted Actions are not used.
 
 Important commands:
 
@@ -86,6 +88,7 @@ Important commands:
 |---|---|
 | `make run` | Build and run a debug app |
 | `make check` | Run the complete local validation suite without hosted CI |
+| `make cloud-ci` | Run the portable checks used by Cloudflare Workers Builds |
 | `make install` | Build, package, and copy the app to `/Applications` |
 | `make update` | Install the exact signed public download after checksum and notarization verification |
 | `make package` | Create one universal app under `.build/package/` |
@@ -95,6 +98,7 @@ Important commands:
 | `make live-writing-evals` | Optionally run three capped OpenRouter quality checks using `OPENROUTER_API_KEY` |
 | `make build` | Build the release binary |
 | `make deploy-site` | Recovery-only site deploy from clean, current `main` |
+| `make release-readiness` | Report local signing, notarization, provenance, and R2 release blockers |
 | `make release` | Sign, notarize, publish to Cloudflare R2, verify, and tag a release |
 | `make clean` | Remove generated build artifacts |
 

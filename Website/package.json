@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log wrangler dev",
     "build": "npm run lint && node --test tests/static-site.test.mjs",
+    "ci": "make -C .. cloud-ci",
     "start": "npm run dev",
     "test": "node --test tests/static-site.test.mjs",
     "lint": "node --check worker/index.js && node --check tests/static-site.test.mjs"

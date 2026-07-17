@@ -1,4 +1,4 @@
-.PHONY: all build run clean editor editor-tests typecheck privacy-check release-script-check website-check check swift install update package deploy-site release evals document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals storage-layout-evals style-context-evals chat-context-evals style-profile-evals ledger-retention-evals writing-quality-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
+.PHONY: all build run clean editor editor-tests typecheck privacy-check delivery-contract-check release-script-check website-check cloud-ci check swift install update package deploy-site release-readiness release evals document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals storage-layout-evals style-context-evals chat-context-evals style-profile-evals ledger-retention-evals writing-quality-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 all: build
 
@@ -22,11 +22,18 @@ editor-tests: Editor/node_modules/.package-lock.json
 privacy-check:
 	bash scripts/verify-source-privacy.sh
 
-release-script-check:
-	bash -n scripts/verify-release-archive.sh scripts/verify-public-release.sh scripts/install-release-archive.sh scripts/update-from-public-download.sh scripts/verify-release-provenance.sh scripts/release.sh
+delivery-contract-check:
+	bash scripts/verify-delivery-contract.sh
+
+release-script-check: delivery-contract-check
+	bash -n scripts/verify-release-archive.sh scripts/verify-public-release.sh scripts/install-release-archive.sh scripts/update-from-public-download.sh scripts/verify-release-provenance.sh scripts/release-readiness.sh scripts/release.sh
 
 website-check: Website/node_modules/.package-lock.json
 	cd Website && npm run build
+
+# Portable, zero-credential checks run by Cloudflare for every pull request and
+# main-branch push. Swift/AppKit validation remains the local `make check` gate.
+cloud-ci: privacy-check release-script-check typecheck editor-tests website-check
 
 # Full deterministic validation. This replaces automatic GitHub-hosted CI.
 check: privacy-check typecheck evals website-check build
@@ -144,6 +151,9 @@ deploy-site: Website/node_modules/.package-lock.json
 	cd Website && npm run build && npx wrangler deploy --config wrangler.jsonc
 
 # Build, sign, notarize, verify, and publish one release from this Mac.
+release-readiness:
+	bash scripts/release-readiness.sh
+
 release:
 	bash scripts/release.sh
 
