@@ -39,7 +39,7 @@ async function serveHome(request, env) {
   if (!archive || archive.size <= 0) return response;
 
   const unavailable = `<span class="download" data-release-action aria-disabled="true">
-            <span>Release temporarily unavailable</span>
+            <span>Release unavailable</span>
             <span aria-hidden="true">—</span>
           </span>`;
   const available = `<a class="download" data-release-action href="${archivePath}" download>

@@ -22,7 +22,7 @@ test("ships a minimal app-aligned landing page and a fail-closed release action"
   assert.match(html, /<li>Local-first<\/li>/);
   assert.match(html, /<li>Review every change<\/li>/);
   assert.match(html, /<li>Research with sources<\/li>/);
-  assert.match(html, /Release temporarily unavailable/);
+  assert.match(html, /Release unavailable/);
   assert.match(html, /data-release-action aria-disabled="true"/);
   assert.match(html, /href="https:\/\/github\.com\/rmcentush\/shakespeare"/);
   assert.match(html, />Source<\/a>/);
@@ -36,7 +36,8 @@ test("ships a minimal app-aligned landing page and a fail-closed release action"
   assert.match(css, /#007aff/i);
   assert.match(css, /Georgia/);
   assert.match(css, /-apple-system/);
-  assert.match(css, /@media \(max-width: 760px\)/);
+  assert.match(css, /@media \(max-width: 900px\)/);
+  assert.match(css, /@media \(max-width: 600px\)/);
   assert.match(css, /prefers-reduced-motion/);
   assert.ok(editorImage.length > 50_000);
   assert.ok(appIcon.length > 100_000);
@@ -177,7 +178,7 @@ test("enables the landing-page download only for a verified release manifest", a
   const html = await response.text();
   assert.match(html, /<a class="download" data-release-action/);
   assert.match(html, /Shakespeare-latest\.zip/);
-  assert.doesNotMatch(html, /Release temporarily unavailable/);
+  assert.doesNotMatch(html, /Release unavailable/);
   assert.equal(response.headers.get("etag"), null);
 });
 
