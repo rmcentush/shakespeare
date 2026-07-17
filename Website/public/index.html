@@ -3,53 +3,217 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Shakespeare for Mac</title>
-    <meta name="description" content="Shakespeare is a local-first writing app for Mac that helps you write like yourself.">
-    <meta name="theme-color" content="#8eaab3">
+    <title>Shakespeare — Write like yourself.</title>
+    <meta name="description" content="A focused, local-first writing app for Mac with personalized writing help and source-backed research.">
+    <meta name="theme-color" content="#f7f7f8">
     <link rel="canonical" href="https://writeshakespeare.com/">
-    <link rel="preload" href="/v3/sea-desk-hero.jpg" as="image" media="(orientation: landscape)" fetchpriority="high">
-    <link rel="preload" href="/v3/sea-desk-hero-portrait.jpg" as="image" media="(orientation: portrait)" fetchpriority="high">
+    <link rel="icon" href="/v4/app-icon.png">
+    <link rel="apple-touch-icon" href="/v4/app-icon.png">
+    <link rel="preload" href="/v4/shakespeare-editor.jpg" as="image" fetchpriority="high">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="Shakespeare for Mac">
-    <meta property="og:description" content="A local-first writing app for Mac that helps you write like yourself.">
+    <meta property="og:title" content="Shakespeare — Write like yourself.">
+    <meta property="og:description" content="A focused, local-first writing app for Mac with personalized writing help and source-backed research.">
     <meta property="og:url" content="https://writeshakespeare.com/">
-    <meta property="og:image" content="https://writeshakespeare.com/v3/sea-desk-hero.jpg">
-    <meta property="og:image:alt" content="A watercolor of an open wooden window above a writing desk overlooking the sea.">
+    <meta property="og:image" content="https://writeshakespeare.com/v4/shakespeare-editor.jpg">
+    <meta property="og:image:alt" content="The Shakespeare editor displaying an essay in a calm, focused writing workspace.">
     <meta name="twitter:card" content="summary_large_image">
-    <link rel="stylesheet" href="/v3/styles.css">
+    <link rel="stylesheet" href="/v4/styles.css">
   </head>
   <body>
-    <main class="scene">
-      <div class="layout">
-        <div class="message">
-          <p class="brand">Shakespeare</p>
-          <h1>Write like yourself.</h1>
-          <p class="description">A local-first writing app for Mac.</p>
-          <span class="download" data-release-action aria-disabled="true">
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <nav class="nav-shell" aria-label="Primary navigation">
+        <a class="brand" href="/" aria-label="Shakespeare home">
+          <span class="brand-mark" aria-hidden="true">S</span>
+          <span>Shakespeare</span>
+        </a>
+        <div class="nav-links">
+          <a href="#features">Features</a>
+          <a href="#privacy">Privacy</a>
+          <a href="https://github.com/rmcentush/shakespeare">Source</a>
+          <a class="nav-cta" href="#download">Get the app</a>
+        </div>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow">A local-first writing app for Mac</p>
+          <h1 id="hero-title">Write like yourself.</h1>
+          <p class="hero-lede">
+            A focused editor with personalized writing help and source-backed
+            research—built to keep your voice, and your draft, at the center.
+          </p>
+          <div class="hero-actions" id="download">
+            <span class="download" data-release-action aria-disabled="true">
             <span>Release temporarily unavailable</span>
             <span aria-hidden="true">—</span>
           </span>
-          <p class="source-link">
-            <a href="https://github.com/rmcentush/shakespeare">Open source <span aria-hidden="true">·</span> MIT</a>
-          </p>
+            <p class="requirements">macOS 14+<br>Apple silicon + Intel</p>
+          </div>
         </div>
-        <picture class="scene-art">
-          <source
-            media="(orientation: portrait)"
-            srcset="/v3/sea-desk-hero-portrait.jpg"
-            width="1024"
-            height="1536"
-          >
-          <img
-            class="scene-image"
-            src="/v3/sea-desk-hero.jpg"
-            width="1536"
-            height="1024"
-            alt=""
-            fetchpriority="high"
-          >
-        </picture>
-      </div>
+
+        <figure class="editor-figure">
+          <div class="figure-label">
+            <span><i aria-hidden="true"></i> Actual app</span>
+            <span>Shakespeare for macOS</span>
+          </div>
+          <div class="app-frame">
+            <img
+              src="/v4/shakespeare-editor.jpg"
+              width="1130"
+              height="620"
+              alt="The Shakespeare editor showing a formatted essay titled The Shape of an Afternoon"
+              fetchpriority="high"
+            >
+          </div>
+          <figcaption>Georgia, 18 pt, 1.7× — or make the page your own.</figcaption>
+        </figure>
+
+        <div class="hero-principles" aria-label="Product principles">
+          <article>
+            <span class="principle-icon" aria-hidden="true">Aa</span>
+            <div>
+              <h2>A real writing canvas</h2>
+              <p>Thoughtful typography, focus mode, local spelling, and versions—even offline.</p>
+            </div>
+          </article>
+          <article>
+            <span class="principle-icon spark" aria-hidden="true">✦</span>
+            <div>
+              <h2>Help that learns your style</h2>
+              <p>Suggestions draw from the samples and saved rewrites you choose.</p>
+            </div>
+          </article>
+          <article>
+            <span class="principle-icon" aria-hidden="true">↗</span>
+            <div>
+              <h2>Research with sources</h2>
+              <p>Ask about your draft or the web without sending your private style profile.</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="features section-shell" id="features" aria-labelledby="features-title">
+        <div class="section-heading">
+          <p class="eyebrow">Designed around the draft</p>
+          <h2 id="features-title">Powerful when you need it.<br>Quiet when you don’t.</h2>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature-card feature-card-wide">
+            <div class="feature-copy">
+              <p class="feature-number">01</p>
+              <h3>Your voice stays in the room.</h3>
+              <p>
+                Shakespeare can learn from finished samples and rewrites you save.
+                The resulting style profile stays local, remains reviewable, and can
+                be paused whenever you want.
+              </p>
+            </div>
+            <div class="settings-window" aria-label="Example My Style settings">
+              <div class="window-titlebar">
+                <span>My Style</span>
+                <span class="status-dot">Local</span>
+              </div>
+              <div class="setting-row">
+                <div>
+                  <strong>Make suggestions sound like me</strong>
+                  <small>Learns from writing samples and rewrites you save.</small>
+                </div>
+                <span class="toggle" aria-hidden="true"><i></i></span>
+              </div>
+              <div class="setting-row compact">
+                <div>
+                  <strong>Writing samples</strong>
+                  <small>8 samples · 12 saved rewrites</small>
+                </div>
+                <span class="control">Add Samples…</span>
+              </div>
+              <div class="setting-row compact">
+                <div>
+                  <strong>Style profile</strong>
+                  <small>Ready for your review</small>
+                </div>
+                <span class="control control-blue">Review Update</span>
+              </div>
+              <p class="privacy-note"><span aria-hidden="true">⌂</span> Style data stays on this Mac.</p>
+            </div>
+          </article>
+
+          <article class="feature-card">
+            <p class="feature-number">02</p>
+            <h3>Every edit is still yours.</h3>
+            <p>
+              Review suggestions before they change the page. Keep versions nearby,
+              comment in context, and return to an earlier draft when the better line
+              was the first one.
+            </p>
+            <div class="suggestion-demo" aria-label="Example review suggestion">
+              <span class="suggestion-kind">Suggestion</span>
+              <p><del>seems to be</del> <ins>is</ins> asking for</p>
+              <div><span>Reject</span><span class="accept">Accept</span></div>
+            </div>
+          </article>
+
+          <article class="feature-card">
+            <p class="feature-number">03</p>
+            <h3>Research beside the page.</h3>
+            <p>
+              Ask a source-backed question in a read-only sidebar. Shakespeare shares
+              bounded, relevant draft context—not your learned preferences or local
+              learning history.
+            </p>
+            <div class="research-demo" aria-label="Example research conversation">
+              <p class="research-question">What would strengthen this transition?</p>
+              <div class="research-answer">
+                <span class="mini-mark" aria-hidden="true">S</span>
+                <p>Connect the afternoon’s quiet to the choice in the next paragraph.</p>
+              </div>
+              <span class="source-chip">2 sources</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="privacy" id="privacy" aria-labelledby="privacy-title">
+        <div class="privacy-inner section-shell">
+          <div class="privacy-copy">
+            <p class="eyebrow">Private by default</p>
+            <h2 id="privacy-title">Your work lives on your Mac.</h2>
+            <p>
+              Documents, version history, samples, and style data stay local.
+              Shakespeare sends only the relevant context needed for the writing
+              request you make, and model providers are instructed not to collect it.
+            </p>
+          </div>
+          <ul class="privacy-list">
+            <li><span aria-hidden="true">✓</span><div><strong>One connection</strong><small>A single OpenRouter key, stored in macOS Keychain.</small></div></li>
+            <li><span aria-hidden="true">✓</span><div><strong>No subscription markup</strong><small>OpenRouter bills model usage directly to you.</small></div></li>
+            <li><span aria-hidden="true">✓</span><div><strong>Useful without AI</strong><small>The editor, local spelling, files, and versions keep working offline.</small></div></li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="closing section-shell" aria-labelledby="closing-title">
+        <span class="closing-mark" aria-hidden="true">S</span>
+        <p class="eyebrow">Shakespeare for macOS</p>
+        <h2 id="closing-title">A quieter place<br>to find the right words.</h2>
+        <a class="closing-link" href="#download">Get Shakespeare <span aria-hidden="true">↓</span></a>
+      </section>
     </main>
+
+    <footer class="site-footer">
+      <div class="section-shell footer-inner">
+        <p>Shakespeare <span>·</span> Write like yourself.</p>
+        <div>
+          <a href="https://github.com/rmcentush/shakespeare">Open source</a>
+          <a href="https://github.com/rmcentush/shakespeare/blob/main/LICENSE">MIT License</a>
+        </div>
+      </div>
+    </footer>
   </body>
 </html>
