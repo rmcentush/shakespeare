@@ -77,10 +77,10 @@ else
     fail "store Apple notarization credentials in Keychain profile '$notary_profile'"
 fi
 
-if (cd Website && npx wrangler r2 bucket info shakespeare-releases --config wrangler.jsonc >/dev/null 2>&1); then
+if bash scripts/run-wrangler.sh r2 bucket info shakespeare-releases >/dev/null 2>&1; then
     pass "Cloudflare R2 release bucket is reachable"
 else
-    fail "set CLOUDFLARE_ACCOUNT_ID for Shakespeare or authenticate Wrangler"
+    fail "authenticate Wrangler for the uniquely named Shakespeare account or set CLOUDFLARE_ACCOUNT_ID"
 fi
 
 if [ "$failures" -ne 0 ]; then
