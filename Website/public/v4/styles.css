@@ -1,7 +1,6 @@
 :root {
   color-scheme: light;
   --canvas: #ffffff;
-  --surface: #f7f7f8;
   --ink: #1a1a1a;
   --muted: #6f6f74;
   --faint: #949499;
@@ -278,46 +277,18 @@ a.download:hover {
 }
 
 .product-notes li {
-  display: grid;
   min-width: 0;
   padding: 0 clamp(20px, 3vw, 36px);
-  grid-template-columns: auto 1fr;
-  gap: 11px;
-  align-items: start;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-align: center;
 }
 
 .product-notes li:first-child { padding-left: 0; }
 .product-notes li:last-child { padding-right: 0; }
 .product-notes li + li { border-left: 1px solid var(--line); }
-
-.product-notes li > span {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--blue-dark);
-  font-family: var(--serif);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.product-notes p {
-  margin: 1px 0 0;
-  color: var(--muted);
-  font-family: var(--serif);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.product-notes strong {
-  color: var(--ink);
-  font-family: var(--system);
-  font-size: 10px;
-  font-weight: 650;
-}
 
 .site-footer { border-top: 1px solid var(--line); }
 
@@ -410,7 +381,8 @@ a.download:hover {
   .product-notes li,
   .product-notes li:first-child,
   .product-notes li:last-child {
-    padding: 15px 2px;
+    padding: 13px 2px;
+    text-align: left;
   }
 
   .product-notes li + li {
@@ -418,8 +390,6 @@ a.download:hover {
     border-left: 0;
   }
 
-  .product-notes p { font-size: 12px; }
-  .product-notes strong { font-size: 11px; }
 }
 
 @media (max-width: 420px) {
