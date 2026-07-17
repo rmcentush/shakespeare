@@ -18,7 +18,7 @@ struct OpenRouterConnectionValidator: Sendable {
             case .unauthorized:
                 return "OpenRouter rejected this API key. Create a new key and try again."
             case .billingRequired:
-                return "This key is valid, but OpenRouter needs credits before research chat can run."
+                return "This key is valid, but OpenRouter needs credits before model-powered features can run."
             case .unavailable:
                 return "OpenRouter is temporarily unavailable. Your existing connection was not changed."
             case .rejected(let message):
@@ -68,9 +68,15 @@ struct OpenRouterConnectionValidator: Sendable {
         switch httpResponse.statusCode {
         case 200..<300:
             guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  object["data"] is [String: Any]
+                  let keyData = object["data"] as? [String: Any]
             else {
                 throw ValidationError.invalidResponse
+            }
+            // The key endpoint normally returns HTTP 200 even when a key's
+            // spending allowance is exhausted. Kimi K3 is a paid model, so
+            // catch that state during setup instead of failing on the first edit.
+            if let remaining = Self.number(keyData["limit_remaining"]), remaining <= 0 {
+                throw ValidationError.billingRequired
             }
         case 401, 403:
             throw ValidationError.unauthorized
@@ -96,5 +102,11 @@ struct OpenRouterConnectionValidator: Sendable {
 
         guard !message.isEmpty else { return "OpenRouter could not validate this connection." }
         return String(message.prefix(240))
+    }
+
+    private static func number(_ value: Any?) -> Double? {
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let string = value as? String { return Double(string) }
+        return nil
     }
 }

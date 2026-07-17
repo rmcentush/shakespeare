@@ -1,10 +1,5 @@
 import Foundation
 
-struct BridgeMessage: Codable {
-    let type: String
-    let payload: BridgePayload
-}
-
 enum BridgePayload: Codable {
     case editorReady
     case contentUpdate(html: String, text: String, words: Int, characters: Int)

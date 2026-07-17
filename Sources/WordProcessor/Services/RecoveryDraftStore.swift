@@ -149,14 +149,13 @@ actor RecoveryDraftStore {
     }
 
     private func draftsDirectory() throws -> URL {
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            throw CocoaError(.fileNoSuchFile)
-        }
-
-        let directory = appSupport
-            .appendingPathComponent("Shakespeare", isDirectory: true)
-            .appendingPathComponent("RecoveryDrafts", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try ShakespeareStorage.prepare()
+        let directory = ShakespeareStorage.recoveryDraftsDirectoryURL
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
         return directory
     }
 

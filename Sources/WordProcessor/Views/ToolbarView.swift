@@ -38,20 +38,12 @@ struct ToolbarView: View {
                     persistTypographySettings()
                 }
             )) {
-                Text("Lyon Text").tag("Lyon Text")
-                Text("Gentium Plus").tag("Gentium Plus")
-                Text("Source Serif 4").tag("Source Serif 4")
-                Text("Scala").tag("Scala")
-                Text("Charter").tag("Charter")
-                Text("Signifier").tag("Signifier")
-                Text("Edgar").tag("Edgar")
-                Text("Quadraat").tag("Quadraat")
-                Text("EBGaramond").tag("EBGaramond")
-                Text("Times New Roman").tag("Times New Roman")
                 Text("Georgia").tag("Georgia")
                 Text("Palatino").tag("Palatino")
                 Text("Baskerville").tag("Baskerville")
+                Text("Times New Roman").tag("Times New Roman")
                 Text("Helvetica Neue").tag("Helvetica Neue")
+                Text("San Francisco").tag("-apple-system")
             }
             .frame(width: 140)
 

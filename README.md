@@ -1,129 +1,95 @@
 # Shakespeare
 
-A focused writing app for macOS with personalized writing tools and built-in web research.
+A focused, local-first writing app for macOS with personalized writing help and source-backed research.
 
-Shakespeare pairs a TipTap rich-text editor with a native macOS workspace for drafting, rewriting, proofreading, versioning, source-backed research, and opt-in personal style training. Inkling inference and Tinker post-training power writing; OpenRouter powers a separate research chat. The editor and document model do not depend on either provider.
+Shakespeare combines a native SwiftUI workspace with a TipTap editor. Drafting, revision, grammar, style review, and research all use one OpenRouter API key. The editor, offline spelling, documents, version history, and local style data continue to work without a model connection.
 
-The repository now also contains a provider-neutral hosted-personalization control plane. The intended product is hybrid: keep the native editor local-first, and use a web app for accounts, consent, training/evaluation status, rollback, billing, and support. See [Service architecture](docs/SERVICE_ARCHITECTURE.md) and the evidence-backed [production-readiness review](docs/PRODUCTION_READINESS.md).
+## Install
 
-## Prerequisites
+Download the ZIP from the [latest Shakespeare release](https://github.com/rmcentush/shakespeare/releases/latest), open it, and drag **Shakespeare.app** into **Applications**. The archive contains one self-contained, signed app; there are no separate runtimes, model services, or support folders to install. Each release also includes a SHA-256 checksum.
 
-- **macOS 14** (Sonoma) or later
-- **Xcode 26+** (the version used by CI) — install from the App Store or [developer.apple.com](https://developer.apple.com/xcode/)
-- **Node.js 22+** and npm — `brew install node`
+On first launch, paste an OpenRouter API key. Shakespeare validates it before storing it in macOS Keychain. Personal style learning starts on and can be switched off immediately; `.txt`/`.md` samples are optional. You can skip setup and return later through **Settings → Connections** or **Settings → My Style**.
 
-## Setup
+Shakespeare creates one private data folder:
+
+```text
+~/Library/Application Support/Shakespeare/
+├── README.txt
+├── documents/       # working copies, recovery drafts, version history
+├── personalization/ # local style signals, samples, preferences
+└── credentials/     # development fallback; normal keys use Keychain
+```
+
+Documents explicitly saved by the writer remain in the folder they chose. Reveal the internal folder from **Settings → My Style → Files and Privacy**.
+
+## One model connection
+
+OpenRouter is the only remote model boundary:
+
+- Writing, revision, grammar, and style review use `moonshotai/kimi-k3` by default.
+- Research chat uses the same `moonshotai/kimi-k3` model with a bounded `openrouter:web_search` server tool enabled for current, source-linked answers.
+- Both models use the same `OPENROUTER_API_KEY`.
+- Every request sets provider data collection to `deny`.
+- Model overrides live under **Settings → Connections → Advanced** so cost-conscious users can choose smaller OpenRouter models.
+
+The research sidebar receives a bounded excerpt of the open draft, but not the permanent style reference, learned preferences, or local learning ledger. Grammar requests are similarly scoped to changed blocks.
+
+Paid AI grammar while typing is off by default; local spelling stays on and a thorough AI proofread is available on demand. OpenRouter charges model and search usage directly to the key owner, and Shakespeare adds no subscription or usage markup.
+
+## Update or roll back
+
+To update, quit Shakespeare and replace the copy in **Applications** with the newer release. Documents and internal app data live outside the app bundle and remain in place. To roll back, install an earlier ZIP from the [release history](https://github.com/rmcentush/shakespeare/releases); document packages remain compatible within the current schema version.
+
+## Personal style
+
+Style learning is on by default and can be paused under **Settings → My Style**. It does not fine-tune a remote model. Instead, Shakespeare builds a compact, reviewable style packet from:
+
+1. the current request and relevant draft context;
+2. preferences the writer has reviewed and approved;
+3. up to two recent rewrites the writer actively changed and then saved;
+4. task-relevant excerpts from the editable style reference;
+5. up to two relevant excerpts from writing samples the user deliberately imports.
+
+The complete packet is capped at 8,000 characters (about 2,000 tokens). Samples stay local; only selected excerpts are sent when a style-aware feature needs them. A suggestion is not learned merely because it was shown or clicked—Shakespeare waits for a successful save. User-modified rewrites can help the next review immediately; repeated evidence and imported samples can be distilled into a compact profile that the writer reviews before activation.
+
+Editing requests also receive a separate 2,600-character document-flow map built locally from headings, section boundaries, opening and ending passages, and sparse checkpoints. This gives paragraph and section suggestions awareness of the essay's larger argument without resending the entire document.
+
+See [Personalization](docs/PERSONALIZATION.md) for the exact privacy and precedence rules.
+
+## Build from source
+
+Requirements: macOS 14+, Xcode 26+, Node.js 22+, and npm.
 
 ```bash
 git clone https://github.com/rmcentush/shakespeare.git
 cd shakespeare
 make install
-```
-
-`make install` does everything: installs npm dependencies, builds the editor bundle, compiles the Swift app in release mode, and copies **Shakespeare.app** to `/Applications`.
-
-Then open the app:
-
-```bash
 open /Applications/Shakespeare.app
 ```
 
-On first launch, Shakespeare offers two short, optional connection steps:
+Important commands:
 
-1. **Tinker** for Inkling writing help and later opt-in personal training.
-2. **OpenRouter** for fast, source-linked research chat through Perplexity Sonar.
-
-Each key is validated independently before it is stored in macOS Keychain. Either
-step can be skipped; drafting and local proofreading work without a model connection,
-and personalization remains a separate opt-in choice under **My Style**. Reopen the
-welcome screen anytime from **Help → Show Welcome to Shakespeare**.
-
-### Writing and personalization
-
-The editor works without a model connection. To enable Inkling-powered writing:
-
-1. Get a Tinker API key.
-2. Open **Settings → Connections** (`Cmd+,`).
-3. Paste the key under **Writing Connection** and choose **Connect**.
-
-The same `TINKER_API_KEY` authenticates Inkling inference and Tinker training;
-there is no separate Inkling API key. Shakespeare checks access with a token-count
-request before storing a newly entered key.
-
-Your key is stored in the macOS Keychain. Locally built bundles use an owner-only
-file under `~/Library/Application Support/Shakespeare/` only when Keychain access
-is unavailable.
-
-Tinker uses `thinkingmachines/Inkling` by default. When a personal checkpoint is promoted by the training CLI, Shakespeare resolves it from the local model registry automatically.
-
-### Research chat
-
-Open the research sidebar with `Cmd+\`. It uses `perplexity/sonar` through
-OpenRouter by default, prioritizing low latency, low token cost, and web answers
-with source links.
-
-1. Create an OpenRouter API key.
-2. Open **Settings → Connections**.
-3. Paste the key under **Research Chat Connection** and choose **Connect**.
-
-Research chat receives the current question and a bounded excerpt of the open draft.
-It does not receive the local training ledger, learned style preferences, Tinker key,
-or personal checkpoint. It is deliberately read-only at the model boundary: useful
-response text can be inserted manually, while writing and personalization remain on
-the Tinker/Inkling path.
-
-### Personalization
-
-Personalization collection is off by default. When enabled in **Settings → My Style**, Shakespeare records raw review decisions, classifies what survived on the next successful save, and stores deduplicated document snapshots in one owner-only local ledger. Nothing is submitted for training automatically.
-
-The included Python tooling compiles document-separated SFT and DPO datasets, runs Inkling LoRA training through Tinker, and can promote the resulting sampler checkpoint for inference. See [Personal style training](docs/PERSONALIZATION.md) for the consent model, commands, evaluation gates, and rollback path.
-
-### Style context
-
-Shakespeare includes an editable editorial reference for drafting and rewriting. Ambient Review uses the same reference for voice suggestions, while the current document supplies topic, continuity, and edit-targeting context. Learned preferences are stored separately so the default reference remains stable and reviewable.
-
-1. Open **Settings** (Cmd+,)
-2. Go to **My Style**
-
-The bundled reference lives at `Sources/WordProcessor/Resources/writing_style_reference.md`.
-
-### Spelling and grammar
-
-Shakespeare uses [Harper](https://writewithharper.com/) for fast, offline English spell-checking and the configured remote provider for higher-recall grammar checking. Harper runs entirely inside the editor; when grammar checking is enabled, only changed text blocks are sent to the provider using the API key configured in Settings. An on-demand **Run Thorough Proofread** command is available under **Spelling and Grammar**. Click a red or blue underline to apply or ignore a correction, or add a spelling to the local dictionary. English dialect and checking options live under **Settings → Editing**.
-
-## Build commands
-
-| Command | What it does |
-|---------|-------------|
-| `make install` | Full release build → copies Shakespeare.app to /Applications |
-| `make run` | Debug build + run immediately |
-| `make editor` | Build the TipTap JS bundle only |
+| Command | Purpose |
+|---|---|
+| `make run` | Build and run a debug app |
+| `make install` | Build, package, and copy the app to `/Applications` |
+| `make package` | Create one universal app under `.build/package/` |
 | `make typecheck` | Type-check the TypeScript editor |
-| `make evals` | Run editor, document, provider-connection, key-store, and personalization regression checks |
-| `make service-test` | Run service API, tenancy, schema, and Python lint checks |
-| `make build` | Release build (no .app bundle) |
-| `make clean` | Remove all build artifacts |
+| `make evals` | Run edit, storage, style, connection, privacy, and wire-contract evals |
+| `make build` | Build the release binary |
+| `make clean` | Remove generated build artifacts |
 
-## Automation
+## Repository structure
 
-GitHub Actions validates every pull request and push to `main` by type-checking
-and bundling the TypeScript editor, compiling the Swift app in release mode, and
-running the edit-target, document-asset, provider-connection, key-store, and personalization evaluations. A separate Linux job validates the service API, pinned Python environment, PostgreSQL migration, and real row-level-security behavior. Dependabot checks npm, Python, Docker, and GitHub Actions dependencies weekly.
+```text
+shakespeare/
+├── Editor/                    # TipTap TypeScript source and locked npm package
+├── Sources/WordProcessor/     # SwiftUI app, editor bridge, storage, OpenRouter client
+├── Packaging/                 # compact release-bundle metadata
+├── scripts/                   # packaging and deterministic eval fixtures
+├── docs/                      # product and release documentation
+├── Package.swift
+└── Makefile
+```
 
-Pushing a version tag such as `v0.1.0` builds an ad-hoc-signed `Shakespeare.app`
-with matching version metadata and attaches a ZIP archive to a GitHub Release.
-Set `CODESIGN_IDENTITY` to use a Developer ID certificate; Apple notarization
-must still be configured before distributing builds outside the development team.
-
-## Architecture
-
-Two layers communicating through a JS↔Swift bridge:
-
-- **TypeScript** (`Editor/src/`) — TipTap rich text editor, built as a single IIFE bundle targeting Safari 17
-- **Swift** (`Sources/WordProcessor/`) — SwiftUI app shell, file I/O, and model API integration
-- **Python** (`Trainer/`) — local dataset compiler and explicit Tinker SFT/DPO runner
-- **Service** (`Service/`) — OIDC-authenticated API, PostgreSQL tenant boundary, durable training jobs, model lifecycle, and deletion contract
-
-The service layer is infrastructure-ready but not publicly deployed. Training/cleanup workers, the inference gateway, cloud stack, telemetry, export, quotas, and public-release signing/notarization remain launch gates tracked in `docs/PRODUCTION_READINESS.md`.
-
-All JS↔Swift communication goes through a single `WKScriptMessageHandler`. The editor runs inside a `WKWebView`.
+The TypeScript editor and Swift app communicate through one `WKScriptMessageHandler` named `editorBridge`. Release automation builds a universal, hardened-runtime app, signs and notarizes it, and publishes a ZIP containing only `Shakespeare.app`.

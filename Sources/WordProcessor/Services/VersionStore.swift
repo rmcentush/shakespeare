@@ -2,7 +2,7 @@ import Foundation
 import SQLite3
 
 /// Stores document version snapshots in a SQLite database.
-/// Location: ~/Library/Application Support/Shakespeare/versions.sqlite
+/// Location: ~/Library/Application Support/Shakespeare/documents/versions.sqlite
 /// All SQLite access is serialized through a private dispatch queue to avoid
 /// blocking the main thread.
 final class VersionStore: @unchecked Sendable {
@@ -56,13 +56,18 @@ final class VersionStore: @unchecked Sendable {
 
     private func openDatabase() {
         let fileManager = FileManager.default
-        guard let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            print("VersionStore: could not locate Application Support directory")
+        do {
+            try ShakespeareStorage.prepare()
+            try fileManager.createDirectory(
+                at: ShakespeareStorage.documentsDirectoryURL,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+        } catch {
+            print("VersionStore: could not prepare Application Support directory: \(error)")
             return
         }
-        let dir = appSupport.appendingPathComponent("Shakespeare")
-        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
-        let dbPath = dir.appendingPathComponent("versions.sqlite").path
+        let dbPath = ShakespeareStorage.versionsDatabaseURL.path
 
         if sqlite3_open(dbPath, &db) != SQLITE_OK {
             print("VersionStore: failed to open database at \(dbPath)")

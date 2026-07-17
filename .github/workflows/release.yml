@@ -37,24 +37,72 @@ jobs:
           make typecheck
           make evals
 
+      - name: Require distribution credentials
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          for value in BUILD_CERTIFICATE_BASE64 P12_PASSWORD KEYCHAIN_PASSWORD CODESIGN_IDENTITY APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD; do
+            test -n "${!value}" || { echo "Missing required release secret: $value" >&2; exit 1; }
+          done
+
+      - name: Import Developer ID certificate
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          certificate="$RUNNER_TEMP/shakespeare-release.p12"
+          keychain="$RUNNER_TEMP/shakespeare-build.keychain-db"
+          echo "$BUILD_CERTIFICATE_BASE64" | base64 --decode > "$certificate"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security import "$certificate" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$keychain"
+          security list-keychain -d user -s "$keychain"
+
       - name: Build app bundle
         env:
           APP_VERSION: ${{ github.ref_name }}
           BUILD_NUMBER: ${{ github.run_number }}
+          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
         run: bash scripts/bundle-app.sh
 
       - name: Create release archive
         id: archive
         run: |
-          archive="Shakespeare-${GITHUB_REF_NAME}.zip"
-          ditto -c -k --sequesterRsrc --keepParent Shakespeare.app "$archive"
+          archive=".build/package/Shakespeare-${GITHUB_REF_NAME}.zip"
+          ditto -c -k --sequesterRsrc --keepParent .build/package/Shakespeare.app "$archive"
           echo "path=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Notarize and verify release
+        env:
+          ARCHIVE: ${{ steps.archive.outputs.path }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          xcrun notarytool submit "$ARCHIVE" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple .build/package/Shakespeare.app
+          xcrun stapler validate .build/package/Shakespeare.app
+          spctl --assess --type execute --verbose=4 .build/package/Shakespeare.app
+          rm "$ARCHIVE"
+          ditto -c -k --sequesterRsrc --keepParent .build/package/Shakespeare.app "$ARCHIVE"
+          shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v6
         with:
           name: Shakespeare-${{ github.ref_name }}
-          path: ${{ steps.archive.outputs.path }}
+          path: |
+            ${{ steps.archive.outputs.path }}
+            ${{ steps.archive.outputs.path }}.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -64,9 +112,9 @@ jobs:
           ARCHIVE: ${{ steps.archive.outputs.path }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" --clobber
+            gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" "$ARCHIVE.sha256" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$ARCHIVE" \
+            gh release create "$GITHUB_REF_NAME" "$ARCHIVE" "$ARCHIVE.sha256" \
               --verify-tag \
               --generate-notes \
               --title "Shakespeare $GITHUB_REF_NAME"

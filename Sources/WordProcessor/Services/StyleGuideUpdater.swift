@@ -7,15 +7,15 @@ final class StyleGuideUpdater {
     }
 
     enum UpdateError: LocalizedError {
-        case noFeedback
+        case noEvidence
         case emptyResponse
 
         var errorDescription: String? {
             switch self {
-            case .noFeedback:
-                return "No unprocessed style feedback is available yet."
+            case .noEvidence:
+                return "No new writing samples or reliable style outcomes are available yet."
             case .emptyResponse:
-                return "The style updater returned an empty response."
+                return "The style refiner returned an empty response. Nothing was changed."
             }
         }
     }
@@ -28,66 +28,91 @@ final class StyleGuideUpdater {
     }
 
     func proposeUpdate() async throws -> Proposal {
-        let decisions = store.unprocessedStyleDecisions(limit: 100)
-        guard !decisions.isEmpty else { throw UpdateError.noFeedback }
+        let decisions = store.unprocessedStyleDecisions(limit: 40)
+        let samples = store.unprocessedWritingSamples(limit: 5)
+        guard !decisions.isEmpty || !samples.isEmpty else { throw UpdateError.noEvidence }
+
+        let evidence = try StyleProfileEvidenceCompiler.compile(
+            samples: samples.map { StyleProfileSampleEvidence(id: $0.id, text: $0.text) },
+            edits: decisions.map {
+                StyleProfileEditEvidence(
+                    id: $0.id,
+                    decision: $0.decision,
+                    kind: $0.kind,
+                    originalText: $0.originalText,
+                    replacementText: $0.replacementText,
+                    finalText: $0.finalText ?? "",
+                    groupID: $0.groupID,
+                    rationale: $0.rationale,
+                    timestamp: $0.timestamp
+                )
+            }
+        )
+        guard !evidence.eventIDs.isEmpty else { throw UpdateError.noEvidence }
 
         let currentPreferences = store.learnedPreferences()
-        let batchJSON = try decisionsJSON(decisions)
-        let today = ISO8601DateFormatter().string(from: Date()).prefix(10)
+        let today = String(ISO8601DateFormatter().string(from: Date()).prefix(10))
+        let systemPrompt: [[String: Any]] = [[
+            "type": "text",
+            "text": """
+            You refine a compact, evidence-backed writer style profile. Return only JSON matching the supplied schema.
 
-        let systemPrompt: [[String: Any]] = [
-            [
-                "type": "text",
-                "text": """
-                You update a compact markdown file named learned_preferences.md for a writer's style system.
-                Return only the complete proposed markdown file. Do not use code fences.
+            Rules:
+            - Generalize recurring mechanics of voice, syntax, rhythm, diction, paragraph movement, structure, clarity, and concision. Never preserve subject matter, names, facts, quotations, or distinctive phrases.
+            - Treat each saved edit outcome as weak evidence, not a direct instruction.
+            - A rule is established only with support from at least 2 independent samples, at least 5 consistent edits across 3 sessions, or a mixture of 1 sample and 3 edits across 2 sessions.
+            - A rule may be emerging with 1 sample or at least 3 consistent edits across 2 sessions. Drop weaker patterns.
+            - Count only supplied evidence that directly supports a rule. Never invent counts. sample_count cannot exceed \(evidence.limits.sampleCount), edit_count cannot exceed \(evidence.limits.editCount), and edit_group_count cannot exceed \(evidence.limits.editGroupCount).
+            - Preserve a useful existing rule by repeating its guidance exactly and setting carried_forward=true only when it already appears in the current reviewed profile and the new evidence does not contradict it. The local compiler verifies exact carry-forward matches and preserves their existing status.
+            - Do not create the opposite of a rejected suggestion as a positive preference. A rejection is negative evidence unless the writer's preferred alternative is independently supported.
+            - Do not generalize from topic-specific wording, factual corrections, targeting mistakes, one-off instructions, or document-specific constraints.
+            - Conflicting evidence means no new rule. Prefer omission over a speculative rule.
+            - Phrase each rule as concise, actionable editing guidance without examples or quoted prose.
+            - Merge duplicates and return no more than 18 rules. A local compiler applies stricter evidence, copying, and size gates afterward.
+            - Samples are deliberately excerpted across documents. Edit evidence is already filtered to style-relevant, high-confidence save outcomes.
+            """,
+            "cache_control": LanguageModelService.ephemeralPromptCacheControl,
+        ]]
 
-                Rules:
-                - Preserve useful existing rules unless newer evidence contradicts them.
-                - Treat each decision as weak evidence, not a direct instruction to alter the style profile.
-                - Add or materially strengthen an active rule only when supported by at least 5 consistent decisions from at least 3 distinct group IDs.
-                - Put patterns supported by 3 or 4 consistent decisions under "Tentative". Drop patterns supported by only 1 or 2 decisions.
-                - Do not create the opposite of a rejected suggestion as a positive preference. A rejection is negative evidence only unless the preferred alternative is independently accepted several times.
-                - Do not generalize from topic-specific wording, factual corrections, targeting mistakes, one-off instructions, or document-specific constraints.
-                - Conflicting evidence means no new rule. Keep a tentative rule tentative until the stronger threshold is met.
-                - Phrase rules as actionable editing guidance.
-                - Include date \(today) and evidence count for each rule.
-                - Merge duplicates, prune contradicted rules, and keep the whole file under 30 rules and 1,500 words.
-                - The input has already been filtered to style-relevant categories, but rejections may still mean bad targeting rather than bad style; infer conservatively from context and rationale.
-                """,
-                "cache_control": LanguageModelService.oneHourPromptCacheControl
-            ]
-        ]
+        let messages: [[String: Any]] = [[
+            "role": "user",
+            "content": """
+            <current_learned_preferences>
+            \(String(currentPreferences.prefix(4_000)))
+            </current_learned_preferences>
 
-        let messages: [[String: Any]] = [
-            [
-                "role": "user",
-                "content": """
-                <current_learned_preferences>
-                \(currentPreferences)
-                </current_learned_preferences>
+            <representative_sample_excerpts_json>
+            \(evidence.samplesJSON)
+            </representative_sample_excerpts_json>
 
-                <new_decision_batch_json>
-                \(batchJSON)
-                </new_decision_batch_json>
-                """
-            ]
-        ]
+            <confirmed_edit_outcomes_json>
+            \(evidence.editsJSON)
+            </confirmed_edit_outcomes_json>
+            """,
+        ]]
 
         var response = ""
         for try await chunk in apiService.streamMessage(
             messages: messages,
             systemPrompt: systemPrompt,
-            cacheControl: nil
+            outputFormat: ["type": "json_schema", "schema": StyleProfileCompiler.outputSchema],
+            temperature: 0,
+            maxTokens: 3_072
         ) {
-            if case .text(let text) = chunk {
-                response += text
-            }
+            if case .text(let text) = chunk { response += text }
         }
 
-        let markdown = Self.cleanedMarkdown(response)
-        guard !markdown.isEmpty else { throw UpdateError.emptyResponse }
-        return Proposal(proposedMarkdown: markdown, eventIDs: decisions.map(\.id))
+        guard !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw UpdateError.emptyResponse
+        }
+        let markdown = try StyleProfileCompiler.compile(
+            response: response,
+            limits: evidence.limits,
+            sourceTexts: evidence.sourceTexts,
+            currentProfile: currentPreferences,
+            date: today
+        )
+        return Proposal(proposedMarkdown: markdown, eventIDs: evidence.eventIDs)
     }
 
     func approve(_ proposal: Proposal) throws {
@@ -123,25 +148,5 @@ final class StyleGuideUpdater {
         }
 
         return lines.joined(separator: "\n")
-    }
-
-    private func decisionsJSON(_ decisions: [TrainingEventStore.DecisionSummary]) throws -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(decisions)
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    private static func cleanedMarkdown(_ response: String) -> String {
-        var cleaned = response.trimmingCharacters(in: .whitespacesAndNewlines)
-        if cleaned.hasPrefix("```markdown") {
-            cleaned.removeFirst("```markdown".count)
-        } else if cleaned.hasPrefix("```") {
-            cleaned.removeFirst("```".count)
-        }
-        if cleaned.hasSuffix("```") {
-            cleaned.removeLast("```".count)
-        }
-        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

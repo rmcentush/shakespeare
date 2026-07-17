@@ -9,16 +9,13 @@ final class AssistantChatViewModel {
     var streamingMessageID: UUID?
     var streamingContentLength = 0
 
-    @ObservationIgnored private let apiService = LanguageModelService(
-        purpose: .chat,
-        effort: nil
-    )
+    @ObservationIgnored private let apiService = LanguageModelService(purpose: .chat)
     @ObservationIgnored private var apiMessages: [[String: Any]] = []
     @ObservationIgnored private var requestTask: Task<Void, Never>?
 
-    private static let maxApiMessages = 24
+    private static let maxApiMessages = 16
     private static let maxVisibleMessages = 60
-    private static let maxAPIHistoryCharacters = 60_000
+    private static let maxAPIHistoryCharacters = 36_000
     private nonisolated static let maxDocumentContextCharacters = 20_000
     private static let flushChunkThreshold = 32
     private static let flushInterval: TimeInterval = 0.2
@@ -41,9 +38,7 @@ final class AssistantChatViewModel {
     func sendMessage(
         _ text: String,
         quotedSelection: String? = nil,
-        documentContent: String = "",
-        editContext _: EditorViewModel.EditContextSnapshot? = nil,
-        editorViewModel _: EditorViewModel? = nil
+        documentContent: String = ""
     ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -117,15 +112,10 @@ final class AssistantChatViewModel {
             for try await chunk in apiService.streamMessage(
                 messages: apiMessages,
                 systemPrompt: systemPrompt,
-                cacheControl: nil,
                 temperature: 0.2,
                 maxTokens: 2_400
             ) {
                 switch chunk {
-                case .textBlockStart(let afterNonText):
-                    if afterNonText {
-                        fullText = Self.appendingInterBlockBreak(to: fullText)
-                    }
                 case .text(let text):
                     fullText += text
                     flushCount += 1
@@ -274,13 +264,6 @@ final class AssistantChatViewModel {
 
         \(normalized.suffix(tailCount))
         """
-    }
-
-    private nonisolated static func appendingInterBlockBreak(to text: String) -> String {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
-        if text.hasSuffix("\n\n") { return text }
-        if text.hasSuffix("\n") { return text + "\n" }
-        return text + "\n\n"
     }
 
     private nonisolated static func appendingSources(

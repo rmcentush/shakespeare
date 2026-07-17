@@ -6,6 +6,7 @@ struct EditorWebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
         let contentController = WKUserContentController()
         let assetSchemeHandler = DocumentAssetSchemeHandler()
         assetSchemeHandler.viewModel = viewModel
@@ -29,12 +30,11 @@ struct EditorWebView: NSViewRepresentable {
         let resourceBundle = Bundle.shakespeareResources
         let bundleRootURL = resourceBundle.bundleURL
         if let htmlURL = resourceBundle.url(forResource: "editor", withExtension: "html") {
-            // The editor HTML lives under Resources/, while copied Fonts live beside it at the
-            // bundle root. Grant access to the whole bundle so WKWebView can read both.
+            // Grant read access only to the sealed application resource bundle.
             webView.loadFileURL(htmlURL, allowingReadAccessTo: bundleRootURL)
         }
 
-        // Prepare @font-face CSS (cached for later injection on editorReady)
+        // Prepare the system-font theme CSS for later injection on editorReady.
         let _ = FontManager.shared.fontFaceCSS(bundle: .shakespeareResources)
 
         viewModel.webView = webView

@@ -25,10 +25,8 @@ enum AuthorStyleReference {
     }
 
     static var styleDirectoryURL: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport
-            .appendingPathComponent("Shakespeare")
-            .appendingPathComponent("style")
+        try? ShakespeareStorage.prepare()
+        return ShakespeareStorage.styleDirectoryURL
     }
 
     static var writableReferenceURL: URL {

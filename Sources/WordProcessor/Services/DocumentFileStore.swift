@@ -146,7 +146,6 @@ actor DocumentFileStore {
 
     enum FileStoreError: LocalizedError {
         case missingPackageManifest
-        case unsupportedPackageContentFormat
         case invalidDataURL
         case invalidPackagePath(String)
         case assetTooLarge(maximumMegabytes: Int)
@@ -157,8 +156,6 @@ actor DocumentFileStore {
             switch self {
             case .missingPackageManifest:
                 return "The document package is missing its manifest."
-            case .unsupportedPackageContentFormat:
-                return "The document package uses an unsupported content format."
             case .invalidDataURL:
                 return "The document contains an invalid embedded asset."
             case .invalidPackagePath(let filename):
@@ -611,21 +608,18 @@ actor DocumentFileStore {
     }
 
     private func workingDocumentURL(for documentID: String) throws -> URL {
-        guard let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first else {
-            throw CocoaError(.fileNoSuchFile)
-        }
+        try ShakespeareStorage.prepare()
         let safeID = documentID.replacingOccurrences(
             of: "[^A-Za-z0-9_-]",
             with: "-",
             options: .regularExpression
         )
-        let directory = appSupport
-            .appendingPathComponent("Shakespeare", isDirectory: true)
-            .appendingPathComponent("WorkingDocuments", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = ShakespeareStorage.workingDocumentsDirectoryURL
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
         return directory.appendingPathComponent(
             "\(safeID.isEmpty ? UUID().uuidString : safeID).\(Self.documentPackageExtension)",
             isDirectory: true

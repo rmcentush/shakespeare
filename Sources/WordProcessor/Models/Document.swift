@@ -45,37 +45,6 @@ final class DocumentModel: @unchecked Sendable {
         return isDirty ? "\(name) — Edited" : name
     }
 
-    func newDocument() {
-        documentGeneration &+= 1
-        applySnapshot(.empty(), fileURL: nil, markDirty: false, resetRevision: true)
-    }
-
-    @discardableResult
-    func updateContent(_ html: String, plainText: String? = nil) -> Bool {
-        let resolvedPlainText = plainText ?? plainTextContent
-        let changed = html != htmlContent || resolvedPlainText != plainTextContent
-
-        htmlContent = html
-        plainTextContent = resolvedPlainText
-
-        if changed {
-            contentRevision &+= 1
-            isDirty = true
-        }
-        return changed
-    }
-
-    func updateWordCount(words: Int, characters: Int) {
-        wordCount = words
-        characterCount = characters
-    }
-
-    func markEditorActivity(words: Int, characters: Int) {
-        wordCount = words
-        characterCount = characters
-        modifiedAt = Date()
-    }
-
     func markEditorMutation() {
         contentRevision &+= 1
         modifiedAt = Date()

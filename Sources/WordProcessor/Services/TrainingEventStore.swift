@@ -6,7 +6,12 @@ enum PersonalizationSettings {
     private static let writerIDDefaultsKey = "personalizationWriterID"
 
     static var isEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: enabledDefaultsKey) }
+        get {
+            guard UserDefaults.standard.object(forKey: enabledDefaultsKey) != nil else {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: enabledDefaultsKey)
+        }
         set { UserDefaults.standard.set(newValue, forKey: enabledDefaultsKey) }
     }
 
@@ -32,6 +37,8 @@ struct PersonalizationOutcomeSnapshot: Codable, Equatable, Sendable {
 final class TrainingEventStore: @unchecked Sendable {
     static let shared = TrainingEventStore()
     static let currentSchemaVersion = 2
+    static let maximumWritingSampleCharacters = 100_000
+    static let minimumWritingSampleWords = 300
 
     struct Consent: Codable, Equatable, Sendable {
         let collectionEnabled: Bool
@@ -89,29 +96,36 @@ final class TrainingEventStore: @unchecked Sendable {
         let timestamp: Double
     }
 
+    struct WritingSampleSummary: Codable, Identifiable, Equatable, Sendable {
+        let id: String
+        let text: String
+        let timestamp: Double
+    }
+
     struct Readiness: Equatable, Sendable {
         let eventCount: Int
         let resolvedEditCount: Int
         let eligibleExampleCount: Int
         let styleDecisionCount: Int
-        let snapshotDocumentCount: Int
+        let confirmedRewriteCount: Int
+        let bootstrapSampleCount: Int
 
         var progress: Double {
-            let exampleProgress = min(Double(eligibleExampleCount) / 50, 1)
-            let documentProgress = min(Double(snapshotDocumentCount) / 3, 1)
-            return exampleProgress * 0.8 + documentProgress * 0.2
-        }
-
-        var isTrainingReady: Bool {
-            eligibleExampleCount >= 50 && snapshotDocumentCount >= 3
+            let editProgress = min(Double(eligibleExampleCount) / 30, 1) * 0.7
+                + min(Double(confirmedRewriteCount) / 8, 1) * 0.3
+            let sampleProgress = min(Double(bootstrapSampleCount) / 5, 1)
+            return max(editProgress, sampleProgress)
         }
 
         var status: String {
             if !PersonalizationSettings.isEnabled {
                 return "Learning is paused"
             }
-            if isTrainingReady {
-                return "Ready for an evaluated training run"
+            if progress >= 1 {
+                return "Your style profile is well grounded"
+            }
+            if bootstrapSampleCount > 0 {
+                return "Learning from imported writing samples"
             }
             if eligibleExampleCount >= 15 {
                 return "Building a reliable style sample"
@@ -120,7 +134,15 @@ final class TrainingEventStore: @unchecked Sendable {
         }
     }
 
-    private static let snapshotHashesDefaultsKey = "personalizationSnapshotHashes"
+    enum WritingSampleImportDisposition: Equatable, Sendable {
+        case imported
+        case duplicate
+        case learningDisabled
+        case tooShort
+        case tooLong
+        case insufficientStructure
+    }
+
     private static let styleKinds: Set<String> = [
         "voice", "tone", "clarity", "structure", "concision", "style",
     ]
@@ -131,7 +153,9 @@ final class TrainingEventStore: @unchecked Sendable {
     private var cachedEventLogSize: UInt64?
 
     var eventLogURL: URL {
-        PersonalizationStorage.directoryURL.appendingPathComponent("training_events.jsonl")
+        try? ShakespeareStorage.prepare()
+        return ShakespeareStorage.personalizationEventsDirectoryURL
+            .appendingPathComponent("training_events.jsonl")
     }
 
     var processedIDsURL: URL {
@@ -267,62 +291,62 @@ final class TrainingEventStore: @unchecked Sendable {
         return acknowledged
     }
 
-    func appendDocumentSnapshot(_ snapshot: DocumentFileStore.FileSnapshot) {
-        guard PersonalizationSettings.isEnabled,
-              !snapshot.documentID.isEmpty,
-              !snapshot.plainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else { return }
+    /// Stores a user-confirmed, finished writing sample as a local bootstrap signal.
+    /// The source filename/path is intentionally not persisted.
+    func appendWritingSample(_ rawText: String) throws -> WritingSampleImportDisposition {
+        guard PersonalizationSettings.isEnabled else { return .learningDisabled }
+        let text = rawText
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count <= Self.maximumWritingSampleCharacters else { return .tooLong }
+        guard text.split(whereSeparator: \.isWhitespace).count >= Self.minimumWritingSampleWords
+        else { return .tooShort }
+        guard Self.bootstrapExampleEstimate(for: text) >= 3 else {
+            return .insufficientStructure
+        }
 
-        let contentHash = Self.hash(snapshot.plainText)
+        let contentHash = Self.hash(text)
         lock.lock()
         defer { lock.unlock() }
+        let events = allEventsUnlocked()
+        guard !events.contains(where: {
+            $0.contentHash == contentHash && $0.provenance.capture == "writing_sample_import"
+        }) else {
+            return .duplicate
+        }
 
-        var hashes = UserDefaults.standard.dictionary(
-            forKey: Self.snapshotHashesDefaultsKey
-        ) as? [String: String] ?? [:]
-        guard hashes[snapshot.documentID] != contentHash else { return }
-
-        let runtime = InferenceSettings.runtime(
-            purpose: .assistant,
-            modelOverride: nil,
-            effortOverride: "low"
-        )
+        let documentID = "writing-sample-\(contentHash)"
         let event = Event(
             schemaVersion: Self.currentSchemaVersion,
-            id: UUID().uuidString,
+            id: documentID,
             eventType: "document_snapshot",
             recordedAt: Self.nowMilliseconds,
             writerID: PersonalizationSettings.writerID,
-            documentID: snapshot.documentID,
-            provider: runtime.providerID.rawValue,
-            model: runtime.model,
+            documentID: documentID,
+            provider: "local",
+            model: "user-supplied",
             source: "writer",
-            operationKind: "save",
-            learningCategory: "continuation",
+            operationKind: "bootstrap_import",
+            learningCategory: "voice",
             decision: "final",
             instruction: "Continue in the writer's own voice.",
             originalText: "",
             proposedText: "",
-            finalText: snapshot.plainText,
+            finalText: text,
             surroundingText: "",
             rationale: "",
             groupID: "",
             contentHash: contentHash,
             consent: Self.localConsent,
-            provenance: Self.provenance(capture: "document_save"),
+            provenance: Self.provenance(capture: "writing_sample_import"),
             parentEventID: nil,
-            outcome: "saved_document",
+            outcome: "user_confirmed_writing_sample",
             confidence: 1,
             trainingEligible: true
         )
-
-        do {
-            try appendUnlocked(event)
-            hashes[snapshot.documentID] = contentHash
-            UserDefaults.standard.set(hashes, forKey: Self.snapshotHashesDefaultsKey)
-        } catch {
-            print("TrainingEventStore: failed to append snapshot: \(error)")
-        }
+        try appendUnlocked(event)
+        return .imported
     }
 
     func appendCommentDecision(
@@ -380,16 +404,42 @@ final class TrainingEventStore: @unchecked Sendable {
             $0.schemaVersion == 1 && $0.eventType == "edit_decision"
                 && $0.decision == "accept" && $0.finalText != nil
         }
+        let writingSamples = events.filter {
+            $0.eventType == "document_snapshot"
+                && $0.provenance.capture == "writing_sample_import"
+                && $0.trainingEligible == true
+        }
         let styleCount = styleDecisionsUnlocked(events: events).count
+        let confirmedRewriteCount = styleDecisionsUnlocked(events: events).filter {
+            StyleLearningPolicy.isConfirmedUserRewrite(
+                outcome: $0.outcome,
+                finalText: $0.finalText
+            )
+        }.count
         return Readiness(
             eventCount: events.count,
             resolvedEditCount: outcomes.count,
             eligibleExampleCount: eligible.count + legacyEligible.count,
             styleDecisionCount: styleCount,
-            snapshotDocumentCount: Set(
-                events.filter { $0.eventType == "document_snapshot" }.map(\.documentID)
-            ).count
+            confirmedRewriteCount: confirmedRewriteCount,
+            bootstrapSampleCount: writingSamples.count
         )
+    }
+
+    func writingSamples(limit: Int = 20) -> [String] {
+        guard limit > 0 else { return [] }
+        lock.lock()
+        defer { lock.unlock() }
+        return allEventsUnlocked()
+            .filter {
+                $0.eventType == "document_snapshot"
+                    && $0.provenance.capture == "writing_sample_import"
+                    && $0.trainingEligible == true
+            }
+            .sorted { $0.recordedAt > $1.recordedAt }
+            .prefix(limit)
+            .compactMap { $0.finalText?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 
     func unprocessedStyleDecisions(limit: Int = 100) -> [DecisionSummary] {
@@ -401,8 +451,64 @@ final class TrainingEventStore: @unchecked Sendable {
             .suffix(limit)
     }
 
-    func pendingDecisionCount() -> Int {
+    func unprocessedWritingSamples(limit: Int = 5) -> [WritingSampleSummary] {
+        guard limit > 0 else { return [] }
+        lock.lock()
+        defer { lock.unlock() }
+        let processed = processedIDsUnlocked()
+        return allEventsUnlocked()
+            .filter {
+                $0.eventType == "document_snapshot"
+                    && $0.provenance.capture == "writing_sample_import"
+                    && $0.trainingEligible == true
+                    && !processed.contains($0.id)
+            }
+            .sorted { $0.recordedAt < $1.recordedAt }
+            .prefix(limit)
+            .compactMap { event in
+                guard let text = event.finalText?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !text.isEmpty
+                else { return nil }
+                return WritingSampleSummary(id: event.id, text: text, timestamp: event.recordedAt)
+            }
+    }
+
+    /// Returns only prose the writer actively changed or rewrote after a model
+    /// suggestion. Accepted-unchanged model text is intentionally excluded so
+    /// the runtime context cannot become a self-reinforcing model feedback loop.
+    func confirmedStyleExamples(limit: Int = 20) -> [String] {
+        guard limit > 0 else { return [] }
+        lock.lock()
+        defer { lock.unlock() }
+
+        let decisions = styleDecisionsUnlocked(events: allEventsUnlocked())
+            .sorted { $0.timestamp > $1.timestamp }
+        var seenGroups = Set<String>()
+        var seenTexts = Set<String>()
+        var examples: [String] = []
+        for decision in decisions {
+            guard StyleLearningPolicy.isConfirmedUserRewrite(
+                outcome: decision.outcome,
+                finalText: decision.finalText
+            ),
+                  let finalText = decision.finalText?.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                  )
+            else { continue }
+            let groupKey = decision.groupID.isEmpty ? decision.id : decision.groupID
+            let textKey = Self.hash(finalText.lowercased())
+            guard seenGroups.insert(groupKey).inserted,
+                  seenTexts.insert(textKey).inserted
+            else { continue }
+            examples.append(finalText)
+            if examples.count == limit { break }
+        }
+        return examples
+    }
+
+    func pendingProfileEvidenceCount() -> Int {
         unprocessedStyleDecisions(limit: .max).count
+            + unprocessedWritingSamples(limit: .max).count
     }
 
     func recentRejectedDecisions(limit: Int = 10) -> [DecisionSummary] {
@@ -439,18 +545,11 @@ final class TrainingEventStore: @unchecked Sendable {
     func deleteAll() throws {
         lock.lock()
         defer { lock.unlock() }
-        if FileManager.default.fileExists(atPath: eventLogURL.path) {
-            try FileManager.default.removeItem(at: eventLogURL)
-        }
-        if FileManager.default.fileExists(atPath: processedIDsURL.path) {
-            try FileManager.default.removeItem(at: processedIDsURL)
-        }
-        if FileManager.default.fileExists(atPath: legacyFeedbackLogURL.path) {
-            try FileManager.default.removeItem(at: legacyFeedbackLogURL)
-        }
+        try ShakespeareStorage.resetPersonalization()
+        AuthorStyleReference.reload()
         cachedEvents = []
         cachedEventLogSize = 0
-        UserDefaults.standard.removeObject(forKey: Self.snapshotHashesDefaultsKey)
+        UserDefaults.standard.removeObject(forKey: "personalizationSnapshotHashes")
     }
 
     private func styleDecisionsUnlocked(events: [Event]) -> [DecisionSummary] {
@@ -577,13 +676,13 @@ final class TrainingEventStore: @unchecked Sendable {
 
     private func ensureStorageUnlocked() throws {
         try FileManager.default.createDirectory(
-            at: PersonalizationStorage.directoryURL,
+            at: ShakespeareStorage.personalizationDirectoryURL,
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o700],
-            ofItemAtPath: PersonalizationStorage.directoryURL.path
+            ofItemAtPath: ShakespeareStorage.personalizationDirectoryURL.path
         )
         try FileManager.default.createDirectory(
             at: AuthorStyleReference.styleDirectoryURL,
@@ -609,6 +708,18 @@ final class TrainingEventStore: @unchecked Sendable {
 
     private static func hash(_ text: String) -> String {
         SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func bootstrapExampleEstimate(for text: String) -> Int {
+        let paragraphs = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { paragraph in
+                let words = paragraph.split(whereSeparator: \.isWhitespace).count
+                return words >= 20 && paragraph.count <= 4_000
+            }
+        return min(max(paragraphs.count - 1, 0), 8)
     }
 
     private static func provenance(capture: String) -> Provenance {

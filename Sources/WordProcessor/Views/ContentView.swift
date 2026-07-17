@@ -1,5 +1,23 @@
 import SwiftUI
 
+@MainActor
+private enum RecoveryDraftPresentationCoordinator {
+    private static var presentingWindowID: UUID?
+    private static var didOfferThisLaunch = false
+
+    static func claim(for windowID: UUID) -> Bool {
+        guard !didOfferThisLaunch, presentingWindowID == nil else { return false }
+        didOfferThisLaunch = true
+        presentingWindowID = windowID
+        return true
+    }
+
+    static func release(for windowID: UUID) {
+        guard presentingWindowID == windowID else { return }
+        presentingWindowID = nil
+    }
+}
+
 struct ContentView: View {
     private enum SidebarPanel {
         case chat
@@ -27,6 +45,11 @@ struct ContentView: View {
         var sidebar: CGFloat
     }
 
+    private struct RecoveryDraftPresentation: Identifiable {
+        let id = UUID()
+        let drafts: [RecoveryDraftStore.DraftMetadata]
+    }
+
     @Environment(DocumentModel.self) private var document
     @Environment(EditorViewModel.self) private var editorViewModel
     @State private var activeSidebar: SidebarPanel?
@@ -40,6 +63,11 @@ struct ContentView: View {
     @State private var showOnboarding = false
     @State private var hasCheckedOnboarding = false
     @State private var onboardingWindowID = UUID()
+    @State private var hasCheckedRecoveryDrafts = false
+    @State private var recoveryDraftsLoaded = false
+    @State private var presentRecoveryWhenLoaded = false
+    @State private var recoveryDrafts: [RecoveryDraftStore.DraftMetadata] = []
+    @State private var recoveryDraftPresentation: RecoveryDraftPresentation?
 
     var body: some View {
         mainLayout
@@ -135,16 +163,19 @@ struct ContentView: View {
             .onDisappear {
                 editorViewModel.flushPendingChanges(document: document)
                 OnboardingSettings.releasePresentation(for: onboardingWindowID)
+                RecoveryDraftPresentationCoordinator.release(for: onboardingWindowID)
             }
             .onAppear {
                 guard !hasCheckedOnboarding else { return }
                 hasCheckedOnboarding = true
-                if OnboardingSettings.shouldPresent,
-                   OnboardingSettings.claimPresentation(for: onboardingWindowID) {
+                let willPresentOnboarding = OnboardingSettings.shouldPresent
+                    && OnboardingSettings.claimPresentation(for: onboardingWindowID)
+                if willPresentOnboarding {
                     DispatchQueue.main.async {
                         showOnboarding = true
                     }
                 }
+                loadRecoveryDrafts(presentWhenReady: !willPresentOnboarding)
             }
             .onReceive(NotificationCenter.default.publisher(for: .showOnboarding, object: editorViewModel)) { _ in
                 showOnboarding = true
@@ -153,6 +184,7 @@ struct ContentView: View {
                 OnboardingSettings.markCompleted()
                 OnboardingSettings.releasePresentation(for: onboardingWindowID)
                 editorViewModel.focusEditor()
+                presentRecoveryDraftsIfAvailable()
             }) {
                 OnboardingView(
                     onFinish: {
@@ -163,6 +195,24 @@ struct ContentView: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                             editorViewModel.openDocument(document: document)
                         }
+                    }
+                )
+            }
+            .sheet(item: $recoveryDraftPresentation, onDismiss: {
+                RecoveryDraftPresentationCoordinator.release(for: onboardingWindowID)
+                editorViewModel.focusEditor()
+            }) { presentation in
+                RecoveryDraftsView(
+                    drafts: presentation.drafts,
+                    onRecover: { draft in
+                        recoveryDraftPresentation = nil
+                        editorViewModel.recoverDraft(draft, document: document)
+                    },
+                    onDiscard: { draft in
+                        discardRecoveryDraft(draft)
+                    },
+                    onClose: {
+                        recoveryDraftPresentation = nil
                     }
                 )
             }
@@ -426,6 +476,45 @@ struct ContentView: View {
 }
 
 extension ContentView {
+    private func loadRecoveryDrafts(presentWhenReady: Bool) {
+        guard !hasCheckedRecoveryDrafts else {
+            if presentWhenReady { presentRecoveryDraftsIfAvailable() }
+            return
+        }
+        hasCheckedRecoveryDrafts = true
+
+        Task { @MainActor in
+            recoveryDrafts = (try? await RecoveryDraftStore.shared.availableDrafts()) ?? []
+            recoveryDraftsLoaded = true
+            if presentWhenReady || presentRecoveryWhenLoaded {
+                presentRecoveryWhenLoaded = false
+                presentRecoveryDraftsIfAvailable()
+            }
+        }
+    }
+
+    private func presentRecoveryDraftsIfAvailable() {
+        guard recoveryDraftsLoaded else {
+            presentRecoveryWhenLoaded = true
+            return
+        }
+        guard !recoveryDrafts.isEmpty,
+              document.fileURL == nil,
+              !document.isDirty,
+              !showOnboarding,
+              RecoveryDraftPresentationCoordinator.claim(for: onboardingWindowID)
+        else { return }
+        recoveryDraftPresentation = RecoveryDraftPresentation(drafts: recoveryDrafts)
+    }
+
+    private func discardRecoveryDraft(_ draft: RecoveryDraftStore.DraftMetadata) {
+        editorViewModel.discardRecoveryDraft(draft)
+        recoveryDrafts.removeAll { $0.id == draft.id }
+        recoveryDraftPresentation = recoveryDrafts.isEmpty
+            ? nil
+            : RecoveryDraftPresentation(drafts: recoveryDrafts)
+    }
+
     private func toggleSidebar(_ panel: SidebarPanel) {
         withAnimation(Layout.sidebarAnimation) {
             activeSidebar = activeSidebar == panel ? nil : panel
