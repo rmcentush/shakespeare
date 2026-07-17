@@ -4,6 +4,19 @@ import Foundation
 @main
 struct APIKeyStoreEvals {
     static func main() {
+        guard APIKeyStore.keychainItemLabel == "Shakespeare" else {
+            print("API key store eval failed: Keychain item label was not user-facing")
+            exit(1)
+        }
+        guard APIKeyStore.keychainServicePrefix != "com.shakespeare.api" else {
+            print("API key store eval failed: legacy Keychain service would still surface")
+            exit(1)
+        }
+        guard !APIKeyStore.hasStableSigningIdentity() else {
+            print("API key store eval failed: unsigned evaluator looked distribution-signed")
+            exit(1)
+        }
+
         let service = "shakespeare-eval-\(UUID().uuidString)"
         let expected = "temporary-test-key"
         defer { APIKeyStore.shared.deleteAPIKey(service: service) }
