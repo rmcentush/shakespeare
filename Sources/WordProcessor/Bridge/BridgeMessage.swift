@@ -20,11 +20,22 @@ enum BridgePayload: Codable {
         let isBold: Bool
         let isItalic: Bool
         let isUnderline: Bool
+        let isStrike: Bool
+        let isBulletList: Bool
+        let isOrderedList: Bool
+        let isBlockquote: Bool
         let heading: Int
         let textAlign: String
         let isLink: Bool
         let linkHref: String
         let textColor: String
+        let isTextColorMixed: Bool
+        let fontFamily: String
+        let isFontFamilyMixed: Bool
+        let fontSize: String
+        let isFontSizeMixed: Bool
+        let lineHeight: String
+        let isLineHeightMixed: Bool
         let isFootnote: Bool
         let footnoteText: String
         let isImage: Bool
@@ -135,11 +146,22 @@ enum BridgePayload: Codable {
                 isBold: payload["isBold"] as? Bool ?? false,
                 isItalic: payload["isItalic"] as? Bool ?? false,
                 isUnderline: payload["isUnderline"] as? Bool ?? false,
+                isStrike: payload["isStrike"] as? Bool ?? false,
+                isBulletList: payload["isBulletList"] as? Bool ?? false,
+                isOrderedList: payload["isOrderedList"] as? Bool ?? false,
+                isBlockquote: payload["isBlockquote"] as? Bool ?? false,
                 heading: payload["heading"] as? Int ?? 0,
                 textAlign: payload["textAlign"] as? String ?? "left",
                 isLink: payload["isLink"] as? Bool ?? false,
                 linkHref: payload["linkHref"] as? String ?? "",
                 textColor: payload["textColor"] as? String ?? "",
+                isTextColorMixed: payload["isTextColorMixed"] as? Bool ?? false,
+                fontFamily: payload["fontFamily"] as? String ?? "",
+                isFontFamilyMixed: payload["isFontFamilyMixed"] as? Bool ?? false,
+                fontSize: payload["fontSize"] as? String ?? "",
+                isFontSizeMixed: payload["isFontSizeMixed"] as? Bool ?? false,
+                lineHeight: payload["lineHeight"] as? String ?? "",
+                isLineHeightMixed: payload["isLineHeightMixed"] as? Bool ?? false,
                 isFootnote: payload["isFootnote"] as? Bool ?? false,
                 footnoteText: payload["footnoteText"] as? String ?? "",
                 isImage: payload["isImage"] as? Bool ?? false,

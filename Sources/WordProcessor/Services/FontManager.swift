@@ -4,6 +4,9 @@ import SwiftUI
 @MainActor
 final class FontManager {
     static let shared = FontManager()
+    static let baseFont = "Georgia"
+    static let baseSize = 18.0
+    static let baseLineHeight = 1.7
 
     static let availableFonts = [
         "Georgia",
@@ -14,9 +17,9 @@ final class FontManager {
         "-apple-system",
     ]
 
-    var currentFont = "Georgia"
-    var currentSize = 18.0
-    var currentLineHeight = 1.7
+    var currentFont = baseFont
+    var currentSize = baseSize
+    var currentLineHeight = baseLineHeight
     private(set) var cachedFontFaceCSS: String = ""
 
     private init() {
@@ -44,19 +47,8 @@ final class FontManager {
         defaults.set(currentLineHeight, forKey: "editorLineHeight")
     }
 
-    func generateCSS() -> String {
-        let fontName = normalizeFontName(currentFont)
-        return """
-        .editor-content, .editor-footnotes {
-            font-family: '\(fontName)', Georgia, serif;
-            font-size: \(Int(currentSize))px;
-            line-height: \(currentLineHeight);
-        }
-        """
-    }
-
     func fullThemeCSS() -> String {
-        cachedFontFaceCSS + "\n" + generateCSS()
+        cachedFontFaceCSS
     }
 
     func themedCSS(for appearance: String) -> String {
@@ -104,6 +96,6 @@ final class FontManager {
     }
 
     private func normalizeFontName(_ fontName: String) -> String {
-        Self.availableFonts.contains(fontName) ? fontName : "Georgia"
+        Self.availableFonts.contains(fontName) ? fontName : Self.baseFont
     }
 }

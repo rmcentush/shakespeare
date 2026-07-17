@@ -1,4 +1,4 @@
-.PHONY: all build run clean editor typecheck privacy-check swift install package evals document-asset-evals storage-layout-evals style-context-evals style-profile-evals writing-quality-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
+.PHONY: all build run clean editor editor-tests typecheck privacy-check release-script-check swift install update package evals document-asset-evals storage-layout-evals style-context-evals style-profile-evals writing-quality-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
 
 all: build
 
@@ -13,8 +13,14 @@ editor: Editor/node_modules/.package-lock.json
 typecheck: Editor/node_modules/.package-lock.json
 	cd Editor && npm run typecheck
 
+editor-tests: Editor/node_modules/.package-lock.json
+	cd Editor && npm test
+
 privacy-check:
 	bash scripts/verify-source-privacy.sh
+
+release-script-check:
+	bash -n scripts/verify-release-archive.sh scripts/install-release-archive.sh scripts/update-from-public-download.sh scripts/stage-website-download.sh
 
 # Copy editor bundles to Swift resources
 copy-assets: editor
@@ -69,7 +75,7 @@ language-model-wire-evals:
 	swiftc Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/APIKeyStore.swift Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/LanguageModelService.swift scripts/language-model-wire-evals.swift -o /tmp/language-model-wire-evals
 	/tmp/language-model-wire-evals
 
-evals: document-asset-evals storage-layout-evals style-context-evals style-profile-evals writing-quality-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
+evals: release-script-check editor-tests document-asset-evals storage-layout-evals style-context-evals style-profile-evals writing-quality-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
 
 # Build release
 build: copy-assets
@@ -88,6 +94,10 @@ install: package
 	rm -rf /Applications/Shakespeare.app
 	ditto .build/package/Shakespeare.app /Applications/Shakespeare.app
 	@echo "Installed to /Applications/Shakespeare.app"
+
+# Install the exact signed and notarized app currently served by the website.
+update:
+	bash scripts/update-from-public-download.sh
 
 # Clean everything
 clean:

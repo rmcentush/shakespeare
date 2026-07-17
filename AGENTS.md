@@ -7,6 +7,7 @@ Canonical contributor guide for this repository.
 ```bash
 make run          # Build editor + Swift debug app and run
 make install      # Build/package release app and copy to /Applications
+make update       # Install the exact verified app served by the public download
 make editor       # Build the locked TipTap bundle
 make typecheck    # Type-check TypeScript
 make privacy-check # Reject committed credentials, account IDs, and local paths

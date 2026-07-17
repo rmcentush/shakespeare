@@ -702,6 +702,33 @@ private struct AssistantBubbleToolbar: View {
     }
 }
 
+private struct AssistantThinkingLabel: View {
+    private static let dotCounts = [1, 2, 3, 3, 2, 1]
+    @State private var phase = 0
+
+    private var dots: String {
+        String(repeating: ".", count: Self.dotCounts[phase])
+    }
+
+    var body: some View {
+        Text(verbatim: "words, words, words\(dots)")
+            .font(.system(size: 11, weight: .regular, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Shakespeare is preparing a response")
+            .task {
+                while !Task.isCancelled {
+                    do {
+                        try await Task.sleep(nanoseconds: 420_000_000)
+                    } catch {
+                        return
+                    }
+                    phase = (phase + 1) % Self.dotCounts.count
+                }
+            }
+    }
+}
+
 private struct AssistantMessageContent: View {
     let content: String
     let isStreaming: Bool
@@ -714,16 +741,7 @@ private struct AssistantMessageContent: View {
         Group {
             if isStreaming {
                 if content.isEmpty {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-
-                        Text("Words, words, words…")
-                            .font(AssistantChatFont.message)
-                            .foregroundStyle(.secondary)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Shakespeare is preparing a response")
+                    AssistantThinkingLabel()
                 } else {
                     Text(verbatim: content)
                         .foregroundStyle(.primary)
