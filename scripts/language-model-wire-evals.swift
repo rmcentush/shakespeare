@@ -8,8 +8,9 @@ struct LanguageModelWireEvals {
         rejectsUnsafeCitationURLs()
         buildsPrivateStructuredRequest()
         enablesBoundedWebSearchForChatOnly()
+        validatesCuratedModelCatalog()
         configuresGrokFallbackForDefaultKimiOnly()
-        print("Language-model wire evals passed (6 cases).")
+        print("Language-model wire evals passed (7 cases).")
     }
 
     private static func extractsStandardOpenRouterAnnotations() {
@@ -109,7 +110,10 @@ struct LanguageModelWireEvals {
     }
 
     private static func configuresGrokFallbackForDefaultKimiOnly() {
-        let defaultRuntime = InferenceSettings.runtime(purpose: .assistant)
+        let defaultRuntime = InferenceSettings.runtime(
+            purpose: .assistant,
+            modelOverride: InferenceSettings.kimiModel
+        )
         precondition(defaultRuntime.model == InferenceSettings.kimiModel)
         precondition(defaultRuntime.fallbackModels == [InferenceSettings.defaultFallbackModel])
 
@@ -123,19 +127,46 @@ struct LanguageModelWireEvals {
         )
         precondition(body["models"] as? [String] == ["~x-ai/grok-latest"])
 
-        let customRuntime = InferenceSettings.runtime(
-            purpose: .assistant,
-            modelOverride: "example/custom-model"
-        )
-        precondition(customRuntime.fallbackModels.isEmpty)
-        let customBody = LanguageModelService.requestBody(
-            runtime: customRuntime,
-            messages: [["role": "user", "content": "Revise this paragraph."]],
-            systemPrompt: nil,
-            outputFormat: nil,
-            temperature: 0.2,
-            maxTokens: 512
-        )
-        precondition(customBody["models"] == nil)
+        for option in InferenceSettings.availableModels where option.id != InferenceSettings.kimiModel {
+            let selectedRuntime = InferenceSettings.runtime(
+                purpose: .assistant,
+                modelOverride: option.id
+            )
+            precondition(selectedRuntime.fallbackModels.isEmpty)
+            let selectedBody = LanguageModelService.requestBody(
+                runtime: selectedRuntime,
+                messages: [["role": "user", "content": "Revise this paragraph."]],
+                systemPrompt: nil,
+                outputFormat: nil,
+                temperature: 0.2,
+                maxTokens: 512
+            )
+            precondition(selectedBody["models"] == nil)
+        }
+    }
+
+    private static func validatesCuratedModelCatalog() {
+        let expectedIDs = [
+            "moonshotai/kimi-k3",
+            "~x-ai/grok-latest",
+            "openai/gpt-5.6-sol",
+            "~anthropic/claude-fable-latest",
+            "anthropic/claude-opus-4.7",
+            "anthropic/claude-opus-4.8",
+        ]
+        let options = InferenceSettings.availableModels
+        precondition(options.map(\.id) == expectedIDs)
+        precondition(Set(options.map(\.id)).count == options.count)
+        precondition(InferenceSettings.defaultWritingModel == InferenceSettings.kimiModel)
+        precondition(InferenceSettings.defaultResearchModel == InferenceSettings.kimiModel)
+        precondition(InferenceSettings.defaultFallbackModel == InferenceSettings.grokModel)
+
+        for option in options {
+            let runtime = InferenceSettings.runtime(
+                purpose: .assistant,
+                modelOverride: option.id
+            )
+            precondition(runtime.supportsTemperature == option.supportsTemperature)
+        }
     }
 }

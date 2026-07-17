@@ -65,5 +65,5 @@ The local ledger retains a versioned historical field named `trainingEligible` f
 - Imported samples and confirmed rewrites are locally retrieved instead of appended wholesale.
 - Profile refinement sends bounded cross-document excerpts and at most 40 compact edit records, never the raw ledger.
 - System guidance is cache-marked where OpenRouter and the selected model support prompt caching.
-- Writing and research both default to `moonshotai/kimi-k3`, with one OpenRouter-native `~x-ai/grok-latest` fallback. Explicit Advanced overrides do not inherit that fallback, and both purposes share one credential.
+- Writing and research both default to `moonshotai/kimi-k3`, with one OpenRouter-native `~x-ai/grok-latest` fallback. Advanced provides six curated, purpose-specific selectors; non-Kimi selections run directly, and both purposes share one credential.
 - No vector database, embedding call, background upload, hosted control plane, or Python runtime is required.

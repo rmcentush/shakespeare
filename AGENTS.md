@@ -47,8 +47,8 @@ All communication uses one handler named `editorBridge`.
 - Validate new keys with `GET /api/v1/key` before replacing a working key.
 - All model requests must set `provider.data_collection` to `deny`.
 - Structured-output requests must set `provider.require_parameters` to `true`.
-- Default Kimi requests include only `~x-ai/grok-latest` in OpenRouter's ordered `models` fallback array. Do not apply that fallback to explicit model overrides.
-- Keep ordinary onboarding model-free; model overrides belong under Advanced.
+- Selected Kimi requests include only `~x-ai/grok-latest` in OpenRouter's ordered `models` fallback array. All other model selections run directly.
+- Keep ordinary onboarding model-free; curated model selectors belong under Advanced. Keep their IDs and parameter capabilities centralized in `InferenceSettings.availableModels`.
 - Research chat is read-only and must not receive the style reference, learned preferences, writing samples, or local learning ledger.
 - Grammar checks must remain block-scoped and style-free.
 

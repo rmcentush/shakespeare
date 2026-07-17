@@ -28,10 +28,10 @@ OpenRouter is the only remote model boundary:
 
 - Writing, revision, grammar, and style review use `moonshotai/kimi-k3` by default.
 - Research chat uses the same `moonshotai/kimi-k3` model with a bounded `openrouter:web_search` server tool enabled for current, source-linked answers.
-- OpenRouter automatically tries `~x-ai/grok-latest` if the default Kimi model fails; custom model overrides do not inherit that fallback.
+- OpenRouter automatically tries `~x-ai/grok-latest` if Kimi fails; other selected models run directly.
 - Both models use the same `OPENROUTER_API_KEY`.
 - Every request sets provider data collection to `deny`.
-- Model overrides live under **Settings → Connections → Advanced** so cost-conscious users can choose smaller OpenRouter models.
+- Curated writing and chat selectors live under **Settings → Connections → Advanced**. They offer Kimi K3, Grok Latest, GPT-5.6 Sol, Claude Fable Latest, and Claude Opus 4.7/4.8, with a direct pricing link.
 
 The research sidebar receives a bounded excerpt of the open draft, but not the permanent style reference, learned preferences, or local learning ledger. Grammar requests are similarly scoped to changed blocks.
 
