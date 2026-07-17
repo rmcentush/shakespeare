@@ -101,4 +101,4 @@ shakespeare/
 
 The TypeScript editor and Swift app communicate through one `WKScriptMessageHandler` named `editorBridge`. Release automation builds a universal, hardened-runtime app, signs and notarizes it, and publishes a ZIP containing only `Shakespeare.app`.
 
-GitHub Actions is intentionally unused. Cloudflare Workers Builds deploys the tiny website, Cloudflare R2 keeps versioned release archives, and `make release` performs the Apple-only build and notarization locally before atomically advancing the public download. It then downloads the live URL and proves its SHA-256 matches the signed source artifact. See [Releasing](docs/RELEASING.md).
+GitHub Actions is intentionally unused. Cloudflare Workers serves the tiny website, Cloudflare R2 keeps versioned release archives, and `make release` performs the Apple-only build and notarization locally before atomically advancing the public download. It then downloads the live URL and proves its SHA-256 matches the signed source artifact. See [Releasing](docs/RELEASING.md).

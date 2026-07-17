@@ -13,7 +13,8 @@ Run the complete deterministic gate locally:
 make check
 ```
 
-Cloudflare Workers Builds is connected to `main` with:
+For optional push-based website deployment, connect Cloudflare Workers Builds
+to `main` with:
 
 - Root directory: `Website`
 - Build command: `npm ci && npm run build`
