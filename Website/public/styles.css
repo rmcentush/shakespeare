@@ -1,7 +1,9 @@
 :root {
   color-scheme: light;
-  --cream: #f7f0df;
-  --sky-ink: #253a3d;
+  --page: #f3eee4;
+  --page-light: #fbf8f1;
+  --ink: #293c3e;
+  --cream: #fbf4e5;
 }
 
 * {
@@ -17,18 +19,28 @@ body {
 
 body {
   overflow: hidden;
-  background: #263333;
-  color: var(--cream);
+  background: var(--page);
+  color: var(--ink);
   font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
 }
 
 .scene {
-  position: relative;
+  display: grid;
   min-height: 100vh;
   min-height: 100svh;
+  padding: clamp(22px, 4vw, 58px);
+  place-items: center;
   overflow: hidden;
+  background:
+    radial-gradient(ellipse at 50% 46%, rgba(255, 255, 255, 0.86), transparent 64%),
+    linear-gradient(135deg, var(--page-light), var(--page));
+}
+
+.artwork {
+  position: relative;
+  width: min(1180px, 88vw, 136svh);
+  aspect-ratio: 1672 / 941;
   isolation: isolate;
-  background: #263333;
 }
 
 .scene-art {
@@ -36,6 +48,16 @@ body {
   z-index: 0;
   inset: 0;
   display: block;
+  overflow: hidden;
+  filter: drop-shadow(0 22px 42px rgba(78, 58, 38, 0.13)) saturate(0.94);
+  -webkit-mask-image:
+    linear-gradient(to right, transparent, #000 5%, #000 95%, transparent),
+    linear-gradient(to bottom, transparent, #000 6%, #000 94%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(to right, transparent, #000 5%, #000 95%, transparent),
+    linear-gradient(to bottom, transparent, #000 6%, #000 94%, transparent);
+  mask-composite: intersect;
 }
 
 .scene-image {
@@ -43,39 +65,48 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: 50% 50%;
+  object-position: center;
   user-select: none;
 }
 
-.scene::after {
+.artwork::after {
   position: absolute;
   z-index: 1;
   inset: 0;
   pointer-events: none;
-  background:
-    linear-gradient(180deg, rgba(10, 15, 15, 0.08), transparent 30%, transparent 67%, rgba(16, 10, 7, 0.2)),
-    radial-gradient(ellipse at center, transparent 62%, rgba(10, 8, 6, 0.14));
+  box-shadow: inset 0 0 clamp(28px, 4.5vw, 66px) rgba(247, 242, 232, 0.34);
   content: "";
+  -webkit-mask-image: radial-gradient(ellipse 73% 74% at center, transparent 62%, #000 100%);
+  mask-image: radial-gradient(ellipse 73% 74% at center, transparent 62%, #000 100%);
 }
 
 .message {
   position: absolute;
   z-index: 2;
-  top: clamp(40px, 8vh, 82px);
+  top: 10.5%;
   left: 50%;
-  width: min(720px, calc(100vw - 44px));
-  padding: clamp(17px, 2.3vh, 23px) clamp(24px, 3.5vw, 38px) clamp(18px, 2.5vh, 25px);
-  border: 1px solid rgba(91, 66, 39, 0.2);
-  border-radius: 2px;
-  background: rgba(244, 235, 213, 0.68);
-  box-shadow: 0 10px 30px rgba(55, 37, 22, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.2);
-  color: var(--sky-ink);
+  width: min(580px, 64%);
+  color: var(--ink);
   text-align: center;
   font-family: Iowan Old Style, Baskerville, "Palatino Linotype", Georgia, serif;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.34);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.52);
   transform: translateX(-50%);
-  -webkit-backdrop-filter: blur(2px) saturate(0.86);
-  backdrop-filter: blur(2px) saturate(0.86);
+}
+
+.message::before {
+  position: absolute;
+  z-index: -1;
+  inset: -28% -12%;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(250, 247, 238, 0.82) 0%,
+    rgba(250, 247, 238, 0.52) 48%,
+    rgba(250, 247, 238, 0.14) 70%,
+    transparent 82%
+  );
+  content: "";
+  filter: blur(7px);
 }
 
 .brand,
@@ -86,11 +117,11 @@ body {
 
 .brand {
   display: flex;
-  margin-bottom: clamp(10px, 1.5vh, 16px);
-  gap: 12px;
+  margin-bottom: clamp(7px, 1vh, 11px);
+  gap: 11px;
   align-items: center;
   justify-content: center;
-  font-size: clamp(10px, 1vw, 12px);
+  font-size: clamp(9px, 0.75vw, 11px);
   font-weight: 600;
   letter-spacing: 0.28em;
   text-transform: uppercase;
@@ -98,16 +129,16 @@ body {
 
 .brand::before,
 .brand::after {
-  width: clamp(28px, 4vw, 54px);
+  width: clamp(26px, 3.4vw, 48px);
   height: 1px;
   background: currentColor;
   content: "";
-  opacity: 0.42;
+  opacity: 0.38;
 }
 
 .message h1 {
   font-family: Iowan Old Style, Baskerville, "Palatino Linotype", Georgia, serif;
-  font-size: clamp(38px, 4.4vw, 62px);
+  font-size: clamp(34px, 3.4vw, 52px);
   font-style: italic;
   font-weight: 400;
   letter-spacing: -0.025em;
@@ -115,8 +146,8 @@ body {
 }
 
 .description {
-  margin-top: clamp(12px, 1.8vh, 18px);
-  font-size: clamp(13px, 1.3vw, 16px);
+  margin-top: clamp(9px, 1.35vh, 14px);
+  font-size: clamp(12px, 1vw, 15px);
   letter-spacing: 0.035em;
   line-height: 1.35;
 }
@@ -124,67 +155,92 @@ body {
 .download {
   position: absolute;
   z-index: 3;
-  bottom: clamp(22px, 4vh, 42px);
+  bottom: 5.5%;
   left: 50%;
   display: flex;
-  min-width: min(232px, calc(100vw - 36px));
-  min-height: 54px;
-  padding: 0 13px 0 20px;
+  min-width: min(224px, 60%);
+  min-height: 52px;
+  padding: 0 17px 0 20px;
   gap: 18px;
   align-items: center;
   justify-content: space-between;
-  border: 1px solid rgba(231, 210, 169, 0.56);
-  border-radius: 4px;
-  background: rgba(22, 25, 22, 0.9);
-  box-shadow: 0 12px 28px rgba(20, 12, 7, 0.34), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(234, 218, 185, 0.68);
+  border-radius: 3px;
+  background: rgba(35, 48, 45, 0.94);
+  box-shadow: 0 9px 22px rgba(42, 28, 18, 0.26), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
   color: var(--cream);
   font-family: Iowan Old Style, Baskerville, "Palatino Linotype", Georgia, serif;
   font-size: 15px;
-  letter-spacing: 0.045em;
+  letter-spacing: 0.035em;
   text-decoration: none;
   transform: translateX(-50%);
-  backdrop-filter: blur(10px);
   transition: background-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
 }
 
 .download span:last-child {
-  display: grid;
-  width: 34px;
-  height: 30px;
-  place-items: center;
-  border-left: 1px solid rgba(231, 210, 169, 0.3);
   font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
   font-size: 15px;
 }
 
 .download:hover {
-  background: rgba(7, 12, 12, 0.96);
-  box-shadow: 0 16px 38px rgba(20, 12, 7, 0.44);
-  transform: translate(-50%, -3px);
+  background: rgba(20, 32, 31, 0.98);
+  box-shadow: 0 13px 28px rgba(42, 28, 18, 0.32);
+  transform: translate(-50%, -2px);
 }
 
 .download:focus-visible {
-  outline: 3px solid #f4dcae;
+  outline: 3px solid #6f8c90;
   outline-offset: 5px;
 }
 
-@media (max-width: 700px) and (orientation: portrait) {
-  .scene-image { object-position: 50% 50%; }
+@media (orientation: portrait) {
+  .artwork {
+    width: min(calc(100vw - 32px), 56svh);
+    aspect-ratio: 2 / 3;
+  }
 
   .message {
-    top: clamp(116px, 16vh, 176px);
-    width: min(326px, calc(100vw - 40px));
-    padding: 17px 16px 18px;
+    top: 12.5%;
+    width: 78%;
   }
 
   .message h1 {
-    font-size: clamp(34px, 9.4vw, 40px);
-    line-height: 1.06;
+    font-size: clamp(30px, 7.2vw, 42px);
+    line-height: 1.04;
+  }
+
+  .description {
+    font-size: clamp(12px, 2.4vw, 14px);
   }
 
   .download {
-    bottom: 20px;
-    min-height: 52px;
+    bottom: 7.5%;
+    min-width: min(224px, 72%);
+  }
+}
+
+@media (max-width: 430px) and (orientation: portrait) {
+  .scene {
+    padding: 16px;
+  }
+
+  .brand {
+    font-size: 9px;
+  }
+
+  .message h1 {
+    font-size: clamp(29px, 8.2vw, 35px);
+  }
+
+  .description {
+    max-width: 240px;
+    margin-right: auto;
+    margin-left: auto;
+  }
+
+  .download {
+    min-height: 50px;
+    font-size: 14px;
   }
 }
 
