@@ -18,6 +18,99 @@ private enum RecoveryDraftPresentationCoordinator {
     }
 }
 
+private struct DocumentTitleTextField: NSViewRepresentable {
+    @Binding var text: String
+    let onCommit: () -> Void
+    let onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, onCommit: onCommit, onCancel: onCancel)
+    }
+
+    func makeNSView(context: Context) -> FocusSelectingTextField {
+        let textField = FocusSelectingTextField(string: text)
+        textField.delegate = context.coordinator
+        textField.alignment = .center
+        textField.bezelStyle = .roundedBezel
+        textField.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+        return textField
+    }
+
+    func updateNSView(_ textField: FocusSelectingTextField, context: Context) {
+        context.coordinator.text = $text
+        context.coordinator.onCommit = onCommit
+        context.coordinator.onCancel = onCancel
+        if textField.stringValue != text {
+            textField.stringValue = text
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var text: Binding<String>
+        var onCommit: () -> Void
+        var onCancel: () -> Void
+        private var isCancelling = false
+        private var hasBegunEditing = false
+
+        init(text: Binding<String>, onCommit: @escaping () -> Void, onCancel: @escaping () -> Void) {
+            self.text = text
+            self.onCommit = onCommit
+            self.onCancel = onCancel
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let textField = notification.object as? NSTextField else { return }
+            text.wrappedValue = textField.stringValue
+        }
+
+        func controlTextDidBeginEditing(_ notification: Notification) {
+            hasBegunEditing = true
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            guard hasBegunEditing else { return }
+            hasBegunEditing = false
+            if isCancelling {
+                isCancelling = false
+            } else {
+                onCommit()
+            }
+        }
+
+        func control(
+            _ control: NSControl,
+            textView: NSTextView,
+            doCommandBy commandSelector: Selector
+        ) -> Bool {
+            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                isCancelling = true
+                onCancel()
+                return true
+            }
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                onCommit()
+                return true
+            }
+            return false
+        }
+    }
+
+    final class FocusSelectingTextField: NSTextField {
+        private var didRequestInitialFocus = false
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window != nil, !didRequestInitialFocus else { return }
+            didRequestInitialFocus = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                window?.makeFirstResponder(self)
+                selectText(nil)
+            }
+        }
+    }
+}
+
 struct ContentView: View {
     private enum SidebarPanel {
         case chat
@@ -72,13 +165,12 @@ struct ContentView: View {
     @State private var recoveryDraftPresentation: RecoveryDraftPresentation?
     @State private var isEditingDocumentTitle = false
     @State private var documentTitleDraft = ""
-    @FocusState private var isDocumentTitleFocused: Bool
 
     var body: some View {
         mainLayout
-            .navigationTitle(document.windowTitle)
+            .navigationTitle("")
             .toolbar {
-                ToolbarItem(placement: .principal) {
+                ToolbarItem(placement: .navigation) {
                     editableDocumentTitle
                 }
                 ToolbarItem(placement: .automatic) {
@@ -281,19 +373,12 @@ struct ContentView: View {
     @ViewBuilder
     private var editableDocumentTitle: some View {
         if isEditingDocumentTitle {
-            TextField("File name", text: $documentTitleDraft)
-                .textFieldStyle(.roundedBorder)
-                .font(.headline)
-                .multilineTextAlignment(.center)
+            DocumentTitleTextField(
+                text: $documentTitleDraft,
+                onCommit: commitDocumentTitleEdit,
+                onCancel: cancelDocumentTitleEdit
+            )
                 .frame(width: 240)
-                .focused($isDocumentTitleFocused)
-                .onSubmit(commitDocumentTitleEdit)
-                .onExitCommand(perform: cancelDocumentTitleEdit)
-                .onChange(of: isDocumentTitleFocused) { _, isFocused in
-                    if !isFocused {
-                        commitDocumentTitleEdit()
-                    }
-                }
                 .accessibilityLabel("File name")
         } else {
             Button(action: beginDocumentTitleEdit) {
@@ -313,24 +398,18 @@ struct ContentView: View {
     private func beginDocumentTitleEdit() {
         documentTitleDraft = document.displayName
         isEditingDocumentTitle = true
-        DispatchQueue.main.async {
-            isDocumentTitleFocused = true
-            NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
-        }
     }
 
     private func commitDocumentTitleEdit() {
         guard isEditingDocumentTitle else { return }
         let requestedName = documentTitleDraft
         isEditingDocumentTitle = false
-        isDocumentTitleFocused = false
         editorViewModel.renameDocument(named: requestedName, document: document)
     }
 
     private func cancelDocumentTitleEdit() {
         guard isEditingDocumentTitle else { return }
         isEditingDocumentTitle = false
-        isDocumentTitleFocused = false
         documentTitleDraft = ""
     }
 
