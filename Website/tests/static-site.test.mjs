@@ -4,7 +4,7 @@ import test from "node:test";
 
 const root = new URL("../", import.meta.url);
 
-test("ships one generated scene and one download action", async () => {
+test("ships one full-page scene, one message, and one download action", async () => {
   const [html, css, hero] = await Promise.all([
     readFile(new URL("public/index.html", root), "utf8"),
     readFile(new URL("public/styles.css", root), "utf8"),
@@ -14,12 +14,14 @@ test("ships one generated scene and one download action", async () => {
   assert.match(html, /^<!doctype html>/i);
   assert.match(html, /class="scene-image"/);
   assert.match(html, /sea-desk-hero\.jpg/);
-  assert.match(html, /Download Shakespeare/);
+  assert.match(html, /<h1>Write like yourself\.<\/h1>/);
+  assert.match(html, /A quiet writing app for Mac\./);
+  assert.match(html, /Download for Mac/);
   assert.match(html, /Shakespeare-latest\.zip/);
   assert.equal((html.match(/<a\b/g) ?? []).length, 1);
   assert.equal((html.match(/<img\b/g) ?? []).length, 1);
   assert.doesNotMatch(html, /<header\b|<nav\b|<footer\b|<section\b|<script\b/i);
-  assert.doesNotMatch(html, /Write like yourself|How it works|shakespeare-editor|app-icon|og-v5/i);
+  assert.doesNotMatch(html, /How it works|shakespeare-editor|app-icon|og-v5/i);
   assert.doesNotMatch(css, /@import|url\(/i);
   assert.match(css, /prefers-reduced-motion/);
   assert.ok(hero.length > 100_000);
