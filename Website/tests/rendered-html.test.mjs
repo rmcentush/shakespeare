@@ -38,12 +38,13 @@ test("renders the Shakespeare setup and feature guide", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>How Shakespeare works<\/title>/i);
-  assert.match(html, /Three small steps/);
-  assert.match(html, /Add one OpenRouter key/);
+  assert.match(html, /Three steps/);
+  assert.match(html, /Paste one OpenRouter key/);
   assert.match(html, /Choose what it learns/);
-  assert.match(html, /Revision in your voice/);
-  assert.match(html, /Research beside the draft/);
-  assert.match(html, /Your words are not the product/);
+  assert.match(html, /Four tools/);
+  assert.match(html, /Research/);
+  assert.match(html, /Private by design/);
+  assert.match(html, /aria-current="page"[^>]*>How it works</i);
   assert.doesNotMatch(html, /github\.com|>Source<|>GitHub</i);
 });
 

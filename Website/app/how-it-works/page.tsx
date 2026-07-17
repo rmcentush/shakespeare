@@ -7,12 +7,11 @@ const downloadUrl = "/downloads/Shakespeare-latest.zip";
 
 export const metadata: Metadata = {
   title: "How Shakespeare works",
-  description:
-    "Set up Shakespeare, connect writing help, and learn how its private, local-first writing tools work.",
+  description: "Install Shakespeare, connect writing help, and start writing in your own voice.",
   alternates: { canonical: "/how-it-works" },
   openGraph: {
     title: "How Shakespeare works",
-    description: "A five-minute setup for a quieter way to write.",
+    description: "Three steps to a quieter way to write.",
     url: "/how-it-works",
   },
 };
@@ -21,47 +20,31 @@ const setupSteps = [
   {
     number: "01",
     label: "Install",
-    title: "Put Shakespeare on your Mac.",
-    body: "Download the ZIP, move Shakespeare to Applications, then right-click and choose Open on the first launch.",
+    title: "Add it to Applications.",
+    body: "Unzip Shakespeare, move it to Applications, then right-click and choose Open once.",
     note: "macOS 14+ · Apple silicon and Intel",
   },
   {
     number: "02",
     label: "Connect",
-    title: "Add one OpenRouter key.",
-    body: "One connection powers revision, optional grammar help, style review, and cited web research. Shakespeare validates the key before saving it in macOS Keychain.",
-    note: "The editor still works if you skip this step.",
+    title: "Paste one OpenRouter key.",
+    body: "This powers writing help and research. The key is validated, then stored in macOS Keychain.",
+    note: "Get an OpenRouter key",
   },
   {
     number: "03",
     label: "Personalize",
     title: "Choose what it learns.",
-    body: "Keep private style learning on, turn it off, or add a few text or Markdown samples for a faster start. Every durable preference remains reviewable.",
-    note: "Pause, edit, or clear personalization at any time.",
+    body: "Keep style learning on, turn it off, or add a few text samples. Every preference stays reviewable.",
+    note: "Pause or clear it at any time",
   },
 ];
 
 const features = [
-  {
-    mark: "¶",
-    title: "A real writing room",
-    body: "Draft and format in a quiet native editor with recovery drafts, version history, focus mode, and document-level typography.",
-  },
-  {
-    mark: "✦",
-    title: "Revision in your voice",
-    body: "Attach a passage, ask for a sharper version, and keep control of every change. Your meaning always outranks the model.",
-  },
-  {
-    mark: "✓",
-    title: "Proofing on your terms",
-    body: "Use local macOS spelling by default. AI grammar checks are optional and limited to changed paragraphs after you pause.",
-  },
-  {
-    mark: "↗",
-    title: "Research beside the draft",
-    body: "Ask current questions in the margin and receive linked answers. Research stays separate from your permanent style profile.",
-  },
+  { mark: "¶", title: "Write", body: "A quiet native editor with recovery drafts, versions, and focus mode." },
+  { mark: "✦", title: "Revise", body: "Sharpen selected passages without giving up control of the sentence." },
+  { mark: "✓", title: "Proof", body: "Use local spelling and optional, paragraph-scoped AI grammar checks." },
+  { mark: "↗", title: "Research", body: "Get current, linked answers beside the draft—not inside your style profile." },
 ];
 
 export default function HowItWorks() {
@@ -74,27 +57,23 @@ export default function HowItWorks() {
           <img src="/app-icon.png" alt="" />
           <span>Shakespeare.</span>
         </Link>
-        <nav className="header-actions" aria-label="How it works navigation">
+        <nav className="header-actions" aria-label="Primary navigation">
           <Link className="header-link" href="/">Home</Link>
+          <Link className="header-link active" href="/how-it-works" aria-current="page">How it works</Link>
           <a className="header-download" href={downloadUrl} download>
             Download <span aria-hidden="true">↓</span>
           </a>
         </nav>
       </header>
 
-      <section className="how-hero" id="main-content">
+      <section className="how-hero concise" id="main-content">
         <div className="how-hero-copy">
           <p className="eyebrow"><span aria-hidden="true">✦</span> How it works</p>
-          <h1>Set up in minutes.<br /><em>Stay in the sentence.</em></h1>
+          <h1>Set up once.<br /><em>Stay in the sentence.</em></h1>
           <p>
-            Shakespeare begins as a clean Mac editor. Connect one model account
-            when you want help, decide what it may learn, and keep writing.
+            Start with the editor. Connect one model account when you want help,
+            then decide what Shakespeare may learn.
           </p>
-          <div className="how-hero-facts" aria-label="Product setup facts">
-            <span><strong>5 min</strong><small>Typical setup</small></span>
-            <span><strong>1 key</strong><small>OpenRouter connection</small></span>
-            <span><strong>Local</strong><small>Documents and style data</small></span>
-          </div>
         </div>
 
         <figure className="how-product-frame">
@@ -108,18 +87,17 @@ export default function HowItWorks() {
             height="701"
             alt="Shakespeare's editor showing a formatted essay"
           />
-          <figcaption>Your draft stays the center of the experience.</figcaption>
         </figure>
       </section>
 
-      <section className="how-section setup-section" aria-labelledby="setup-title">
+      <section className="how-section setup-section concise-section" aria-labelledby="setup-title">
         <div className="how-section-heading">
-          <p className="eyebrow"><span aria-hidden="true">✦</span> Onboarding</p>
-          <h2 id="setup-title">Three small steps.<br /><em>No account maze.</em></h2>
-          <p>You can skip the model connection and start with the editor alone.</p>
+          <p className="eyebrow"><span aria-hidden="true">✦</span> Start here</p>
+          <h2 id="setup-title">Three steps.<br /><em>About five minutes.</em></h2>
+          <p>The model connection is optional; the editor works without it.</p>
         </div>
 
-        <ol className="setup-grid">
+        <ol className="setup-grid concise-grid">
           {setupSteps.map((step) => (
             <li className="setup-card" key={step.number}>
               <div className="setup-card-top">
@@ -130,7 +108,7 @@ export default function HowItWorks() {
               <p>{step.body}</p>
               {step.number === "02" ? (
                 <a className="setup-note setup-note-link" href="https://openrouter.ai/settings/keys">
-                  Get an OpenRouter key <span aria-hidden="true">↗</span>
+                  {step.note} <span aria-hidden="true">↗</span>
                 </a>
               ) : (
                 <span className="setup-note">{step.note}</span>
@@ -140,13 +118,13 @@ export default function HowItWorks() {
         </ol>
       </section>
 
-      <section className="how-section features-section" aria-labelledby="features-title">
+      <section className="how-section features-section concise-section" aria-labelledby="features-title">
         <div className="how-section-heading compact">
           <p className="eyebrow"><span aria-hidden="true">✦</span> Inside the app</p>
-          <h2 id="features-title">Useful when needed.<br /><em>Quiet when not.</em></h2>
+          <h2 id="features-title">Four tools.<br /><em>One writing room.</em></h2>
         </div>
 
-        <div className="how-feature-grid">
+        <div className="how-feature-grid concise-features">
           {features.map((feature) => (
             <article className="how-feature" key={feature.title}>
               <span className="feature-mark" aria-hidden="true">{feature.mark}</span>
@@ -157,29 +135,16 @@ export default function HowItWorks() {
         </div>
       </section>
 
-      <aside className="privacy-band" aria-label="Privacy summary">
+      <aside className="how-summary" aria-label="Privacy and download">
         <div>
           <p className="eyebrow light"><span aria-hidden="true">◆</span> Private by design</p>
-          <h2>Your words are not the product.</h2>
+          <h2>Your documents and style data stay on your Mac.</h2>
+          <p>Only the excerpt needed for a model-powered action is sent, with provider data collection disabled.</p>
         </div>
-        <p>
-          Documents, versions, samples, and learned preferences live on your
-          Mac. Only the excerpts needed for a model-powered action are sent,
-          with provider data collection disabled.
-        </p>
-      </aside>
-
-      <section className="how-cta">
-        <img src="/app-icon.png" alt="Shakespeare app icon" />
-        <div>
-          <p className="eyebrow"><span aria-hidden="true">✦</span> Ready when you are</p>
-          <h2>Open a draft. Keep your voice.</h2>
-        </div>
-        <a className="primary-button" href={downloadUrl} download>
-          <span>Download for Mac</span>
-          <span className="button-icon" aria-hidden="true">↓</span>
+        <a className="button-light" href={downloadUrl} download>
+          <span>Download for Mac</span><span aria-hidden="true">↓</span>
         </a>
-      </section>
+      </aside>
 
       <footer className="how-footer">
         <Link className="brand" href="/">
