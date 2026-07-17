@@ -14,12 +14,7 @@ enum InferenceProviderID: String, Sendable {
 struct InferenceModelOption: Identifiable, Sendable, Equatable {
     let id: String
     let name: String
-    let note: String
     let supportsTemperature: Bool
-
-    var selectionLabel: String {
-        note.isEmpty ? name : "\(name) — \(note)"
-    }
 }
 
 struct InferenceRuntime: Sendable, Equatable {
@@ -37,45 +32,38 @@ enum InferenceSettings {
     static let writingModelDefaultsKey = "openRouterWritingModel"
     static let researchModelDefaultsKey = "openRouterChatModel"
     static let kimiModel = "moonshotai/kimi-k3"
-    static let grokModel = "~x-ai/grok-latest"
+    static let grokModel = "x-ai/grok-4.5"
     static let defaultWritingModel = kimiModel
     static let defaultResearchModel = kimiModel
-    static let defaultFallbackModel = grokModel
     static let availableModels: [InferenceModelOption] = [
         .init(
             id: kimiModel,
             name: "Kimi K3",
-            note: "Default",
             supportsTemperature: false
         ),
         .init(
             id: grokModel,
-            name: "Grok Latest",
-            note: "Kimi fallback",
+            name: "Grok 4.5",
             supportsTemperature: true
         ),
         .init(
             id: "openai/gpt-5.6-sol",
             name: "GPT-5.6 Sol",
-            note: "",
             supportsTemperature: false
         ),
         .init(
-            id: "~anthropic/claude-fable-latest",
-            name: "Claude Fable Latest",
-            note: "",
+            id: "anthropic/claude-fable-5",
+            name: "Claude Fable 5",
             supportsTemperature: false
         ),
         .init(
             id: "anthropic/claude-opus-4.7",
             name: "Claude Opus 4.7",
-            note: "",
             supportsTemperature: false
         ),
         .init(
             id: "anthropic/claude-opus-4.8",
             name: "Claude Opus 4.8",
-            note: "",
             supportsTemperature: true
         ),
     ]
@@ -87,6 +75,21 @@ enum InferenceSettings {
         availableModels.first { $0.id == id }
     }
 
+    static func normalizedModelID(_ id: String) -> String {
+        switch id {
+        case "~x-ai/grok-latest":
+            return grokModel
+        case "~anthropic/claude-fable-latest":
+            return "anthropic/claude-fable-5"
+        default:
+            return id
+        }
+    }
+
+    static func fallbackModels(after primaryModel: String) -> [String] {
+        availableModels.map(\.id).filter { $0 != primaryModel }
+    }
+
     static func runtime(
         purpose: InferencePurpose,
         modelOverride: String? = nil
@@ -94,14 +97,16 @@ enum InferenceSettings {
         let defaultsKey = purpose == .chat ? researchModelDefaultsKey : writingModelDefaultsKey
         let fallback = purpose == .chat ? defaultResearchModel : defaultWritingModel
 
-        let model = modelOverride ?? nonemptyDefault(key: defaultsKey, fallback: fallback)
+        let model = normalizedModelID(
+            modelOverride ?? nonemptyDefault(key: defaultsKey, fallback: fallback)
+        )
         return InferenceRuntime(
             providerID: .openRouter,
             providerName: "OpenRouter",
             messagesURL: URL(string: "https://openrouter.ai/api/v1/chat/completions")!,
             apiKeyService: "openrouter",
             model: model,
-            fallbackModels: model == kimiModel ? [defaultFallbackModel] : [],
+            fallbackModels: fallbackModels(after: model),
             webSearchEnabled: purpose == .chat,
             supportsTemperature: modelOption(for: model)?.supportsTemperature ?? true
         )

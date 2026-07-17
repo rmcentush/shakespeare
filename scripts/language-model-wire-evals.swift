@@ -9,7 +9,7 @@ struct LanguageModelWireEvals {
         buildsPrivateStructuredRequest()
         enablesBoundedWebSearchForChatOnly()
         validatesCuratedModelCatalog()
-        configuresGrokFallbackForDefaultKimiOnly()
+        configuresFullModelWaterfall()
         print("Language-model wire evals passed (7 cases).")
     }
 
@@ -109,30 +109,16 @@ struct LanguageModelWireEvals {
         precondition(parameters?["max_characters"] as? Int == 2_000)
     }
 
-    private static func configuresGrokFallbackForDefaultKimiOnly() {
-        let defaultRuntime = InferenceSettings.runtime(
-            purpose: .assistant,
-            modelOverride: InferenceSettings.kimiModel
-        )
-        precondition(defaultRuntime.model == InferenceSettings.kimiModel)
-        precondition(defaultRuntime.fallbackModels == [InferenceSettings.defaultFallbackModel])
-
-        let body = LanguageModelService.requestBody(
-            runtime: defaultRuntime,
-            messages: [["role": "user", "content": "Revise this paragraph."]],
-            systemPrompt: nil,
-            outputFormat: nil,
-            temperature: 0.2,
-            maxTokens: 512
-        )
-        precondition(body["models"] as? [String] == ["~x-ai/grok-latest"])
-
-        for option in InferenceSettings.availableModels where option.id != InferenceSettings.kimiModel {
+    private static func configuresFullModelWaterfall() {
+        let allModelIDs = InferenceSettings.availableModels.map(\.id)
+        for option in InferenceSettings.availableModels {
             let selectedRuntime = InferenceSettings.runtime(
                 purpose: .assistant,
                 modelOverride: option.id
             )
-            precondition(selectedRuntime.fallbackModels.isEmpty)
+            let expectedFallbacks = allModelIDs.filter { $0 != option.id }
+            precondition(selectedRuntime.model == option.id)
+            precondition(selectedRuntime.fallbackModels == expectedFallbacks)
             let selectedBody = LanguageModelService.requestBody(
                 runtime: selectedRuntime,
                 messages: [["role": "user", "content": "Revise this paragraph."]],
@@ -141,25 +127,44 @@ struct LanguageModelWireEvals {
                 temperature: 0.2,
                 maxTokens: 512
             )
-            precondition(selectedBody["models"] == nil)
+            precondition(selectedBody["model"] as? String == option.id)
+            precondition(selectedBody["models"] as? [String] == expectedFallbacks)
         }
+
+        let customRuntime = InferenceSettings.runtime(
+            purpose: .assistant,
+            modelOverride: "example/previous-custom-model"
+        )
+        precondition(customRuntime.fallbackModels == allModelIDs)
     }
 
     private static func validatesCuratedModelCatalog() {
         let expectedIDs = [
             "moonshotai/kimi-k3",
-            "~x-ai/grok-latest",
+            "x-ai/grok-4.5",
             "openai/gpt-5.6-sol",
-            "~anthropic/claude-fable-latest",
+            "anthropic/claude-fable-5",
             "anthropic/claude-opus-4.7",
             "anthropic/claude-opus-4.8",
         ]
         let options = InferenceSettings.availableModels
         precondition(options.map(\.id) == expectedIDs)
+        precondition(options.map(\.name) == [
+            "Kimi K3",
+            "Grok 4.5",
+            "GPT-5.6 Sol",
+            "Claude Fable 5",
+            "Claude Opus 4.7",
+            "Claude Opus 4.8",
+        ])
         precondition(Set(options.map(\.id)).count == options.count)
         precondition(InferenceSettings.defaultWritingModel == InferenceSettings.kimiModel)
         precondition(InferenceSettings.defaultResearchModel == InferenceSettings.kimiModel)
-        precondition(InferenceSettings.defaultFallbackModel == InferenceSettings.grokModel)
+        precondition(InferenceSettings.normalizedModelID("~x-ai/grok-latest") == "x-ai/grok-4.5")
+        precondition(
+            InferenceSettings.normalizedModelID("~anthropic/claude-fable-latest")
+                == "anthropic/claude-fable-5"
+        )
 
         for option in options {
             let runtime = InferenceSettings.runtime(

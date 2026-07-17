@@ -1,4 +1,4 @@
-.PHONY: all build run clean editor typecheck swift install package evals document-asset-evals storage-layout-evals style-context-evals style-profile-evals api-key-store-evals openrouter-connection-evals language-model-wire-evals
+.PHONY: all build run clean editor typecheck swift install package evals document-asset-evals storage-layout-evals style-context-evals style-profile-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
 
 all: build
 
@@ -49,11 +49,15 @@ openrouter-connection-evals:
 	swiftc -parse-as-library Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/OpenRouterConnectionValidator.swift scripts/openrouter-connection-evals.swift -o /tmp/openrouter-connection-evals
 	/tmp/openrouter-connection-evals
 
+model-availability-evals:
+	swiftc -parse-as-library Sources/WordProcessor/Services/OpenRouterModelAvailabilityService.swift scripts/model-availability-evals.swift -o /tmp/model-availability-evals
+	/tmp/model-availability-evals
+
 language-model-wire-evals:
 	swiftc Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/APIKeyStore.swift Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/LanguageModelService.swift scripts/language-model-wire-evals.swift -o /tmp/language-model-wire-evals
 	/tmp/language-model-wire-evals
 
-evals: document-asset-evals storage-layout-evals style-context-evals style-profile-evals api-key-store-evals openrouter-connection-evals language-model-wire-evals
+evals: document-asset-evals storage-layout-evals style-context-evals style-profile-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
 
 # Build release
 build: copy-assets
