@@ -656,8 +656,8 @@ struct SettingsView: View {
 
             HStack {
                 Spacer()
-                Button("Discard") {
-                    Task { await discardStyleProposal() }
+                Button("Later") {
+                    showStyleProposal = false
                 }
                 Button("Approve") {
                     Task { await approveStyleProposal() }
@@ -793,21 +793,6 @@ struct SettingsView: View {
                 proposedMarkdown: proposedLearnedPreferences,
                 eventIDs: proposalEventIDs
             )
-            showStyleProposal = false
-            preparedStyleDraft = nil
-            proposedLearnedPreferences = ""
-            proposedLearnedPreferencesDiff = ""
-            proposalEventIDs = []
-            refreshStyleContext()
-        } catch {
-            styleUpdateError = error.localizedDescription
-        }
-    }
-
-    @MainActor
-    private func discardStyleProposal() async {
-        do {
-            try await StyleProfileRefinementCoordinator.shared.discardPreparedDraft()
             showStyleProposal = false
             preparedStyleDraft = nil
             proposedLearnedPreferences = ""

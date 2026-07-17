@@ -6,8 +6,9 @@ if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
     exit 1
 fi
 
+archive_directory="$(cd "$(dirname "$1")" && pwd)"
+archive="$archive_directory/$(basename "$1")"
 cd "$(dirname "$0")/.."
-archive="$1"
 temporary_directory="$(mktemp -d)"
 trap 'rm -rf "$temporary_directory"' EXIT
 

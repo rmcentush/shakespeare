@@ -90,11 +90,6 @@ actor StyleProfileRefinementCoordinator {
         NotificationCenter.default.post(name: .styleProfileDraftChanged, object: nil)
     }
 
-    func discardPreparedDraft() throws {
-        try draftStore.delete()
-        NotificationCenter.default.post(name: .styleProfileDraftChanged, object: nil)
-    }
-
     private func automaticEvidenceIsReady() -> Bool {
         if !eventStore.unprocessedWritingSamples(limit: 1).isEmpty { return true }
         return eventStore.unprocessedStyleDecisions(
