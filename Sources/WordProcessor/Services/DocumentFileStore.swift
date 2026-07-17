@@ -205,6 +205,30 @@ actor DocumentFileStore {
         }
     }
 
+    func rename(from sourceURL: URL, to destinationURL: URL) throws {
+        try withSecurityScopedAccess(to: [sourceURL, sourceURL.deletingLastPathComponent()]) {
+            let fileManager = FileManager.default
+            guard sourceURL != destinationURL else { return }
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                guard sourceURL.path.caseInsensitiveCompare(destinationURL.path) == .orderedSame else {
+                    throw CocoaError(.fileWriteFileExists)
+                }
+
+                let temporaryURL = sourceURL.deletingLastPathComponent()
+                    .appendingPathComponent(".shakespeare-rename-\(UUID().uuidString)")
+                try fileManager.moveItem(at: sourceURL, to: temporaryURL)
+                do {
+                    try fileManager.moveItem(at: temporaryURL, to: destinationURL)
+                } catch {
+                    try? fileManager.moveItem(at: temporaryURL, to: sourceURL)
+                    throw error
+                }
+                return
+            }
+            try fileManager.moveItem(at: sourceURL, to: destinationURL)
+        }
+    }
+
     @discardableResult
     func save(_ snapshot: FileSnapshot, to url: URL, sourceDocumentURL: URL? = nil) throws -> FileSnapshot {
         let accessURLs = [url, sourceDocumentURL].compactMap { $0 }

@@ -70,11 +70,17 @@ struct ContentView: View {
     @State private var presentRecoveryWhenLoaded = false
     @State private var recoveryDrafts: [RecoveryDraftStore.DraftMetadata] = []
     @State private var recoveryDraftPresentation: RecoveryDraftPresentation?
+    @State private var isEditingDocumentTitle = false
+    @State private var documentTitleDraft = ""
+    @FocusState private var isDocumentTitleFocused: Bool
 
     var body: some View {
         mainLayout
             .navigationTitle(document.windowTitle)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    editableDocumentTitle
+                }
                 ToolbarItem(placement: .automatic) {
                     Button {
                         withAnimation(.easeInOut(duration: 0.15)) {
@@ -270,6 +276,62 @@ struct ContentView: View {
                 }
                 showNamedVersionAlert = true
             }
+    }
+
+    @ViewBuilder
+    private var editableDocumentTitle: some View {
+        if isEditingDocumentTitle {
+            TextField("File name", text: $documentTitleDraft)
+                .textFieldStyle(.roundedBorder)
+                .font(.headline)
+                .multilineTextAlignment(.center)
+                .frame(width: 240)
+                .focused($isDocumentTitleFocused)
+                .onSubmit(commitDocumentTitleEdit)
+                .onExitCommand(perform: cancelDocumentTitleEdit)
+                .onChange(of: isDocumentTitleFocused) { _, isFocused in
+                    if !isFocused {
+                        commitDocumentTitleEdit()
+                    }
+                }
+                .accessibilityLabel("File name")
+        } else {
+            Button(action: beginDocumentTitleEdit) {
+                Text(document.windowTitle)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(editorViewModel.isDocumentTransitioning)
+            .help("Click to rename")
+            .accessibilityLabel("Rename \(document.displayName)")
+        }
+    }
+
+    private func beginDocumentTitleEdit() {
+        documentTitleDraft = document.displayName
+        isEditingDocumentTitle = true
+        DispatchQueue.main.async {
+            isDocumentTitleFocused = true
+            NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+        }
+    }
+
+    private func commitDocumentTitleEdit() {
+        guard isEditingDocumentTitle else { return }
+        let requestedName = documentTitleDraft
+        isEditingDocumentTitle = false
+        isDocumentTitleFocused = false
+        editorViewModel.renameDocument(named: requestedName, document: document)
+    }
+
+    private func cancelDocumentTitleEdit() {
+        guard isEditingDocumentTitle else { return }
+        isEditingDocumentTitle = false
+        isDocumentTitleFocused = false
+        documentTitleDraft = ""
     }
 
     private var mainLayout: some View {

@@ -23,6 +23,7 @@ final class DocumentModel: @unchecked Sendable {
     var createdAt: Date = Date()
     var modifiedAt: Date = Date()
     private(set) var hasUnsyncedEditorChanges: Bool = false
+    private var unsavedDisplayName = "Untitled"
 
     private static let recentFilesKey = "recentFileBookmarks"
     private static let maxRecentFiles = 10
@@ -39,12 +40,23 @@ final class DocumentModel: @unchecked Sendable {
         if let url = fileURL {
             return url.deletingPathExtension().lastPathComponent
         }
-        return "Untitled"
+        return unsavedDisplayName
     }
 
     var windowTitle: String {
         let name = displayName
         return isDirty ? "\(name) — Edited" : name
+    }
+
+    func renameUnsavedDocument(to name: String) {
+        guard fileURL == nil else { return }
+        unsavedDisplayName = name
+    }
+
+    func markRenamed(from sourceURL: URL, to destinationURL: URL) {
+        guard fileURL == sourceURL else { return }
+        fileURL = destinationURL
+        Self.replaceRecentFile(sourceURL, with: destinationURL)
     }
 
     func markEditorMutation() {
@@ -218,6 +230,34 @@ final class DocumentModel: @unchecked Sendable {
 
             UserDefaults.standard.set(bookmarks, forKey: recentFilesKey)
         }
+    }
+
+    private static func replaceRecentFile(_ sourceURL: URL, with destinationURL: URL) {
+        var bookmarks = UserDefaults.standard.array(forKey: recentFilesKey) as? [Data] ?? []
+        bookmarks = bookmarks.filter { data in
+            var stale = false
+            guard let resolved = try? URL(
+                resolvingBookmarkData: data,
+                options: .withSecurityScope,
+                relativeTo: nil,
+                bookmarkDataIsStale: &stale
+            ) else {
+                return false
+            }
+            return resolved != sourceURL && resolved != destinationURL
+        }
+
+        if let bookmark = try? destinationURL.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        ) {
+            bookmarks.insert(bookmark, at: 0)
+        }
+        if bookmarks.count > maxRecentFiles {
+            bookmarks = Array(bookmarks.prefix(maxRecentFiles))
+        }
+        UserDefaults.standard.set(bookmarks, forKey: recentFilesKey)
     }
 
     static func recentFiles() -> [(url: URL, name: String)] {
