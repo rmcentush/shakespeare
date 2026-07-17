@@ -58,6 +58,18 @@ Learning history is compacted locally: the source library is capped at 50 sample
 
 See [Personalization](docs/PERSONALIZATION.md) for the exact privacy and precedence rules.
 
+## License and support
+
+Shakespeare's source code is available under the [MIT License](LICENSE). The
+license permits personal and commercial use, modification, and redistribution
+while requiring preservation of the copyright and license notice. Third-party
+components remain under the licenses recorded in the generated notices and
+`Packaging/Licenses/`.
+
+The MIT License does not grant trademark rights in the Shakespeare name, logo,
+or app icon. Official signed releases, supporter programs, and any future hosted
+service may be offered separately from the permissively licensed source code.
+
 ## Build from source
 
 Requirements: macOS 14+, Xcode 26+, Node.js 22+, and npm.
