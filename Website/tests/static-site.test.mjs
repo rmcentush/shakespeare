@@ -4,7 +4,7 @@ import test from "node:test";
 
 const root = new URL("../", import.meta.url);
 
-test("ships an app-aligned responsive landing page and a fail-closed release action", async () => {
+test("ships a minimal app-aligned landing page and a fail-closed release action", async () => {
   const [html, css, editorImage, appIcon] = await Promise.all([
     readFile(new URL("public/index.html", root), "utf8"),
     readFile(new URL("public/v4/styles.css", root), "utf8"),
@@ -18,8 +18,9 @@ test("ships an app-aligned responsive landing page and a fail-closed release act
   assert.match(html, /v4\/app-icon\.png/);
   assert.match(html, /<h1[^>]*>Write like yourself\.<\/h1>/);
   assert.match(html, /A local-first writing app for Mac/);
-  assert.match(html, /Powerful when you need it/);
-  assert.match(html, /Your work lives on your Mac\./);
+  assert.match(html, /Documents stay local\./);
+  assert.match(html, /Your style, reviewed\./);
+  assert.match(html, /Research with sources\./);
   assert.match(html, /source-backed/);
   assert.match(html, /Release temporarily unavailable/);
   assert.match(html, /data-release-action aria-disabled="true"/);
@@ -27,6 +28,7 @@ test("ships an app-aligned responsive landing page and a fail-closed release act
   assert.match(html, />Open source<\/a>/);
   assert.doesNotMatch(html, /Shakespeare-latest\.zip/);
   assert.equal((html.match(/<img\b/g) ?? []).length, 1);
+  assert.equal((html.match(/<section\b/g) ?? []).length, 1);
   assert.equal((html.match(/data-release-action/g) ?? []).length, 1);
   assert.match(html, /<header\b[\s\S]*<nav\b[\s\S]*<footer\b/i);
   assert.doesNotMatch(html, /<script\b/i);
@@ -34,7 +36,7 @@ test("ships an app-aligned responsive landing page and a fail-closed release act
   assert.match(css, /#007aff/i);
   assert.match(css, /Georgia/);
   assert.match(css, /-apple-system/);
-  assert.match(css, /@media \(max-width: 680px\)/);
+  assert.match(css, /@media \(max-width: 760px\)/);
   assert.match(css, /prefers-reduced-motion/);
   assert.ok(editorImage.length > 50_000);
   assert.ok(appIcon.length > 100_000);
