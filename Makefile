@@ -26,7 +26,7 @@ delivery-contract-check:
 	bash scripts/verify-delivery-contract.sh
 
 release-script-check: delivery-contract-check
-	bash -n scripts/verify-release-archive.sh scripts/verify-public-release.sh scripts/install-release-archive.sh scripts/update-from-public-download.sh scripts/verify-release-provenance.sh scripts/release-readiness.sh scripts/release.sh
+	bash -n scripts/verify-release-archive.sh scripts/verify-public-release.sh scripts/install-release-archive.sh scripts/update-from-public-download.sh scripts/verify-release-provenance.sh scripts/run-wrangler.sh scripts/release-readiness.sh scripts/release.sh
 
 website-check: Website/node_modules/.package-lock.json
 	cd Website && npm run build
@@ -148,7 +148,8 @@ deploy-site: Website/node_modules/.package-lock.json
 	@if [ "$$(git rev-parse HEAD)" != "$$(git rev-parse origin/main)" ]; then \
 		echo "Local main must exactly match origin/main." >&2; exit 1; \
 	fi
-	cd Website && npm run build && npx wrangler deploy --config wrangler.jsonc
+	cd Website && npm run build
+	bash scripts/run-wrangler.sh deploy
 
 # Build, sign, notarize, verify, and publish one release from this Mac.
 release-readiness:

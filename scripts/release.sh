@@ -109,7 +109,7 @@ fs.writeFileSync(path, `${JSON.stringify({
 ' "$manifest" "$version" "$build_number" "$archive_key" "$checksum" "$bundle_identifier" "$team_identifier" "$source_commit"
 
 run_wrangler() {
-    (cd "$repository_root/Website" && npx wrangler "$@" --config wrangler.jsonc)
+    bash "$repository_root/scripts/run-wrangler.sh" "$@"
 }
 
 had_previous_manifest=false

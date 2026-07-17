@@ -59,8 +59,10 @@ notarization credentials without placing them in the repository:
 xcrun notarytool store-credentials shakespeare
 ```
 
-If Wrangler can access more than one Cloudflare account, export the Shakespeare
-account ID as `CLOUDFLARE_ACCOUNT_ID` in the release shell. Do not commit it.
+Release commands select the uniquely named `Shakespeare` account from Wrangler's
+authenticated JSON when `CLOUDFLARE_ACCOUNT_ID` is unset. Export the account ID
+explicitly only if the account is renamed or selection must be overridden. Do
+not commit it.
 
 ## Publish the macOS app
 
