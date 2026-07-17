@@ -21,8 +21,10 @@ test("ships responsive full-page scenes and a fail-closed release action", async
   assert.match(html, /A local-first writing app for Mac\./);
   assert.match(html, /Release temporarily unavailable/);
   assert.match(html, /data-release-action aria-disabled="true"/);
+  assert.match(html, /href="https:\/\/github\.com\/rmcentush\/shakespeare"/);
+  assert.match(html, /Open source <span aria-hidden="true">·<\/span> MIT/);
   assert.doesNotMatch(html, /Shakespeare-latest\.zip/);
-  assert.equal((html.match(/<a\b/g) ?? []).length, 0);
+  assert.equal((html.match(/<a\b/g) ?? []).length, 1);
   assert.equal((html.match(/<img\b/g) ?? []).length, 1);
   assert.equal((html.match(/<source\b/g) ?? []).length, 1);
   assert.doesNotMatch(html, /<header\b|<nav\b|<footer\b|<section\b|<script\b/i);
