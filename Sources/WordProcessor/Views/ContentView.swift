@@ -20,40 +20,72 @@ private enum RecoveryDraftPresentationCoordinator {
 
 private struct DocumentTitleTextField: NSViewRepresentable {
     @Binding var text: String
+    let displayText: String
+    let isEditing: Bool
+    let isEnabled: Bool
+    let onBeginEditing: () -> Void
     let onCommit: () -> Void
     let onCancel: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, onCommit: onCommit, onCancel: onCancel)
+        Coordinator(
+            text: $text,
+            onBeginEditing: onBeginEditing,
+            onCommit: onCommit,
+            onCancel: onCancel
+        )
     }
 
-    func makeNSView(context: Context) -> FocusSelectingTextField {
-        let textField = FocusSelectingTextField(string: text)
+    func makeNSView(context: Context) -> InlineTitleTextField {
+        let textField = InlineTitleTextField(string: displayText)
         textField.delegate = context.coordinator
         textField.alignment = .center
-        textField.bezelStyle = .roundedBezel
+        textField.isBezeled = false
+        textField.isBordered = false
+        textField.drawsBackground = false
+        textField.focusRingType = .none
         textField.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+        textField.lineBreakMode = .byTruncatingMiddle
+        textField.usesSingleLineMode = true
+        textField.onRequestEditing = { context.coordinator.onBeginEditing() }
         return textField
     }
 
-    func updateNSView(_ textField: FocusSelectingTextField, context: Context) {
+    func updateNSView(_ textField: InlineTitleTextField, context: Context) {
         context.coordinator.text = $text
+        context.coordinator.onBeginEditing = onBeginEditing
         context.coordinator.onCommit = onCommit
         context.coordinator.onCancel = onCancel
-        if textField.stringValue != text {
-            textField.stringValue = text
+        textField.onRequestEditing = { context.coordinator.onBeginEditing() }
+        textField.isEnabled = isEnabled
+        textField.editingAllowed = isEnabled
+        textField.isEditable = isEditing
+        textField.isSelectable = isEditing
+        textField.setOutsideClickCommitEnabled(isEditing)
+
+        let visibleText = isEditing ? text : displayText
+        if textField.stringValue != visibleText {
+            textField.stringValue = visibleText
         }
+        textField.window?.invalidateCursorRects(for: textField)
     }
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
         var text: Binding<String>
+        var onBeginEditing: () -> Void
         var onCommit: () -> Void
         var onCancel: () -> Void
         private var isCancelling = false
         private var hasBegunEditing = false
 
-        init(text: Binding<String>, onCommit: @escaping () -> Void, onCancel: @escaping () -> Void) {
+        init(
+            text: Binding<String>,
+            onBeginEditing: @escaping () -> Void,
+            onCommit: @escaping () -> Void,
+            onCancel: @escaping () -> Void
+        ) {
             self.text = text
+            self.onBeginEditing = onBeginEditing
             self.onCommit = onCommit
             self.onCancel = onCancel
         }
@@ -85,28 +117,77 @@ private struct DocumentTitleTextField: NSViewRepresentable {
             if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
                 isCancelling = true
                 onCancel()
+                control.window?.makeFirstResponder(nil)
                 return true
             }
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
                 onCommit()
+                control.window?.makeFirstResponder(nil)
                 return true
             }
             return false
         }
     }
 
-    final class FocusSelectingTextField: NSTextField {
-        private var didRequestInitialFocus = false
+    final class InlineTitleTextField: NSTextField {
+        var editingAllowed = true
+        var onRequestEditing: (() -> Void)?
+        private var outsideClickMonitor: Any?
 
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            guard window != nil, !didRequestInitialFocus else { return }
-            didRequestInitialFocus = true
+        func setOutsideClickCommitEnabled(_ isEnabled: Bool) {
+            if isEnabled {
+                guard outsideClickMonitor == nil else { return }
+                outsideClickMonitor = NSEvent.addLocalMonitorForEvents(
+                    matching: [.leftMouseDown, .rightMouseDown]
+                ) { [weak self] event in
+                    guard let self,
+                          self.isEditable,
+                          event.window === self.window
+                    else {
+                        return event
+                    }
+
+                    let clickLocation = self.convert(event.locationInWindow, from: nil)
+                    if !self.bounds.contains(clickLocation) {
+                        self.window?.makeFirstResponder(nil)
+                    }
+                    return event
+                }
+            } else if let outsideClickMonitor {
+                NSEvent.removeMonitor(outsideClickMonitor)
+                self.outsideClickMonitor = nil
+            }
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            guard editingAllowed else { return }
+
+            if isEditable {
+                super.mouseDown(with: event)
+                return
+            }
+
+            onRequestEditing?()
             DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
+                guard let self, self.isEditable else { return }
                 window?.makeFirstResponder(self)
                 selectText(nil)
             }
+        }
+
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            if newWindow == nil {
+                setOutsideClickCommitEnabled(false)
+            }
+            super.viewWillMove(toWindow: newWindow)
+        }
+
+        override func resetCursorRects() {
+            super.resetCursorRects()
+            let cursor: NSCursor = editingAllowed
+                ? (isEditable ? .iBeam : .pointingHand)
+                : .arrow
+            addCursorRect(bounds, cursor: cursor)
         }
     }
 }
@@ -370,29 +451,32 @@ struct ContentView: View {
             }
     }
 
-    @ViewBuilder
     private var editableDocumentTitle: some View {
-        if isEditingDocumentTitle {
-            DocumentTitleTextField(
-                text: $documentTitleDraft,
-                onCommit: commitDocumentTitleEdit,
-                onCancel: cancelDocumentTitleEdit
-            )
-                .frame(width: 240)
-                .accessibilityLabel("File name")
-        } else {
-            Button(action: beginDocumentTitleEdit) {
-                Text(document.windowTitle)
-                    .font(.headline)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(editorViewModel.isDocumentTransitioning)
-            .help("Click to rename")
-            .accessibilityLabel("Rename \(document.displayName)")
+        DocumentTitleTextField(
+            text: $documentTitleDraft,
+            displayText: document.displayName,
+            isEditing: isEditingDocumentTitle,
+            isEnabled: !editorViewModel.isDocumentTransitioning,
+            onBeginEditing: beginDocumentTitleEdit,
+            onCommit: commitDocumentTitleEdit,
+            onCancel: cancelDocumentTitleEdit
+        )
+        .frame(width: 240, height: 24)
+        .background {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(isEditingDocumentTitle ? Color.accentColor.opacity(0.06) : .clear)
         }
+        .overlay {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .stroke(
+                    isEditingDocumentTitle ? Color.accentColor.opacity(0.55) : .clear,
+                    lineWidth: 1
+                )
+        }
+        .help(isEditingDocumentTitle ? "Edit file name" : "Click to rename")
+        .accessibilityLabel(
+            isEditingDocumentTitle ? "File name" : "Rename \(document.displayName)"
+        )
     }
 
     private func beginDocumentTitleEdit() {
