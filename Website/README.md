@@ -34,7 +34,8 @@ published. The website always links to this stable path:
 ```
 
 The ZIP and checksum are intentionally ignored by Git. Release automation
-stages the notarized artifact, verifies it, builds the site, and deploys it.
+stages the notarized artifact, verifies it, builds the site, deploys it, and
+then fails unless the live URL and checksum match that exact artifact.
 
 ## Publish
 

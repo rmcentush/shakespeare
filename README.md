@@ -6,7 +6,7 @@ Shakespeare combines a native SwiftUI workspace with a TipTap editor. Drafting, 
 
 ## Install
 
-Download the ZIP from the [latest Shakespeare release](https://github.com/rmcentush/shakespeare/releases/latest), open it, and drag **Shakespeare.app** into **Applications**. The archive contains one self-contained, signed app; there are no separate runtimes, model services, or support folders to install. Each release also includes a SHA-256 checksum.
+Download the ZIP from the [Shakespeare website](https://writeshakespeare.com/downloads/Shakespeare-latest.zip), open it, and drag **Shakespeare.app** into **Applications**. The archive contains one self-contained, signed app; there are no separate runtimes, model services, or support folders to install. A [SHA-256 checksum](https://writeshakespeare.com/downloads/Shakespeare-latest.zip.sha256) is published beside it.
 
 On first launch, paste an OpenRouter API key. Shakespeare validates it before storing it in macOS Keychain. Personal style learning starts on and can be switched off immediately; `.txt`/`.md` samples are optional. You can skip setup and return later through **Settings → Connections** or **Settings → My Style**.
 
@@ -73,6 +73,7 @@ Important commands:
 |---|---|
 | `make run` | Build and run a debug app |
 | `make install` | Build, package, and copy the app to `/Applications` |
+| `make update` | Install the exact signed public download after checksum and notarization verification |
 | `make package` | Create one universal app under `.build/package/` |
 | `make typecheck` | Type-check the TypeScript editor |
 | `make privacy-check` | Reject embedded credentials, account IDs, and local home paths |
@@ -96,3 +97,5 @@ shakespeare/
 ```
 
 The TypeScript editor and Swift app communicate through one `WKScriptMessageHandler` named `editorBridge`. Release automation builds a universal, hardened-runtime app, signs and notarizes it, and publishes a ZIP containing only `Shakespeare.app`.
+
+The release job stages one notarized ZIP for both the website and GitHub, then downloads the public URL and proves its SHA-256 matches that source artifact. `make update` uses the same public ZIP and checksum, verifies signing, notarization, architecture, and privacy, and only then replaces the local app.
