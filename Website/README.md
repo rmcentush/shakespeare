@@ -1,8 +1,8 @@
 # Shakespeare download site
 
-The public landing page and macOS download for Shakespeare. It is intentionally
-small: one hand-written HTML page, one stylesheet, and a tiny Cloudflare Worker
-for redirects and static asset delivery.
+The public landing page and macOS download for Shakespeare. The entire visible
+site is one quiet, full-screen desk scene drawn in HTML and CSS, with a single
+download action. A tiny Cloudflare Worker handles redirects and static assets.
 
 ## Local development
 
@@ -20,8 +20,8 @@ npm run build
 npm test
 ```
 
-There is no application bundle or client JavaScript. Wrangler serves `public/`
-directly, and `/how-it-works` redirects to the section on the home page.
+There is no client JavaScript. Wrangler serves `public/` directly, and retired
+routes such as `/how-it-works` return to the home page.
 
 ## Release downloads
 

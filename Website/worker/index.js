@@ -9,7 +9,7 @@ export default {
     }
 
     if (url.pathname === "/how-it-works" || url.pathname === "/how-it-works/") {
-      return Response.redirect(`${url.origin}/#how-it-works`, 308);
+      return Response.redirect(`${url.origin}/`, 308);
     }
 
     return env.ASSETS.fetch(request);
