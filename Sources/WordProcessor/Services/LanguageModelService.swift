@@ -1,6 +1,9 @@
 import Foundation
 
 final class LanguageModelService: Sendable {
+    /// OpenRouter accepts at most three entries in the `models` fallback array.
+    /// A request can therefore cover one primary plus three fallback models.
+    static let maximumFallbackModelCount = 3
     static let maximumTransportRetryCount = 1
 
     private let purpose: InferencePurpose
@@ -43,20 +46,23 @@ final class LanguageModelService: Sendable {
                     return
                 }
 
-                let body = Self.requestBody(
-                    runtime: runtime,
-                    messages: messages,
-                    systemPrompt: systemPrompt,
-                    outputFormat: outputFormat,
-                    temperature: temperature,
-                    maxTokens: maxTokens
-                )
-                var attempt = 0
+                let modelBatches = Self.modelBatches(for: runtime)
+                var modelBatchIndex = 0
+                var transportRetryCount = 0
 
                 while true {
+                    let attemptRuntime = modelBatches[modelBatchIndex]
+                    let body = Self.requestBody(
+                        runtime: attemptRuntime,
+                        messages: messages,
+                        systemPrompt: systemPrompt,
+                        outputFormat: outputFormat,
+                        temperature: temperature,
+                        maxTokens: maxTokens
+                    )
                     var hasYieldedChunk = false
                     do {
-                        var request = URLRequest(url: runtime.messagesURL)
+                        var request = URLRequest(url: attemptRuntime.messagesURL)
                         request.httpMethod = "POST"
                         request.timeoutInterval = 60
                         request.setValue("application/json", forHTTPHeaderField: "content-type")
@@ -73,11 +79,21 @@ final class LanguageModelService: Sendable {
                         guard httpResponse.statusCode == 200 else {
                             var errorBody = ""
                             for try await line in bytes.lines { errorBody += line }
+                            if Self.canAdvanceModelBatch(
+                                after: modelBatchIndex,
+                                batchCount: modelBatches.count,
+                                statusCode: httpResponse.statusCode
+                            ) {
+                                modelBatchIndex += 1
+                                transportRetryCount = 0
+                                continue
+                            }
                             continuation.finish(throwing: APIError.httpError(httpResponse.statusCode, errorBody))
                             return
                         }
 
                         var seenCitationURLs = Set<String>()
+                        var streamFailure: String?
                         for try await line in bytes.lines {
                             try Task.checkCancellation()
                             guard line.hasPrefix("data:") else { continue }
@@ -89,9 +105,8 @@ final class LanguageModelService: Sendable {
                             else { continue }
 
                             if let error = event["error"] as? [String: Any] {
-                                let message = error["message"] as? String ?? "Unknown error"
-                                continuation.finish(throwing: APIError.streamError(message))
-                                return
+                                streamFailure = error["message"] as? String ?? "Unknown error"
+                                break
                             }
 
                             if let choice = (event["choices"] as? [[String: Any]])?.first,
@@ -109,6 +124,16 @@ final class LanguageModelService: Sendable {
                             }
                         }
 
+                        if let streamFailure {
+                            if !hasYieldedChunk, modelBatchIndex + 1 < modelBatches.count {
+                                modelBatchIndex += 1
+                                transportRetryCount = 0
+                                continue
+                            }
+                            continuation.finish(throwing: APIError.streamError(streamFailure))
+                            return
+                        }
+
                         continuation.finish()
                         return
                     } catch is CancellationError {
@@ -116,11 +141,11 @@ final class LanguageModelService: Sendable {
                         return
                     } catch {
                         if !hasYieldedChunk,
-                           attempt < Self.maximumTransportRetryCount,
+                           transportRetryCount < Self.maximumTransportRetryCount,
                            Self.isRetryableTransportError(error) {
-                            attempt += 1
+                            transportRetryCount += 1
                             do {
-                                try await Self.backoff(attempt: attempt)
+                                try await Self.backoff(attempt: transportRetryCount)
                                 continue
                             } catch {
                                 continuation.finish(throwing: CancellationError())
@@ -134,6 +159,31 @@ final class LanguageModelService: Sendable {
             }
 
             continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// Preserves the writer's selected model order while keeping every network
+    /// request inside OpenRouter's one-primary-plus-three-fallback limit.
+    static func modelBatches(for runtime: InferenceRuntime) -> [InferenceRuntime] {
+        let allModels = [runtime.model] + runtime.fallbackModels
+        let batchSize = maximumFallbackModelCount + 1
+        return stride(from: 0, to: allModels.count, by: batchSize).map { start in
+            let group = Array(allModels[start..<min(start + batchSize, allModels.count)])
+            let primary = group[0]
+            let supportsTemperature = group.allSatisfy { modelID in
+                if modelID == runtime.model { return runtime.supportsTemperature }
+                return InferenceSettings.modelOption(for: modelID)?.supportsTemperature ?? false
+            }
+            return InferenceRuntime(
+                providerID: runtime.providerID,
+                providerName: runtime.providerName,
+                messagesURL: runtime.messagesURL,
+                apiKeyService: runtime.apiKeyService,
+                model: primary,
+                fallbackModels: Array(group.dropFirst()),
+                webSearchEnabled: runtime.webSearchEnabled,
+                supportsTemperature: supportsTemperature
+            )
         }
     }
 
@@ -166,8 +216,9 @@ final class LanguageModelService: Sendable {
             "stream": true,
             "messages": requestMessages,
         ]
-        if !runtime.fallbackModels.isEmpty {
-            body["models"] = runtime.fallbackModels
+        let boundedFallbacks = Array(runtime.fallbackModels.prefix(maximumFallbackModelCount))
+        if !boundedFallbacks.isEmpty {
+            body["models"] = boundedFallbacks
         }
         if runtime.supportsTemperature, let temperature { body["temperature"] = temperature }
         if runtime.webSearchEnabled {
@@ -305,6 +356,22 @@ final class LanguageModelService: Sendable {
         switch urlError.code {
         case .timedOut, .networkConnectionLost, .notConnectedToInternet,
              .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func canAdvanceModelBatch(
+        after batchIndex: Int,
+        batchCount: Int,
+        statusCode: Int
+    ) -> Bool {
+        guard batchIndex + 1 < batchCount else { return false }
+        switch statusCode {
+        case 401, 402, 403:
+            return false
+        case 400...599:
             return true
         default:
             return false

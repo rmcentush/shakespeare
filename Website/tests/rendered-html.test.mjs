@@ -32,18 +32,19 @@ test("renders the Shakespeare download page", async () => {
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
 
-test("renders the Shakespeare setup and feature guide", async () => {
+test("renders the concise Shakespeare workflow page", async () => {
   const response = await render("https://writeshakespeare.com/how-it-works");
   assert.equal(response.status, 200);
 
   const html = await response.text();
   assert.match(html, /<title>How Shakespeare works<\/title>/i);
-  assert.match(html, /Three small steps/);
-  assert.match(html, /Add one OpenRouter key/);
-  assert.match(html, /Choose what it learns/);
-  assert.match(html, /Revision in your voice/);
-  assert.match(html, /Research beside the draft/);
-  assert.match(html, /Your words are not the product/);
+  assert.match(html, /Help when you ask/);
+  assert.match(html, /Connect when ready/);
+  assert.match(html, /stored in Keychain/);
+  assert.match(html, /shakespeare-editor\.jpg/);
+  assert.match(html, /Beta for macOS 14\+/);
+  assert.match(html, /aria-current="page"[^>]*>How it works</i);
+  assert.doesNotMatch(html, /Three steps|Four tools/);
   assert.doesNotMatch(html, /github\.com|>Source<|>GitHub</i);
 });
 

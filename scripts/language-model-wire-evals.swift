@@ -9,7 +9,7 @@ struct LanguageModelWireEvals {
         buildsPrivateStructuredRequest()
         enablesBoundedWebSearchForChatOnly()
         validatesCuratedModelCatalog()
-        configuresFullModelWaterfall()
+        configuresBoundedFullModelWaterfall()
         boundsClientRetriesAroundProviderWaterfall()
         print("Language-model wire evals passed (8 cases).")
     }
@@ -110,7 +110,7 @@ struct LanguageModelWireEvals {
         precondition(parameters?["max_characters"] as? Int == 2_000)
     }
 
-    private static func configuresFullModelWaterfall() {
+    private static func configuresBoundedFullModelWaterfall() {
         let allModelIDs = InferenceSettings.availableModels.map(\.id)
         for option in InferenceSettings.availableModels {
             let selectedRuntime = InferenceSettings.runtime(
@@ -120,7 +120,7 @@ struct LanguageModelWireEvals {
             let expectedFallbacks = allModelIDs.filter { $0 != option.id }
             precondition(selectedRuntime.model == option.id)
             precondition(selectedRuntime.fallbackModels == expectedFallbacks)
-            let selectedBody = LanguageModelService.requestBody(
+            let defensivelyBoundedBody = LanguageModelService.requestBody(
                 runtime: selectedRuntime,
                 messages: [["role": "user", "content": "Revise this paragraph."]],
                 systemPrompt: nil,
@@ -128,8 +128,29 @@ struct LanguageModelWireEvals {
                 temperature: 0.2,
                 maxTokens: 512
             )
-            precondition(selectedBody["model"] as? String == option.id)
-            precondition(selectedBody["models"] as? [String] == expectedFallbacks)
+            precondition(
+                defensivelyBoundedBody["models"] as? [String]
+                    == Array(expectedFallbacks.prefix(LanguageModelService.maximumFallbackModelCount))
+            )
+            let batches = LanguageModelService.modelBatches(for: selectedRuntime)
+            let routedModelIDs = batches.flatMap { [$0.model] + $0.fallbackModels }
+            precondition(routedModelIDs == [option.id] + expectedFallbacks)
+            precondition(Set(routedModelIDs).count == routedModelIDs.count)
+
+            for batch in batches {
+                precondition(batch.fallbackModels.count <= LanguageModelService.maximumFallbackModelCount)
+                let selectedBody = LanguageModelService.requestBody(
+                    runtime: batch,
+                    messages: [["role": "user", "content": "Revise this paragraph."]],
+                    systemPrompt: nil,
+                    outputFormat: nil,
+                    temperature: 0.2,
+                    maxTokens: 512
+                )
+                precondition(selectedBody["model"] as? String == batch.model)
+                precondition(selectedBody["models"] as? [String] == batch.fallbackModels)
+                precondition((selectedBody["models"] as? [String])?.count ?? 0 <= 3)
+            }
         }
 
         let customRuntime = InferenceSettings.runtime(
@@ -137,6 +158,9 @@ struct LanguageModelWireEvals {
             modelOverride: "example/previous-custom-model"
         )
         precondition(customRuntime.fallbackModels == allModelIDs)
+        let customBatches = LanguageModelService.modelBatches(for: customRuntime)
+        let customRoutedIDs = customBatches.flatMap { [$0.model] + $0.fallbackModels }
+        precondition(customRoutedIDs == [customRuntime.model] + allModelIDs)
     }
 
     private static func validatesCuratedModelCatalog() {
@@ -177,6 +201,7 @@ struct LanguageModelWireEvals {
     }
 
     private static func boundsClientRetriesAroundProviderWaterfall() {
+        precondition(LanguageModelService.maximumFallbackModelCount == 3)
         precondition(LanguageModelService.maximumTransportRetryCount == 1)
     }
 }
