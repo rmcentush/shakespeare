@@ -182,7 +182,14 @@ struct LanguageModelWireEvals {
         ])
         precondition(Set(options.map(\.id)).count == options.count)
         precondition(InferenceSettings.defaultWritingModel == InferenceSettings.kimiModel)
-        precondition(InferenceSettings.defaultResearchModel == InferenceSettings.kimiModel)
+        precondition(InferenceSettings.defaultResearchModel == InferenceSettings.grokModel)
+        let chatRuntime = InferenceSettings.runtime(
+            purpose: .chat,
+            modelOverride: InferenceSettings.defaultResearchModel
+        )
+        precondition(chatRuntime.model == InferenceSettings.grokModel)
+        precondition(chatRuntime.fallbackModels.first == InferenceSettings.kimiModel)
+        precondition(chatRuntime.webSearchEnabled)
         precondition(InferenceSettings.normalizedModelID("~x-ai/grok-latest") == "x-ai/grok-4.5")
         precondition(
             InferenceSettings.normalizedModelID("~anthropic/claude-fable-latest")

@@ -52,7 +52,7 @@ private struct OpenRouterConnectionEvals {
                 ? InferenceSettings.defaultResearchModel
                 : InferenceSettings.defaultWritingModel))
             precondition(runtime.webSearchEnabled == (purpose == .chat))
-            precondition(!runtime.supportsTemperature)
+            precondition(runtime.supportsTemperature == (purpose == .chat))
         }
     }
 
