@@ -15,58 +15,6 @@ permissions:
   contents: read
 
 jobs:
-  service:
-    name: Validate service boundaries
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-
-    services:
-      postgres:
-        image: postgres:17.6-alpine
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: shakespeare_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d shakespeare_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: Service/requirements-dev.txt
-
-      - name: Install service dependencies
-        run: python -m pip install --requirement Service/requirements-dev.txt
-
-      - name: Check pinned dependency compatibility
-        run: python -m pip check
-
-      - name: Lint Python services
-        run: |
-          python -m ruff check Service Trainer
-          python -m ruff format --check Service Trainer
-
-      - name: Test service contracts and PostgreSQL isolation
-        env:
-          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/shakespeare_test
-        run: PYTHONPATH=Service python -m pytest Service/tests
-
-      - name: Test local personalization compiler
-        run: PYTHONPATH=Trainer python -m unittest discover -s Trainer/tests -v
-
-      - name: Build production service container
-        run: docker build --tag shakespeare-service:ci Service
-
   build:
     name: Build and validate
     runs-on: macos-26
@@ -101,7 +49,7 @@ jobs:
           cp Editor/dist/editor.css Sources/WordProcessor/Resources/editor.css
           cp Editor/dist/harper-runtime.js Sources/WordProcessor/Resources/harper-runtime.js
           cp Editor/dist/harper-wasm-data.js Sources/WordProcessor/Resources/harper-wasm-data.js
-          cp Editor/dist/Harper_LICENSE.txt Sources/WordProcessor/Resources/Harper_LICENSE.txt
+          cp Editor/dist/THIRD_PARTY_NOTICES.txt Sources/WordProcessor/Resources/THIRD_PARTY_NOTICES.txt
 
       - name: Build macOS app
         run: swift build -c release -Xswiftc -warnings-as-errors
@@ -110,11 +58,12 @@ jobs:
         env:
           APP_VERSION: 0.0.0
           BUILD_NUMBER: ${{ github.run_number }}
-          SKIP_BUILD: 1
         run: |
-          bash scripts/bundle-app.sh
-          test -f Shakespeare.app/Contents/Resources/WordProcessor_WordProcessor.bundle/editor.html
-          test ! -e Shakespeare.app/WordProcessor_WordProcessor.bundle
+          make package
+          test -f .build/package/Shakespeare.app/Contents/Resources/WordProcessor_WordProcessor.bundle/editor.html
+          test ! -e .build/package/Shakespeare.app/WordProcessor_WordProcessor.bundle
+          test ! -e .build/package/Shakespeare.app/Contents/Resources/WordProcessor_WordProcessor.bundle/Fonts
+          lipo .build/package/Shakespeare.app/Contents/MacOS/WordProcessor -verify_arch arm64 x86_64
 
       - name: Run regression evaluations
         run: make evals

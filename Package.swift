@@ -9,7 +9,6 @@ let package = Package(
             name: "WordProcessor",
             path: "Sources/WordProcessor",
             resources: [
-                .copy("Resources/Fonts"),
                 .copy("Resources/ai_tropes.md"),
                 .copy("Resources/writing_style_reference.md"),
                 .copy("Resources/editor.css"),
@@ -17,7 +16,7 @@ let package = Package(
                 .copy("Resources/editor.js"),
                 .copy("Resources/harper-runtime.js"),
                 .copy("Resources/harper-wasm-data.js"),
-                .copy("Resources/Harper_LICENSE.txt")
+                .copy("Resources/THIRD_PARTY_NOTICES.txt")
             ]
         )
     ]

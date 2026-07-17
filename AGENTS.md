@@ -1,106 +1,82 @@
 # AGENTS.md
 
-This file is the canonical contributor guide for automated and human development work in this repository.
+Canonical contributor guide for this repository.
 
-## Build Commands
+## Commands
 
 ```bash
-make run          # Build editor + Swift (debug), run immediately
-make install      # Build editor + Swift (release), create .app, copy to /Applications
-make editor       # Build TipTap bundle only (locked npm install + esbuild)
-make typecheck    # Type-check the TypeScript editor
-make evals        # Run edit-target, document-asset, key-store, and personalization checks
-make service-test # Run hosted-service contracts and Python lint checks
-make copy-assets  # Build editor + copy editor.js/editor.css to Swift Resources
-make build        # Build editor + Swift release binary
-make clean        # Remove .build, node_modules, dist, copied assets
+make run          # Build editor + Swift debug app and run
+make install      # Build/package release app and copy to /Applications
+make editor       # Build the locked TipTap bundle
+make typecheck    # Type-check TypeScript
+make evals        # Run all deterministic Swift regression evals
+make copy-assets  # Build and copy editor assets into Swift resources
+make build        # Build the release binary
+make package      # Create one universal app under .build/package
+make clean        # Remove generated build artifacts
 ```
 
-Before handing off a change, run `make typecheck`, `make evals`, and the appropriate Swift build. Run `make install` when an updated `/Applications/Shakespeare.app` is needed.
+Before handoff, run `make typecheck`, `make evals`, and the appropriate Swift build. Run `make install` only when an updated `/Applications/Shakespeare.app` is needed.
 
-The build pipeline: `Editor/src/*.ts` → esbuild IIFE → `Editor/dist/` → copied to `Sources/WordProcessor/Resources/` → bundled via the explicit SPM resource entries in `Package.swift`.
-
-## Writing Style Context
-
-Inkling-powered writing features use a bundled editorial reference plus a separate file of reviewed, learned preferences.
-
-- Prompt reference resource: `Sources/WordProcessor/Resources/writing_style_reference.md`
-- Resource copy entry: `Package.swift`
-- Prompt injection point: ambient review in `Sources/WordProcessor/ViewModels/EditorViewModel.swift`
-
-Treat `writing_style_reference.md` as the high-priority voice reference for ambient voice suggestions. The current document supplies topic, continuity, and edit-targeting context. Personalized training data and Tinker integration stay in dedicated service and `Trainer/` layers rather than coupling them to document editing. OpenRouter research chat must not receive the style reference, learned preferences, or training ledger.
+The build pipeline is `Editor/src/*.ts` → esbuild IIFE → `Editor/dist/` → `Sources/WordProcessor/Resources/` → SwiftPM resource bundle.
 
 ## Architecture
 
-macOS 14+ SwiftUI app with a TipTap rich text editor running inside a WKWebView. Two codebases communicate through a JS↔Swift bridge.
+Shakespeare is a macOS 14+ SwiftUI app with a TipTap editor inside `WKWebView`.
 
-### Two-Layer Structure
+- `Editor/`: TypeScript editor behavior and JS bridge.
+- `Sources/WordProcessor/`: SwiftUI UI, file I/O, bridge dispatch, local style learning, and OpenRouter integration.
+- `Packaging/`: release metadata.
+- `scripts/`: packaging plus deterministic evals.
+- `docs/`: product and release documentation.
 
-**TypeScript layer** (`Editor/src/`): TipTap editor with extensions (StarterKit, Underline, Placeholder, TextAlign, Typography, FontFamily, TextStyle). Built as a single IIFE bundle targeting Safari 17.
+Do not add a hosted service, Python trainer, second model provider, or second user credential without an explicit product decision.
 
-**Swift layer** (`Sources/WordProcessor/`): SwiftUI app using `@Observable` macro (not ObservableObject). SPM executable target, no external Swift dependencies.
+## JS↔Swift bridge
 
-**Service layer** (`Service/`): FastAPI control plane with OIDC identity, PostgreSQL row-level security, idempotent training jobs, model lifecycle, and deletion contracts. Python 3.11+; production dependencies are fully pinned.
+All communication uses one handler named `editorBridge`.
 
-### JS↔Swift Bridge
+**JS → Swift:** `sendToSwift()` in `bridge.ts` → `EditorBridge.swift` → `BridgePayload.parse()` → `EditorViewModel.handleBridgeMessage()`.
 
-The bridge is the core integration point. All communication flows through a single WKScriptMessageHandler named `"editorBridge"`.
+**Swift → JS:** `EditorViewModel` invokes methods registered on `window.editorAPI`. Content changes are debounced for one second.
 
-**JS → Swift:** `sendToSwift(type, payload)` in `bridge.ts` serializes to JSON string → `window.webkit.messageHandlers.editorBridge.postMessage()` → `EditorBridge.swift` deserializes → `BridgePayload.parse()` → `EditorViewModel.handleBridgeMessage()` → posts to NotificationCenter.
+## OpenRouter boundary
 
-**Swift → JS:** `EditorViewModel` calls `evaluateJavaScript("window.editorAPI.methodName(args)")`. Available methods registered in `bridge.ts` include document loading/snapshots, formatting, pending-edit review, save-time personalization acknowledgements, focus, and theme control.
+`InferenceSettings` resolves every model purpose to OpenRouter and the single `openrouter` Keychain service. Writing, grammar, proofing, style updates, and research may use different OpenRouter model IDs, but never different credentials.
 
-Content changes sent across the bridge are debounced for 1 second in the editor.
+- Validate new keys with `GET /api/v1/key` before replacing a working key.
+- All model requests must set `provider.data_collection` to `deny`.
+- Structured-output requests must set `provider.require_parameters` to `true`.
+- Keep ordinary onboarding model-free; model overrides belong under Advanced.
+- Research chat is read-only and must not receive the style reference, learned preferences, writing samples, or local learning ledger.
+- Grammar checks must remain block-scoped and style-free.
 
-### Key Files
+## Personal style context
+
+Style collection is off by default. `StyleContextAssembler` creates a deterministic local packet under an 8,000-character ceiling from the reviewed profile, relevant reference sections, general guidance, up to two writing-sample excerpts, and up to two confirmed user rewrites. A separate 2,600-character flow map supplies headings, section boundaries, target-adjacent continuity, and sparse document checkpoints. Explicit meaning and facts always outrank style. Accepted-unchanged model prose must never enter the confirmed-rewrite layer.
+
+Never upload the raw learning ledger implicitly, weaken owner-only permissions, learn from ambiguous outcomes, append whole sample libraries to prompts, or copy facts and distinctive phrases from samples. Any durable preference remains user-reviewed.
+
+Key files:
 
 | File | Role |
-|------|------|
-| `Editor/src/editor.ts` | TipTap initialization, format commands, event handlers |
-| `Editor/src/bridge.ts` | JS side of bridge: `sendToSwift()` + `window.editorAPI` registration |
-| `Sources/WordProcessor/Bridge/EditorBridge.swift` | WKScriptMessageHandler receiving JS messages |
-| `Sources/WordProcessor/Bridge/BridgeMessage.swift` | Bridge payload enum with manual JSON parsing |
-| `Sources/WordProcessor/ViewModels/EditorViewModel.swift` | Central hub: webview ref, JS evaluation, file I/O, bridge dispatch |
-| `Sources/WordProcessor/Views/EditorWebView.swift` | NSViewRepresentable wrapping WKWebView, loads editor.html |
-| `Sources/WordProcessor/Views/ContentView.swift` | Main layout: editor + optional sidebars |
-| `Sources/WordProcessor/Views/OnboardingView.swift` | Versioned Tinker/OpenRouter first-run setup; personalization consent remains a separate progressive choice |
-| `Sources/WordProcessor/ViewModels/AssistantChatViewModel.swift` | Read-only, bounded-context OpenRouter research chat orchestration |
-| `Sources/WordProcessor/Services/LanguageModelService.swift` | Provider-configured Messages API client with SSE streaming |
-| `Sources/WordProcessor/Services/InferenceSettings.swift` | Purpose-specific Tinker/OpenRouter runtime configuration and promoted-checkpoint registry |
-| `Sources/WordProcessor/Services/TinkerConnectionValidator.swift` | Data-free Inkling access check used before storing a new Tinker key |
-| `Sources/WordProcessor/Services/OpenRouterConnectionValidator.swift` | Data-free OpenRouter key check used before storing a research-chat key |
-| `Sources/WordProcessor/Services/TrainingEventStore.swift` | Opt-in, versioned, local personalization event ledger |
-| `Sources/WordProcessor/Services/APIKeyStore.swift` | Keychain-backed API keys with an owner-only development fallback |
-| `Sources/WordProcessor/Services/FontManager.swift` | Font config, @font-face CSS generation, UserDefaults persistence |
-| `Trainer/shakespeare_train/` | Deterministic SFT/DPO compiler and explicit Tinker training CLI |
-| `Service/shakespeare_service/` | Hosted API/auth/repository boundaries |
-| `Service/database/migrations/` | Versioned PostgreSQL schema and forced tenant RLS |
-| `Contracts/` | Versioned hosted wire contracts |
-
-### Cross-View Communication
-
-Views communicate via NotificationCenter, not direct bindings: `editorContentChanged`, `wordCountChanged`, `fontSettingsChanged`, `toggleFocusMode`. The editor checkpoints dirty documents every 60 seconds.
-
-### Model Provider Boundary
-
-`InferenceSettings` resolves an immutable runtime configuration for each request. Writing, grammar, proofing, and style updates use Tinker/Inkling; only `.chat` uses OpenRouter/Sonar. `LanguageModelService` contains the remote Messages-compatible protocol boundary. Keep research chat read-only, do not send permanent style-learning data to OpenRouter, keep inference separate from document editing, and keep training code in `TrainingEventStore` and `Trainer/`.
-
-Personalization collection must remain off by default. Raw edit decisions and save-time outcomes are separate immutable events. Never upload the raw ledger implicitly, weaken its owner-only permissions, train on ambiguous rejections, let snapshots dominate curated edit signals, mix one document across train/evaluation splits, or promote a checkpoint merely because a run completed.
-
-### Hosted Service Boundary
-
-The service and native app have separate consent scopes. The client never supplies a tenant ID; the API derives it from a verified OIDC issuer/subject and every tenant transaction sets `app.tenant_id` locally for PostgreSQL RLS. Never run the API with a superuser, schema-owner, or `BYPASSRLS` database role. Queue tables contain identifiers only; workers must set the transaction-local tenant before reading prose.
-
-The hosted service is not publicly launch-ready until the worker, inference gateway, cloud stack, observability, export/deletion completion, quotas, backup restore, asset licensing, and notarized release gates in `docs/PRODUCTION_READINESS.md` are closed.
+|---|---|
+| `Sources/WordProcessor/Services/InferenceSettings.swift` | OpenRouter model routing |
+| `Sources/WordProcessor/Services/LanguageModelService.swift` | OpenRouter request/SSE boundary |
+| `Sources/WordProcessor/Services/OpenRouterConnectionValidator.swift` | data-free key validation |
+| `Sources/WordProcessor/Services/StyleContextAssembler.swift` | bounded local style retrieval |
+| `Sources/WordProcessor/Services/StyleProfileCompiler.swift` | evidence budgets, profile schema, thresholds, and copy-safety gates |
+| `Sources/WordProcessor/Services/TrainingEventStore.swift` | versioned local learning ledger (historical filename/schema) |
+| `Sources/WordProcessor/Services/ShakespeareStorage.swift` | canonical private app-data layout |
+| `Sources/WordProcessor/ViewModels/EditorViewModel.swift` | editor hub and prompt injection |
+| `Sources/WordProcessor/ViewModels/AssistantChatViewModel.swift` | bounded research orchestration |
 
 ## Gotchas
 
-- **String escaping for JS evaluation:** When passing strings to `evaluateJavaScript()`, backslashes, quotes, and newlines must be escaped properly.
-- **`.accentColor` vs `.foregroundColor`:** Can't use `.accentColor` with `.foregroundStyle` ternary expressions; use `.foregroundColor` instead.
-- **Bundle resource paths:** Access bundled files via `Bundle.shakespeareResources`; release packaging places the SwiftPM resource bundle under `Contents/Resources` so code signing can seal it.
-- **Font injection timing:** EditorWebView injects @font-face CSS after a 500ms delay to ensure the webview is ready.
-- **BridgePayload parsing:** Uses manual JSON parsing (`[String: Any]`), not Codable.
-- **Provider API keys:** Stored in the macOS Keychain. A service-specific 0600 file under `~/Library/Application Support/Shakespeare/` is used only as a development fallback and is migrated when Keychain access succeeds.
-- **Tinker credentials:** Tinker and Inkling use the same `TINKER_API_KEY`. Do not introduce a second Inkling credential. Validate new keys with the token-count endpoint before replacing a working saved key.
-- **OpenRouter credentials:** Research chat uses a separate `OPENROUTER_API_KEY`, validated with `GET /api/v1/key`. The default model is `perplexity/sonar`; keep ordinary setup model-free and expose overrides only under Advanced.
-- **Onboarding changes:** Increment `OnboardingSettings.currentVersion` only when every existing writer should see a revised flow again. Copy and layout fixes should not reset completion.
+- Escape backslashes, quotes, and newlines before `evaluateJavaScript()`.
+- Access bundled files through `Bundle.shakespeareResources`.
+- Route mutable internal files through `ShakespeareStorage`; user documents, macOS Preferences, and Keychain are intentional external boundaries.
+- API keys normally live in Keychain. The service-specific 0600 file under the Shakespeare data root is development fallback only.
+- `BridgePayload` uses manual `[String: Any]` parsing, not `Codable`.
+- `EditorWebView` delays font CSS injection until the web view is ready.
+- Increment `OnboardingSettings.currentVersion` only when all existing writers need to see a materially changed flow.

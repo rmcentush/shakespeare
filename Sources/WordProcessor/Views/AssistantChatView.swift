@@ -206,9 +206,7 @@ struct AssistantChatView: View {
                     chatViewModel.sendMessage(
                         text,
                         quotedSelection: selection,
-                        documentContent: context.plainText,
-                        editContext: context,
-                        editorViewModel: editor
+                        documentContent: context.plainText
                     )
                     return
                 }
@@ -217,8 +215,7 @@ struct AssistantChatView: View {
                     chatViewModel.sendMessage(
                         text,
                         quotedSelection: selection,
-                        documentContent: content,
-                        editorViewModel: editor
+                        documentContent: content
                     )
                 }
             }
@@ -228,8 +225,7 @@ struct AssistantChatView: View {
         chatViewModel.sendMessage(
             text,
             quotedSelection: selection,
-            documentContent: document.plainTextContent,
-            editorViewModel: editor
+            documentContent: document.plainTextContent
         )
     }
 
@@ -301,8 +297,8 @@ private struct AssistantEmptyState: View {
                 Text("Research Chat")
                     .font(.headline)
                 Text(isConnected
-                    ? "Ask questions without leaving the draft. Sonar searches the live web and returns source links in its answer."
-                    : "Connect OpenRouter for fast, cited web research. The editor and Inkling writing tools remain independent.")
+                    ? "Ask questions without leaving the draft. Kimi can search the live web and return source links in its answer."
+                    : "Connect OpenRouter once for writing help, grammar, and fast cited web research.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

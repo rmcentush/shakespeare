@@ -225,7 +225,7 @@ private struct WordProcessorCommands: Commands {
                     set: { textCheckingSettings.continuousSpellCheckingEnabled = $0 }
                 ))
 
-                Toggle("Check Grammar While Typing", isOn: Binding(
+                Toggle("Check AI Grammar While Typing", isOn: Binding(
                     get: { textCheckingSettings.grammarCheckingEnabled },
                     set: { textCheckingSettings.grammarCheckingEnabled = $0 }
                 ))
@@ -389,13 +389,23 @@ struct WordProcessorApp: App {
     @NSApplicationDelegateAdaptor(WordProcessorAppDelegate.self) private var appDelegate
 
     init() {
-        // Prevent multiple instances: if another WordProcessor is already running, activate it and quit
-        let myPID = ProcessInfo.processInfo.processIdentifier
-        let others = NSRunningApplication.runningApplications(withBundleIdentifier: "com.shakespeare.app")
-            .filter { $0.processIdentifier != myPID }
-        if !others.isEmpty {
-            others.first?.activate()
-            exit(0)
+        do {
+            try ShakespeareStorage.prepare()
+        } catch {
+            print("ShakespeareStorage: failed to prepare application data: \(error)")
+        }
+
+        // Prevent duplicate processes while still allowing alternate bundle IDs
+        // for isolated UI and release testing.
+        if let bundleIdentifier = Bundle.main.bundleIdentifier {
+            let myPID = ProcessInfo.processInfo.processIdentifier
+            let others = NSRunningApplication.runningApplications(
+                withBundleIdentifier: bundleIdentifier
+            ).filter { $0.processIdentifier != myPID }
+            if !others.isEmpty {
+                others.first?.activate()
+                exit(0)
+            }
         }
 
         // Bring the app to the foreground when launched from terminal

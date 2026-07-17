@@ -10,11 +10,8 @@ final class APIKeyStore: Sendable {
     private let keychainAccount = "default"
 
     private var storageDirectory: URL {
-        let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first!
-        return appSupport.appendingPathComponent("Shakespeare")
+        try? ShakespeareStorage.prepare()
+        return ShakespeareStorage.credentialsDirectoryURL
     }
 
     private init() {}
@@ -25,7 +22,7 @@ final class APIKeyStore: Sendable {
         else {
             return nil
         }
-        return storageDirectory.appendingPathComponent(".\(service).key")
+        return storageDirectory.appendingPathComponent("\(service).key")
     }
 
     func getAPIKey(service: String) -> String? {

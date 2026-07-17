@@ -3,130 +3,68 @@ import Foundation
 final class LanguageModelService: Sendable {
     private let purpose: InferencePurpose
     private let modelOverride: String?
-    private let effortOverride: String?
     private let session: URLSession
 
     init(
         purpose: InferencePurpose = .assistant,
         model: String? = nil,
-        effort: String? = "low",
         session: URLSession = LanguageModelService.makeSession()
     ) {
         self.purpose = purpose
         self.modelOverride = model
-        self.effortOverride = effort
         self.session = session
     }
 
     var currentRuntime: InferenceRuntime {
-        InferenceSettings.runtime(
-            purpose: purpose,
-            modelOverride: modelOverride,
-            effortOverride: effortOverride
-        )
+        InferenceSettings.runtime(purpose: purpose, modelOverride: modelOverride)
     }
 
-    // MARK: - Types
-
     enum StreamChunk: Sendable {
-        case textBlockStart(afterNonText: Bool)
         case text(String)
         case citation(title: String, url: String)
     }
 
-    static let ephemeralPromptCacheControl: [String: Any] = [
-        "type": "ephemeral"
-    ]
-
-    static let oneHourPromptCacheControl: [String: Any] = [
-        "type": "ephemeral",
-        "ttl": "1h"
-    ]
-
-    // MARK: - Streaming
+    static let ephemeralPromptCacheControl: [String: Any] = ["type": "ephemeral"]
 
     func streamMessage(
         messages: [[String: Any]],
         systemPrompt: Any? = nil,
-        cacheControl: [String: Any]? = nil,
         outputFormat: [String: Any]? = nil,
         temperature: Double? = nil,
-        maxTokens: Int = 8192
+        maxTokens: Int = 3_072
     ) -> AsyncThrowingStream<StreamChunk, Error> {
         let runtime = currentRuntime
         return AsyncThrowingStream { continuation in
             let task = Task.detached(priority: .userInitiated) { [runtime, session] in
                 guard let apiKey = APIKeyStore.shared.getAPIKey(service: runtime.apiKeyService) else {
-                    continuation.finish(throwing: APIError.noAPIKey(runtime.providerName))
+                    continuation.finish(throwing: APIError.noAPIKey)
                     return
                 }
 
-                let sanitizedMessages = Self.sanitizedForProvider(messages, runtime: runtime)
-                var requestMessages = sanitizedMessages as? [[String: Any]] ?? messages
-                if runtime.apiStyle == .openAIChatCompletions,
-                   let systemPrompt,
-                   !Self.promptText(from: systemPrompt).isEmpty {
-                    requestMessages.insert(
-                        ["role": "system", "content": Self.promptText(from: systemPrompt)],
-                        at: 0
-                    )
-                }
-
-                var body: [String: Any] = [
-                    "model": runtime.model,
-                    "max_tokens": maxTokens,
-                    "stream": true,
-                    "messages": requestMessages
-                ]
-
-                var outputConfig: [String: Any] = [:]
-                if let effort = runtime.effort {
-                    outputConfig["effort"] = effort
-                }
-                if runtime.supportsOutputFormat, let outputFormat {
-                    outputConfig["format"] = outputFormat
-                }
-                if !outputConfig.isEmpty {
-                    body["output_config"] = outputConfig
-                }
-                if let temperature {
-                    body["temperature"] = temperature
-                }
-
-                if runtime.apiStyle == .anthropicMessages, let systemPrompt {
-                    body["system"] = Self.sanitizedForProvider(systemPrompt, runtime: runtime)
-                }
-
-                if runtime.supportsPromptCaching, let cacheControl = cacheControl {
-                    body["cache_control"] = cacheControl
-                }
+                let body = Self.requestBody(
+                    runtime: runtime,
+                    messages: messages,
+                    systemPrompt: systemPrompt,
+                    outputFormat: outputFormat,
+                    temperature: temperature,
+                    maxTokens: maxTokens
+                )
 
                 var attempt = 0
                 let maxRetries = 3
 
                 while true {
-                    // Once any chunk has been yielded, a retry would duplicate
-                    // already-delivered text, so retries only happen before that.
                     var hasYieldedChunk = false
                     do {
                         var request = URLRequest(url: runtime.messagesURL)
                         request.httpMethod = "POST"
                         request.timeoutInterval = 60
                         request.setValue("application/json", forHTTPHeaderField: "content-type")
-                        switch runtime.authentication {
-                        case .anthropicAPIKey:
-                            request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-                            if let apiVersion = runtime.apiVersion {
-                                request.setValue(apiVersion, forHTTPHeaderField: "anthropic-version")
-                            }
-                        case .bearerToken:
-                            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "authorization")
-                            request.setValue("Shakespeare", forHTTPHeaderField: "x-title")
-                        }
+                        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "authorization")
+                        request.setValue("Shakespeare", forHTTPHeaderField: "x-title")
                         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
                         let (bytes, response) = try await session.bytes(for: request)
-
                         guard let httpResponse = response as? HTTPURLResponse else {
                             continuation.finish(throwing: APIError.invalidResponse)
                             return
@@ -139,117 +77,44 @@ final class LanguageModelService: Sendable {
                                 continue
                             }
                             var errorBody = ""
-                            for try await line in bytes.lines {
-                                errorBody += line
-                            }
-                            continuation.finish(
-                                throwing: APIError.httpError(
-                                    runtime.providerName,
-                                    httpResponse.statusCode,
-                                    errorBody
-                                )
-                            )
+                            for try await line in bytes.lines { errorBody += line }
+                            continuation.finish(throwing: APIError.httpError(httpResponse.statusCode, errorBody))
                             return
                         }
 
-                        if runtime.apiStyle == .openAIChatCompletions {
-                            var seenCitationURLs = Set<String>()
-
-                            for try await line in bytes.lines {
-                                try Task.checkCancellation()
-                                guard line.hasPrefix("data: ") else { continue }
-                                let jsonString = String(line.dropFirst(6))
-                                guard jsonString != "[DONE]",
-                                      let data = jsonString.data(using: .utf8),
-                                      let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                                else { continue }
-
-                                if let error = event["error"] as? [String: Any] {
-                                    let message = error["message"] as? String ?? "Unknown error"
-                                    continuation.finish(throwing: APIError.streamError(message))
-                                    return
-                                }
-
-                                if let choice = (event["choices"] as? [[String: Any]])?.first,
-                                   let delta = choice["delta"] as? [String: Any],
-                                   let text = delta["content"] as? String,
-                                   !text.isEmpty {
-                                    continuation.yield(.text(text))
-                                    hasYieldedChunk = true
-                                }
-
-                                for citation in Self.openRouterCitations(from: event)
-                                where seenCitationURLs.insert(citation.url).inserted {
-                                    continuation.yield(.citation(
-                                        title: citation.title,
-                                        url: citation.url
-                                    ))
-                                    hasYieldedChunk = true
-                                }
-                            }
-
-                            continuation.finish()
-                            return
-                        }
-
-                        var hasStartedContentBlock = false
-                        var previousContentBlockWasText = false
-                        var wasRefused = false
-
+                        var seenCitationURLs = Set<String>()
                         for try await line in bytes.lines {
                             try Task.checkCancellation()
-                            guard line.hasPrefix("data: ") else { continue }
-                            let jsonString = String(line.dropFirst(6))
-
+                            guard line.hasPrefix("data:") else { continue }
+                            let jsonString = line.dropFirst(5)
+                                .trimmingCharacters(in: .whitespaces)
                             guard jsonString != "[DONE]",
                                   let data = jsonString.data(using: .utf8),
                                   let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                             else { continue }
 
-                            let eventType = event["type"] as? String
-
-                            if eventType == "content_block_start",
-                               let contentBlock = event["content_block"] as? [String: Any] {
-                                let blockType = contentBlock["type"] as? String
-                                if blockType == "thinking" || blockType == "redacted_thinking" {
-                                    // Reasoning blocks never render in the sidebar, so they
-                                    // must not count toward inter-block break detection.
-                                    continue
-                                }
-                                if blockType == "text" {
-                                    continuation.yield(.textBlockStart(
-                                        afterNonText: hasStartedContentBlock && !previousContentBlockWasText
-                                    ))
-                                    hasYieldedChunk = true
-                                }
-                                hasStartedContentBlock = true
-                                previousContentBlockWasText = blockType == "text"
-                            } else if eventType == "content_block_delta",
-                                      let delta = event["delta"] as? [String: Any] {
-                                let deltaType = delta["type"] as? String
-                                if deltaType == "text_delta",
-                                   let text = delta["text"] as? String {
-                                    continuation.yield(.text(text))
-                                    hasYieldedChunk = true
-                                }
-                            } else if eventType == "message_delta",
-                                      let delta = event["delta"] as? [String: Any],
-                                      delta["stop_reason"] as? String == "refusal" {
-                                wasRefused = true
-                            } else if eventType == "message_stop" {
-                                break
-                            } else if eventType == "error" {
-                                let errorMsg = (event["error"] as? [String: Any])?["message"] as? String ?? "Unknown error"
-                                continuation.finish(throwing: APIError.streamError(errorMsg))
+                            if let error = event["error"] as? [String: Any] {
+                                let message = error["message"] as? String ?? "Unknown error"
+                                continuation.finish(throwing: APIError.streamError(message))
                                 return
+                            }
+
+                            if let choice = (event["choices"] as? [[String: Any]])?.first,
+                               let delta = choice["delta"] as? [String: Any],
+                               let text = delta["content"] as? String,
+                               !text.isEmpty {
+                                continuation.yield(.text(text))
+                                hasYieldedChunk = true
+                            }
+
+                            for citation in Self.openRouterCitations(from: event)
+                            where seenCitationURLs.insert(citation.url).inserted {
+                                continuation.yield(.citation(title: citation.title, url: citation.url))
+                                hasYieldedChunk = true
                             }
                         }
 
-                        if wasRefused {
-                            continuation.finish(throwing: APIError.refused(runtime.providerName))
-                        } else {
-                            continuation.finish()
-                        }
+                        continuation.finish()
                         return
                     } catch is CancellationError {
                         continuation.finish(throwing: CancellationError())
@@ -271,44 +136,97 @@ final class LanguageModelService: Sendable {
                 }
             }
 
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
-    private static func sanitizedForProvider(_ value: Any, runtime: InferenceRuntime) -> Any {
-        guard !runtime.supportsPromptCaching else { return value }
-        if let dictionary = value as? [String: Any] {
-            return dictionary.reduce(into: [String: Any]()) { result, entry in
-                guard entry.key != "cache_control" else { return }
-                result[entry.key] = sanitizedForProvider(entry.value, runtime: runtime)
+    static func requestBody(
+        runtime: InferenceRuntime,
+        messages: [[String: Any]],
+        systemPrompt: Any?,
+        outputFormat: [String: Any]?,
+        temperature: Double?,
+        maxTokens: Int
+    ) -> [String: Any] {
+        var requestMessages = messages.map { message -> [String: Any] in
+            var result = message
+            if let content = message["content"] {
+                result["content"] = openRouterContent(from: content)
             }
+            return result
+        }
+        if let systemPrompt, !promptText(from: systemPrompt).isEmpty {
+            requestMessages.insert(
+                ["role": "system", "content": openRouterContent(from: systemPrompt)],
+                at: 0
+            )
+        }
+
+        var provider: [String: Any] = ["data_collection": "deny"]
+        var body: [String: Any] = [
+            "model": runtime.model,
+            "max_tokens": maxTokens,
+            "stream": true,
+            "messages": requestMessages,
+        ]
+        if runtime.supportsTemperature, let temperature { body["temperature"] = temperature }
+        if runtime.webSearchEnabled {
+            body["tools"] = [[
+                "type": "openrouter:web_search",
+                "parameters": [
+                    "engine": "parallel",
+                    "max_results": 4,
+                    "max_total_results": 8,
+                    "max_characters": 2_000,
+                ],
+            ]]
+        }
+
+        if let outputFormat,
+           outputFormat["type"] as? String == "json_schema",
+           let schema = outputFormat["schema"] as? [String: Any] {
+            body["response_format"] = [
+                "type": "json_schema",
+                "json_schema": [
+                    "name": "shakespeare_response",
+                    "strict": true,
+                    "schema": schema,
+                ],
+            ]
+            provider["require_parameters"] = true
+        }
+        body["provider"] = provider
+        return body
+    }
+
+    private static func openRouterContent(from value: Any) -> Any {
+        if let text = value as? String { return text }
+        if let dictionary = value as? [String: Any],
+           let text = dictionary["text"] as? String {
+            var block: [String: Any] = ["type": "text", "text": text]
+            if let cacheControl = dictionary["cache_control"] as? [String: Any] {
+                block["cache_control"] = cacheControl
+            }
+            return block
         }
         if let array = value as? [Any] {
-            return array.map { sanitizedForProvider($0, runtime: runtime) }
+            return array.compactMap { item -> Any? in
+                let converted = openRouterContent(from: item)
+                return promptText(from: converted).isEmpty ? nil : converted
+            }
         }
-        return value
+        return promptText(from: value)
     }
 
     private static func promptText(from value: Any) -> String {
-        if let text = value as? String {
-            return text
-        }
+        if let text = value as? String { return text }
         if let dictionary = value as? [String: Any] {
-            if let text = dictionary["text"] as? String {
-                return text
-            }
-            return dictionary.values
-                .map(promptText(from:))
-                .filter { !$0.isEmpty }
-                .joined(separator: "\n\n")
+            if let text = dictionary["text"] as? String { return text }
+            if let content = dictionary["content"] { return promptText(from: content) }
+            return ""
         }
         if let array = value as? [Any] {
-            return array
-                .map(promptText(from:))
-                .filter { !$0.isEmpty }
-                .joined(separator: "\n\n")
+            return array.map(promptText(from:)).filter { !$0.isEmpty }.joined(separator: "\n\n")
         }
         return ""
     }
@@ -325,7 +243,6 @@ final class LanguageModelService: Sendable {
         if let annotations = event["annotations"] as? [[String: Any]] {
             annotationGroups.append(annotations)
         }
-
         if let choice = (event["choices"] as? [[String: Any]])?.first {
             if let delta = choice["delta"] as? [String: Any],
                let annotations = delta["annotations"] as? [[String: Any]] {
@@ -336,26 +253,22 @@ final class LanguageModelService: Sendable {
                 annotationGroups.append(annotations)
             }
         }
-
         for annotations in annotationGroups {
             for annotation in annotations {
                 let payload = annotation["url_citation"] as? [String: Any] ?? annotation
                 guard let url = validatedWebURL(payload["url"] as? String) else { continue }
-                let title = normalizedCitationTitle(payload["title"] as? String, url: url)
-                citations.append(ProviderCitation(title: title, url: url))
-            }
-        }
-
-        if let urls = event["citations"] as? [String] {
-            for candidate in urls {
-                guard let url = validatedWebURL(candidate) else { continue }
                 citations.append(ProviderCitation(
-                    title: normalizedCitationTitle(nil, url: url),
+                    title: normalizedCitationTitle(payload["title"] as? String, url: url),
                     url: url
                 ))
             }
         }
-
+        if let urls = event["citations"] as? [String] {
+            for candidate in urls {
+                guard let url = validatedWebURL(candidate) else { continue }
+                citations.append(ProviderCitation(title: normalizedCitationTitle(nil, url: url), url: url))
+            }
+        }
         if let results = event["search_results"] as? [[String: Any]] {
             for result in results {
                 guard let url = validatedWebURL(result["url"] as? String) else { continue }
@@ -365,7 +278,6 @@ final class LanguageModelService: Sendable {
                 ))
             }
         }
-
         return citations
     }
 
@@ -384,13 +296,9 @@ final class LanguageModelService: Sendable {
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "]", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let cleaned, !cleaned.isEmpty {
-            return String(cleaned.prefix(120))
-        }
+        if let cleaned, !cleaned.isEmpty { return String(cleaned.prefix(120)) }
         return URL(string: url)?.host ?? "Source"
     }
-
-    // MARK: - Retry
 
     private static func isRetryableStatus(_ code: Int) -> Bool {
         code == 429 || code == 529 || (500...599).contains(code)
@@ -417,46 +325,43 @@ final class LanguageModelService: Sendable {
     }
 
     private static func makeSession() -> URLSession {
-        let configuration = URLSessionConfiguration.default
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.httpCookieStorage = nil
         configuration.waitsForConnectivity = false
         configuration.timeoutIntervalForRequest = 60
         configuration.timeoutIntervalForResource = 300
         return URLSession(configuration: configuration)
     }
 
-    // MARK: - Errors
-
     enum APIError: LocalizedError {
-        case noAPIKey(String)
+        case noAPIKey
         case invalidResponse
-        case httpError(String, Int, String)
+        case httpError(Int, String)
         case streamError(String)
-        case refused(String)
 
         var errorDescription: String? {
             switch self {
-            case .noAPIKey(let provider):
-                return "No \(provider) API key found. Please set it in Settings."
+            case .noAPIKey:
+                return "No OpenRouter API key found. Please connect it in Settings."
             case .invalidResponse:
-                return "Invalid response from API"
-            case .httpError(let provider, let code, let body):
+                return "Invalid response from OpenRouter."
+            case .httpError(let code, let body):
                 switch code {
                 case 401, 403:
-                    return "\(provider) rejected the saved API key. Update it in Settings."
+                    return "OpenRouter rejected the saved API key. Update it in Settings."
                 case 402:
-                    return "\(provider) needs credits before this request can run."
+                    return "OpenRouter needs credits before this request can run."
                 case 429:
-                    return "\(provider) is rate-limiting requests. Wait a moment and try again."
+                    return "OpenRouter is rate-limiting requests. Wait a moment and try again."
                 default:
                     let detail = Self.providerMessage(from: body)
                     return detail.isEmpty
-                        ? "\(provider) request failed (HTTP \(code))."
-                        : "\(provider) request failed: \(detail)"
+                        ? "OpenRouter request failed (HTTP \(code))."
+                        : "OpenRouter request failed: \(detail)"
                 }
-            case .streamError(let msg):
-                return "Stream error: \(msg)"
-            case .refused(let provider):
-                return "\(provider) declined this request. Try rephrasing."
+            case .streamError(let message):
+                return "OpenRouter stream error: \(message)"
             }
         }
 
@@ -464,7 +369,6 @@ final class LanguageModelService: Sendable {
             guard let data = body.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             else { return "" }
-
             let nested = (object["error"] as? [String: Any])?["message"] as? String
             let topLevel = object["message"] as? String
             return String((nested ?? topLevel ?? "").prefix(240))

@@ -78,7 +78,9 @@ final class TextCheckingSettings {
         baselineAutomaticTextReplacementEnabled = textView.isAutomaticTextReplacementEnabled
 
         continuousSpellCheckingEnabled = Self.loadBool(key: Keys.continuousSpellChecking, fallback: true)
-        grammarCheckingEnabled = Self.loadBool(key: Keys.grammarChecking, fallback: true)
+        // Remote grammar uses the writer's paid OpenRouter account. Keep it
+        // opt-in for new installs; local Harper spelling remains on by default.
+        grammarCheckingEnabled = Self.loadBool(key: Keys.grammarChecking, fallback: false)
         let storedDialect = UserDefaults.standard.string(forKey: Keys.dialect)
         dialect = storedDialect.flatMap { stored in
             Self.dialects.contains(where: { $0.value == stored }) ? stored : nil

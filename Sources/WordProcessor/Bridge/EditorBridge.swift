@@ -29,7 +29,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         let parsed = BridgePayload.parse(type: type, payload: payload)
 
         Task { @MainActor in
-            viewModel?.handleBridgeMessage(type: type, payload: parsed)
+            viewModel?.handleBridgeMessage(parsed)
         }
     }
 }

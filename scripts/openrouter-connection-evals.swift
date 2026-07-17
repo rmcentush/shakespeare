@@ -32,28 +32,28 @@ private final class StubURLProtocol: URLProtocol {
 @main
 private struct OpenRouterConnectionEvals {
     static func main() async {
-        validatesChatRuntime()
+        validatesAllRuntimePurposes()
         await validatesExpectedRequest()
         await mapsUnauthorizedResponse()
         await mapsBillingRequiredResponse()
+        await mapsExhaustedKeyResponse()
         await mapsTemporaryFailure()
         await rejectsMalformedSuccess()
-        print("OpenRouter connection evals passed (6 cases).")
+        print("OpenRouter connection evals passed (7 cases).")
     }
 
-    private static func validatesChatRuntime() {
-        let runtime = InferenceSettings.runtime(
-            purpose: .chat,
-            modelOverride: InferenceSettings.defaultOpenRouterModel,
-            effortOverride: "high"
-        )
-        precondition(runtime.providerID == .openRouter)
-        precondition(runtime.apiKeyService == "openrouter")
-        precondition(runtime.authentication == .bearerToken)
-        precondition(runtime.apiStyle == .openAIChatCompletions)
-        precondition(runtime.messagesURL.absoluteString == "https://openrouter.ai/api/v1/chat/completions")
-        precondition(runtime.model == "perplexity/sonar")
-        precondition(runtime.effort == nil)
+    private static func validatesAllRuntimePurposes() {
+        for purpose in [InferencePurpose.assistant, .grammar, .proofread, .chat] {
+            let runtime = InferenceSettings.runtime(purpose: purpose)
+            precondition(runtime.providerID == .openRouter)
+            precondition(runtime.apiKeyService == "openrouter")
+            precondition(runtime.messagesURL.absoluteString == "https://openrouter.ai/api/v1/chat/completions")
+            precondition(runtime.model == (purpose == .chat
+                ? InferenceSettings.defaultResearchModel
+                : InferenceSettings.defaultWritingModel))
+            precondition(runtime.webSearchEnabled == (purpose == .chat))
+            precondition(!runtime.supportsTemperature)
+        }
     }
 
     private static func makeValidator(
@@ -101,6 +101,21 @@ private struct OpenRouterConnectionEvals {
         do {
             try await validator.validate(apiKey: "test-key")
             preconditionFailure("Expected billing-required error")
+        } catch let error as OpenRouterConnectionValidator.ValidationError {
+            precondition(error == .billingRequired)
+        } catch {
+            preconditionFailure("Unexpected error: \(error)")
+        }
+    }
+
+    private static func mapsExhaustedKeyResponse() async {
+        let validator = makeValidator { _ in
+            (200, Data(#"{"data":{"label":"Shakespeare","limit_remaining":0}}"#.utf8))
+        }
+
+        do {
+            try await validator.validate(apiKey: "test-key")
+            preconditionFailure("Expected billing-required error for exhausted key")
         } catch let error as OpenRouterConnectionValidator.ValidationError {
             precondition(error == .billingRequired)
         } catch {

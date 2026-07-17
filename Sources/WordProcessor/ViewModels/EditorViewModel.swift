@@ -37,21 +37,15 @@ final class EditorViewModel {
     private var grammarCheckTask: Task<Void, Never>?
     private var checkedGrammarBlockHashes: [String: String] = [:]
     private var grammarIssuesByBlockID: [String: [DisplayedGrammarIssue]] = [:]
-    private var lastAmbientReviewedDocumentHash: String?
+    private var ambientReviewedBlockHashes: [String: String] = [:]
     private var pendingSnapshot: DocumentFileStore.FileSnapshot?
     private var lastAutoSaveCheckpointByDocumentID: [String: Date] = [:]
     /// Set when the most recent snapshot capture fell back to last-synced state.
     private var lastSnapshotCaptureFailed = false
     private let autoSaveCheckpointInterval: TimeInterval = 60
     @ObservationIgnored private let ambientReviewService = LanguageModelService()
-    @ObservationIgnored private let grammarService = LanguageModelService(
-        purpose: .grammar,
-        effort: nil
-    )
-    @ObservationIgnored private let thoroughGrammarService = LanguageModelService(
-        purpose: .proofread,
-        effort: "low"
-    )
+    @ObservationIgnored private let grammarService = LanguageModelService(purpose: .grammar)
+    @ObservationIgnored private let thoroughGrammarService = LanguageModelService(purpose: .proofread)
     /// Incremented each time the editor signals ready (supports detecting web process restarts).
     var editorReadyCount = 0
     private static let zoomDefaultsKey = "editorZoomScale"
@@ -298,7 +292,7 @@ final class EditorViewModel {
     }
 
     // Called by bridge when JS sends a message
-    func handleBridgeMessage(type: String, payload: BridgePayload) {
+    func handleBridgeMessage(_ payload: BridgePayload) {
         switch payload {
         case .editorReady:
             isEditorReady = true
@@ -415,7 +409,7 @@ final class EditorViewModel {
 
     func loadSnapshot(_ snapshot: DocumentFileStore.FileSnapshot) {
         activeDocumentID = snapshot.documentID
-        lastAmbientReviewedDocumentHash = nil
+        ambientReviewedBlockHashes = [:]
         clearGrammarCheckingState()
 
         guard isEditorReady else {
@@ -1060,10 +1054,9 @@ final class EditorViewModel {
         for try await chunk in service.streamMessage(
             messages: messages,
             systemPrompt: systemPrompt,
-            cacheControl: nil,
             outputFormat: outputFormat,
             temperature: temperature,
-            maxTokens: 4096
+            maxTokens: 2_048
         ) {
             if case .text(let text) = chunk {
                 responseText += text
@@ -1150,7 +1143,6 @@ final class EditorViewModel {
         for try await chunk in grammarService.streamMessage(
             messages: messages,
             systemPrompt: systemPrompt,
-            cacheControl: nil,
             outputFormat: outputFormat,
             temperature: 0,
             maxTokens: 1024
@@ -1288,8 +1280,8 @@ final class EditorViewModel {
 
         guard ambientReviewEnabled else { return }
         guard let context = await currentEditContextSnapshot(), !context.blocks.isEmpty else { return }
-
-        guard lastAmbientReviewedDocumentHash != context.documentHash else {
+        let reviewBlocks = ambientBlocksNeedingReview(in: context)
+        guard !reviewBlocks.isEmpty else {
             ambientReviewStatusText = "Ambient review is up to date."
             return
         }
@@ -1297,11 +1289,13 @@ final class EditorViewModel {
         ambientReviewStatusText = "Reviewing..."
 
         do {
-            let responseText = try await collectAmbientReviewResponse(context: context)
+            let responseText = try await collectAmbientReviewResponse(
+                context: context,
+                reviewBlocks: reviewBlocks
+            )
             let suggestions = parseAmbientReviewSuggestions(from: responseText)
             let addedCount = await addAmbientReviewComments(suggestions, context: context)
-            lastAmbientReviewedDocumentHash = context.documentHash
-
+            markAmbientBlocksReviewed(reviewBlocks, currentContext: context)
             if addedCount > 0 {
                 ambientReviewStatusText = "Added \(addedCount) suggestion\(addedCount == 1 ? "" : "s")."
             } else {
@@ -1322,8 +1316,47 @@ final class EditorViewModel {
         }
     }
 
-    private func collectAmbientReviewResponse(context: EditContextSnapshot) async throws -> String {
-        var systemPrompt: [[String: Any]] = [
+    /// Reviews only changed blocks (plus immediate neighbors) and caps each request.
+    /// A first pass through a long imported document therefore stays bounded; later
+    /// edits do not repeatedly upload every unchanged paragraph.
+    private func ambientBlocksNeedingReview(
+        in context: EditContextSnapshot,
+        limit: Int = 16
+    ) -> [EditContextSnapshot.Block] {
+        let blocks = context.blocks.map {
+            StyleContextAssembler.ReviewBlock(
+                id: $0.id,
+                from: $0.from,
+                to: $0.to,
+                textHash: $0.textHash
+            )
+        }
+        return StyleContextAssembler.reviewBlockIndices(
+            blocks: blocks,
+            reviewedHashes: ambientReviewedBlockHashes,
+            cursorPosition: context.cursorPosition,
+            limit: limit
+        ).map { context.blocks[$0] }
+    }
+
+    private func markAmbientBlocksReviewed(
+        _ reviewed: [EditContextSnapshot.Block],
+        currentContext: EditContextSnapshot
+    ) {
+        let currentIDs = Set(currentContext.blocks.map(\.id))
+        ambientReviewedBlockHashes = ambientReviewedBlockHashes.filter {
+            currentIDs.contains($0.key)
+        }
+        for block in reviewed {
+            ambientReviewedBlockHashes[block.id] = block.textHash
+        }
+    }
+
+    private func collectAmbientReviewResponse(
+        context: EditContextSnapshot,
+        reviewBlocks: [EditContextSnapshot.Block]
+    ) async throws -> String {
+        let systemPrompt: [[String: Any]] = [
             [
                 "type": "text",
                 "text": """
@@ -1331,7 +1364,9 @@ final class EditorViewModel {
                 Return only compact JSON. Do not use Markdown.
                 Find at most 4 high-signal opportunities to improve clarity, structure, accuracy, tone, concision, or adherence to the user's author voice.
                 Only comment on text you can anchor to a block in the supplied edit context.
-                For voice suggestions, use the author voice reference to identify concrete sentence- or paragraph-level departures: rhetorical-question pivots, throat-clearing, vague abstraction, filler, generic internet-essay phrasing, weak paragraph endings, or places where a flatter declarative, sharper catalogue, more precise noun, or tighter rhythm would better fit the user's voice.
+                Treat the learned profile, confirmed rewrites, and representative samples as evidence—not text to imitate mechanically. Prefer repeated, reviewed patterns over any single example, and preserve deliberate irregularities when the passage is already effective.
+                Before suggesting an edit or rewrite, infer the target's role in the document flow. Check that the change follows the preceding movement, prepares the next movement, advances rather than repeats the thesis, and preserves the section's purpose. Use the document flow map only for orientation; never target or quote map-only text.
+                For voice suggestions, identify concrete sentence- or paragraph-level departures: rhetorical-question pivots, throat-clearing, vague abstraction, filler, generic internet-essay phrasing, weak paragraph endings, or places where a flatter declarative, sharper catalogue, more precise noun, or tighter rhythm would better fit the user's voice.
                 Voice comments must be specific and actionable. Prefer a small suggested_replacement when the fix is local. Do not ask the user to rewrite a whole section in the abstract.
                 You will receive existing comments. Treat them as already-covered feedback, even if resolved or dismissed.
                 Do not repeat, paraphrase, or add a nearby overlapping version of an existing comment. If the only useful feedback is already covered, return {"comments":[]}.
@@ -1339,65 +1374,75 @@ final class EditorViewModel {
                 {"comments":[{"block_id":"...","exact_original":"exact current text span","comment":"short rationale","kind":"clarity|structure|tone|voice|concision|grammar|accuracy","severity":"low|medium|high","suggested_replacement":"optional replacement HTML or plain text"}]}
                 If there is nothing worth saying, return {"comments":[]}.
                 """,
-                "cache_control": LanguageModelService.oneHourPromptCacheControl
+                "cache_control": LanguageModelService.ephemeralPromptCacheControl
             ]
         ]
 
-        if !AuthorStyleReference.content.isEmpty {
-            systemPrompt.append([
-                "type": "text",
-                "text": """
-                <author_voice_reference>
-                Use this fixed style reference when deciding whether to add ambient voice suggestions. Follow the guidance without copying examples verbatim.
-
-                \(AuthorStyleReference.content)
-                </author_voice_reference>
-                """,
-                "cache_control": LanguageModelService.oneHourPromptCacheControl
-            ])
-        }
-
-        if !Self.aiTropesGuidance.isEmpty {
-            systemPrompt.append([
-                "type": "text",
-                "text": """
-                <writing_style_guidance>
-                When writing or editing text for the user, follow this guidance carefully:
-
-                \(Self.aiTropesGuidance)
-                </writing_style_guidance>
-                """,
-                "cache_control": LanguageModelService.oneHourPromptCacheControl
-            ])
-        }
-
-        let learnedPreferences = AuthorStyleReference.learnedPreferences.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !learnedPreferences.isEmpty {
-            systemPrompt.append([
-                "type": "text",
-                "text": """
-                <learned_style_preferences>
-                Rules distilled from the author's accepted/rejected edits. Where these conflict with the general voice reference, these win because they are more recent and more specific.
-
-                \(learnedPreferences)
-                </learned_style_preferences>
-                """,
-                "cache_control": LanguageModelService.oneHourPromptCacheControl
-            ])
-        }
-
+        let stylePacket = StyleContextAssembler.assemble(
+            task: "ambient editing for voice, clarity, structure, tone, concision, accuracy, paragraph rhythm, sentence mechanics, and generic AI-writing patterns",
+            documentExcerpt: reviewBlocks.map(\.text).joined(separator: "\n\n"),
+            reference: AuthorStyleReference.content,
+            learnedPreferences: AuthorStyleReference.learnedPreferences,
+            generalGuidance: Self.aiTropesGuidance,
+            writingSamples: trainingEventStore.writingSamples(),
+            confirmedEdits: trainingEventStore.confirmedStyleExamples()
+        )
         let messages: [[String: Any]] = [
             [
                 "role": "user",
-                "content": ambientReviewPrompt(context)
+                "content": stylePacket.text + "\n\n" + ambientReviewPrompt(
+                    context,
+                    reviewBlocks: reviewBlocks
+                )
             ]
+        ]
+
+        let outputFormat: [String: Any] = [
+            "type": "json_schema",
+            "schema": [
+                "type": "object",
+                "properties": [
+                    "comments": [
+                        "type": "array",
+                        "items": [
+                            "type": "object",
+                            "properties": [
+                                "block_id": ["type": "string"],
+                                "exact_original": ["type": "string"],
+                                "comment": ["type": "string"],
+                                "kind": [
+                                    "type": "string",
+                                    "enum": [
+                                        "clarity", "structure", "tone", "voice",
+                                        "concision", "grammar", "accuracy",
+                                    ],
+                                ],
+                                "severity": [
+                                    "type": "string",
+                                    "enum": ["low", "medium", "high"],
+                                ],
+                                "suggested_replacement": ["type": "string"],
+                            ],
+                            "required": [
+                                "block_id", "exact_original", "comment", "kind",
+                                "severity", "suggested_replacement",
+                            ],
+                            "additionalProperties": false,
+                        ],
+                    ],
+                ],
+                "required": ["comments"],
+                "additionalProperties": false,
+            ] as [String: Any],
         ]
 
         var text = ""
         for try await chunk in ambientReviewService.streamMessage(
             messages: messages,
             systemPrompt: systemPrompt,
-            cacheControl: nil
+            outputFormat: outputFormat,
+            temperature: 0,
+            maxTokens: 1_536
         ) {
             if case .text(let delta) = chunk {
                 text += delta
@@ -1406,10 +1451,31 @@ final class EditorViewModel {
         return text
     }
 
-    private func ambientReviewPrompt(_ context: EditContextSnapshot) -> String {
+    private func ambientReviewPrompt(
+        _ context: EditContextSnapshot,
+        reviewBlocks: [EditContextSnapshot.Block]
+    ) -> String {
         let existingComments = ambientExistingCommentsXML()
         let recentRejected = ambientRecentRejectedSuggestionsXML()
-        let blockLines = context.blocks.map { block in
+        var flowBlocks = context.blocks.map {
+            StyleContextAssembler.FlowBlock(id: $0.id, type: $0.type, text: $0.text)
+        }
+        let documentEnding = ambientPromptExcerpt(String(context.plainText.suffix(600)), limit: 400)
+        if !documentEnding.isEmpty,
+           !(flowBlocks.last?.text.contains(String(documentEnding.prefix(80))) ?? false) {
+            flowBlocks.append(
+                StyleContextAssembler.FlowBlock(
+                    id: "document-ending",
+                    type: "document_end",
+                    text: documentEnding
+                )
+            )
+        }
+        let flowMap = StyleContextAssembler.documentFlowMap(
+            blocks: flowBlocks,
+            targetIDs: Set(reviewBlocks.map(\.id))
+        )
+        let blockLines = reviewBlocks.map { block in
             """
             <block id="\(xmlEscaped(block.id))" type="\(xmlEscaped(block.type))" from="\(block.from)" to="\(block.to)" text_hash="\(xmlEscaped(block.textHash))">
             \(xmlEscaped(block.text))
@@ -1419,17 +1485,21 @@ final class EditorViewModel {
 
         return """
         Review the current document using these anchorable blocks. Return JSON only.
-        <edit_context revision="\(context.revision)" document_hash="\(xmlEscaped(context.documentHash))">
+        <edit_context revision="\(context.revision)" document_hash="\(xmlEscaped(context.documentHash))" reviewed_blocks="\(reviewBlocks.count)" document_blocks="\(context.blocks.count)">
         \(existingComments)
         \(recentRejected)
-        <block_index>
+        <document_flow_map>
+        Sparse, document-ordered orientation only. It includes headings, section boundaries, opening and ending material, and distributed checkpoints. Editable targets appear separately below.
+        \(xmlEscaped(flowMap))
+        </document_flow_map>
+        <editable_block_index>
         \(blockLines)
-        </block_index>
+        </editable_block_index>
         </edit_context>
         """
     }
 
-    private func ambientExistingCommentsXML(limit: Int = 40) -> String {
+    private func ambientExistingCommentsXML(limit: Int = 20) -> String {
         let visibleComments = comments.filter {
             !$0.selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
             !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1442,8 +1512,8 @@ final class EditorViewModel {
         let commentLines = visibleComments.prefix(limit).map { comment in
             """
             <comment id="\(xmlEscaped(comment.id))" source="\(xmlEscaped(comment.source))" status="\(xmlEscaped(comment.status))" kind="\(xmlEscaped(comment.kind))" severity="\(xmlEscaped(comment.severity))" from="\(comment.rangeStart)" to="\(comment.rangeEnd)">
-            <selected_text>\(xmlEscaped(comment.selectedText))</selected_text>
-            <comment_text>\(xmlEscaped(comment.text))</comment_text>
+            <selected_text>\(xmlEscaped(ambientPromptExcerpt(comment.selectedText, limit: 300)))</selected_text>
+            <comment_text>\(xmlEscaped(ambientPromptExcerpt(comment.text, limit: 240)))</comment_text>
             </comment>
             """
         }.joined(separator: "\n")
@@ -1459,7 +1529,7 @@ final class EditorViewModel {
         """
     }
 
-    private func ambientRecentRejectedSuggestionsXML(limit: Int = 10) -> String {
+    private func ambientRecentRejectedSuggestionsXML(limit: Int = 6) -> String {
         let rejected = trainingEventStore.recentRejectedDecisions(limit: limit)
         guard !rejected.isEmpty else {
             return "<recent_rejected_suggestions />"
@@ -1468,9 +1538,9 @@ final class EditorViewModel {
         let lines = rejected.map { decision in
             """
             <rejected_suggestion source="\(xmlEscaped(decision.source))" kind="\(xmlEscaped(decision.kind))">
-            <original>\(xmlEscaped(decision.originalText))</original>
-            <replacement>\(xmlEscaped(decision.replacementText))</replacement>
-            <context>\(xmlEscaped(decision.surroundingSentence))</context>
+            <original>\(xmlEscaped(ambientPromptExcerpt(decision.originalText, limit: 240)))</original>
+            <replacement>\(xmlEscaped(ambientPromptExcerpt(decision.replacementText, limit: 240)))</replacement>
+            <context>\(xmlEscaped(ambientPromptExcerpt(decision.surroundingSentence, limit: 320)))</context>
             </rejected_suggestion>
             """
         }.joined(separator: "\n")
@@ -1481,6 +1551,17 @@ final class EditorViewModel {
         \(lines)
         </recent_rejected_suggestions>
         """
+    }
+
+    private func ambientPromptExcerpt(_ text: String, limit: Int) -> String {
+        let normalized = text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard limit > 1, normalized.count > limit else { return normalized }
+        let prefix = String(normalized.prefix(limit - 1))
+        let boundary = prefix.lastIndex(where: { $0.isWhitespace }) ?? prefix.endIndex
+        return String(prefix[..<boundary]).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
     }
 
     private func parseAmbientReviewSuggestions(from responseText: String) -> [AmbientReviewSuggestion] {
@@ -1788,15 +1869,6 @@ final class EditorViewModel {
         }
     }
 
-    func createNewDocument(document: DocumentModel) {
-        Task { @MainActor in
-            await flushBeforeDocumentChange(document: document)
-            document.newDocument()
-            assetBaseURL = nil
-            loadSnapshot(document.currentSnapshot())
-        }
-    }
-
     private func performScheduledPersistence(document: DocumentModel) async {
         guard document.isDirty else { return }
         let snapshot = await latestSnapshot(for: document)
@@ -2061,8 +2133,6 @@ final class EditorViewModel {
             if !acknowledgedOutcomes.isEmpty {
                 callEditorAPI("acknowledgePersonalizationOutcomes", arguments: [acknowledgedOutcomes])
             }
-            trainingEventStore.appendDocumentSnapshot(persistedSnapshot)
-
             if !document.isDirty {
                 try? await RecoveryDraftStore.shared.deleteDraft(documentID: persistedSnapshot.documentID)
                 if sourceDocumentURL != url {

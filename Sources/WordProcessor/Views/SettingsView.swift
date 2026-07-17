@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum SettingsDestination {
     static let defaultsKey = "settingsSelectedTab"
@@ -10,14 +11,6 @@ enum SettingsDestination {
 }
 
 struct SettingsView: View {
-    @State private var tinkerKey = ""
-    @State private var showKey = false
-    @State private var tinkerSaved = false
-    @State private var tinkerConnected = false
-    @State private var isValidatingTinkerKey = false
-    @State private var tinkerConnectionError = ""
-    @State private var tinkerConnectionRequiresBilling = false
-    @State private var showDisconnectConfirmation = false
     @State private var openRouterKey = ""
     @State private var showOpenRouterKey = false
     @State private var openRouterSaved = false
@@ -27,18 +20,19 @@ struct SettingsView: View {
     @State private var openRouterConnectionRequiresBilling = false
     @State private var showOpenRouterDisconnectConfirmation = false
     @AppStorage(SettingsDestination.defaultsKey) private var selectedTab = SettingsDestination.apiKeys
-    @AppStorage(InferenceSettings.tinkerModelDefaultsKey) private var tinkerModel = InferenceSettings.defaultTinkerModel
-    @AppStorage(InferenceSettings.openRouterModelDefaultsKey) private var openRouterModel = InferenceSettings.defaultOpenRouterModel
+    @AppStorage(InferenceSettings.writingModelDefaultsKey) private var writingModel = InferenceSettings.defaultWritingModel
+    @AppStorage(InferenceSettings.researchModelDefaultsKey) private var researchModel = InferenceSettings.defaultResearchModel
     @AppStorage(PersonalizationSettings.enabledDefaultsKey) private var personalizationEnabled = false
     @State private var personalizationReadiness = TrainingEventStore.Readiness(
         eventCount: 0,
         resolvedEditCount: 0,
         eligibleExampleCount: 0,
         styleDecisionCount: 0,
-        snapshotDocumentCount: 0
+        confirmedRewriteCount: 0,
+        bootstrapSampleCount: 0
     )
     @State private var showDeleteEventsConfirmation = false
-    @State private var pendingStyleDecisionCount = 0
+    @State private var pendingProfileEvidenceCount = 0
     @State private var learnedPreferencesPreview = ""
     @State private var proposedLearnedPreferences = ""
     @State private var proposedLearnedPreferencesDiff = ""
@@ -46,13 +40,14 @@ struct SettingsView: View {
     @State private var isUpdatingStylePreferences = false
     @State private var styleUpdateError = ""
     @State private var showStyleProposal = false
-    @State private var activeCheckpoint = PersonalizationModelRegistry.activeSamplerPath
+    @State private var showWritingSampleImporter = false
+    @State private var writingSampleImportMessage = ""
+    @State private var writingSampleImportFailed = false
 
     // Font settings
     @State private var fontManager = FontManager.shared
     @State private var textCheckingSettings = TextCheckingSettings.shared
     private let styleGuideUpdater = StyleGuideUpdater()
-    private let tinkerConnectionValidator = TinkerConnectionValidator()
     private let openRouterConnectionValidator = OpenRouterConnectionValidator()
 
     var body: some View {
@@ -75,18 +70,12 @@ struct SettingsView: View {
         }
         .frame(width: 680, height: 640)
         .onAppear {
-            tinkerConnected = false
-            tinkerConnected = APIKeyStore.shared.getAPIKey(service: "tinker") != nil
             openRouterConnected = APIKeyStore.shared.getAPIKey(service: "openrouter") != nil
             refreshStyleContext()
         }
         .onChange(of: personalizationEnabled) { _, enabled in
             PersonalizationSettings.isEnabled = enabled
             refreshStyleContext()
-        }
-        .onChange(of: tinkerKey) {
-            tinkerConnectionError = ""
-            tinkerConnectionRequiresBilling = false
         }
         .onChange(of: openRouterKey) {
             openRouterConnectionError = ""
@@ -99,52 +88,85 @@ struct SettingsView: View {
         ) {
             Button("Delete Learning History", role: .destructive) { deleteTrainingEvents() }
             Button("Cancel", role: .cancel) {}
-        }
-        .confirmationDialog(
-            "Disconnect Inkling?",
-            isPresented: $showDisconnectConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Disconnect", role: .destructive) { disconnectTinker() }
-            Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes the saved Tinker API key from this Mac. The editor and local proofreading will keep working.")
+            Text("This removes imported samples, learned preferences, and local learning history. Saved documents, recovery drafts, version history, settings, and API keys are not removed.")
         }
         .confirmationDialog(
-            "Disconnect research chat?",
+            "Disconnect OpenRouter?",
             isPresented: $showOpenRouterDisconnectConfirmation,
             titleVisibility: .visible
         ) {
             Button("Disconnect", role: .destructive) { disconnectOpenRouter() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes the saved OpenRouter API key from this Mac. Writing and personalization through Tinker are unaffected.")
+            Text("This removes the saved OpenRouter API key from this Mac. Model-powered writing, grammar, and research will pause; the editor and local spelling remain available.")
         }
         .sheet(isPresented: $showStyleProposal) {
             styleProposalSheet
         }
+        .fileImporter(
+            isPresented: $showWritingSampleImporter,
+            allowedContentTypes: [
+                .plainText,
+                UTType(filenameExtension: "md") ?? .plainText,
+            ],
+            allowsMultipleSelection: true,
+            onCompletion: importWritingSamples
+        )
     }
 
     private var myStyleSettings: some View {
         SettingsPage {
             SettingsCard(title: "How My Style Works") {
-                Text("Shakespeare combines your editable style reference, preferences learned from saved edit outcomes, and—after evaluation—a personal Inkling checkpoint. Project context stays temporary and is never baked into your permanent voice profile.")
+                Text("Shakespeare combines a reviewed 1,800-character profile with relevant reference sections, at most two imported excerpts, and at most two user-authored saved rewrites. The complete style packet stays under 8,000 characters; project context remains temporary.")
                     .settingsDescriptionStyle()
             }
 
             SettingsCard(title: "Learn From My Writing") {
                 Toggle(isOn: $personalizationEnabled) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Learn from saved edits and documents")
+                        Text("Learn from saved rewrites and samples")
                             .fontWeight(.medium)
-                        Text("Off by default. Nothing is uploaded automatically.")
+                        Text("Off by default. No background uploads or training jobs.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
 
-                Text("A suggestion is not treated as training data when you click Accept or Reject. Shakespeare waits until the document is saved, then records whether you kept, revised, reverted, or rewrote it.")
+                Text("A suggestion is not treated as a durable style signal when you click Accept or Reject. Shakespeare waits until the document is saved, then records whether you kept, revised, reverted, or rewrote it.")
                     .settingsDescriptionStyle()
+
+                Divider()
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Bootstrap from finished writing")
+                            .fontWeight(.medium)
+                        Text("Import separate .txt or .md files that you wrote and consider representative.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Add Samples…") {
+                        writingSampleImportMessage = ""
+                        showWritingSampleImporter = true
+                    }
+                    .disabled(!personalizationEnabled)
+                }
+
+                Text("Samples stay local. At most two short, relevant excerpts can accompany a style-aware request, and a bounded cross-document sample can seed the reviewed profile. Five substantial pieces are a useful start; include only writing you own.")
+                    .settingsDescriptionStyle()
+
+                if !writingSampleImportMessage.isEmpty {
+                    Label(
+                        writingSampleImportMessage,
+                        systemImage: writingSampleImportFailed
+                            ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(writingSampleImportFailed ? .red : .green)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
 
                 Divider()
 
@@ -167,26 +189,31 @@ struct SettingsView: View {
                         systemImage: "checkmark.circle"
                     )
                     SettingsMetric(
-                        value: personalizationReadiness.snapshotDocumentCount,
-                        label: "Documents",
-                        systemImage: "doc.text"
+                        value: personalizationReadiness.confirmedRewriteCount,
+                        label: "Rewrites",
+                        systemImage: "pencil.and.outline"
+                    )
+                    SettingsMetric(
+                        value: personalizationReadiness.bootstrapSampleCount,
+                        label: "Samples",
+                        systemImage: "doc.on.doc"
                     )
                 }
             }
 
             SettingsCard(title: "What Shakespeare Learned") {
                 HStack {
-                    Label("New style signals", systemImage: "waveform.path.ecg")
+                    Label("New profile evidence", systemImage: "waveform.path.ecg")
                     Spacer()
-                    Text("\(pendingStyleDecisionCount)")
+                    Text("\(pendingProfileEvidenceCount)")
                         .font(.callout.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(pendingStyleDecisionCount >= 20 ? .orange : .secondary)
+                        .foregroundStyle(pendingProfileEvidenceCount >= 20 ? .orange : .secondary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
                         .background(.quaternary, in: Capsule())
                 }
 
-                Text("Only repeated, high-confidence voice, tone, clarity, structure, concision, and style outcomes are proposed as durable preferences. You review every profile update before it becomes active.")
+                Text("Imported samples can seed the profile; repeated, high-confidence saved outcomes refine it. Saved rewrites also improve the next review immediately through a tiny confirmed-example layer. You approve every durable profile update.")
                     .settingsDescriptionStyle()
 
                 Button {
@@ -198,10 +225,10 @@ struct SettingsView: View {
                             Text("Reviewing…")
                         }
                     } else {
-                        Text("Review Learned Preferences")
+                        Text("Refine Style Profile")
                     }
                 }
-                .disabled(isUpdatingStylePreferences || pendingStyleDecisionCount == 0)
+                .disabled(isUpdatingStylePreferences || pendingProfileEvidenceCount == 0)
 
                 if !learnedPreferencesPreview.isEmpty {
                     Text(learnedPreferencesPreview)
@@ -222,28 +249,6 @@ struct SettingsView: View {
                 }
             }
 
-            SettingsCard(title: "Personal Model") {
-                if let checkpoint = activeCheckpoint {
-                    Label("Active and evaluated", systemImage: "checkmark.seal.fill")
-                        .foregroundStyle(.green)
-                    SettingsPathRow(title: "Active checkpoint", path: checkpoint)
-                    Button("Use Untuned Inkling") {
-                        deactivatePersonalModel()
-                    }
-                } else {
-                    HStack {
-                        Label("Status", systemImage: "cpu")
-                        Spacer()
-                        Text(personalizationReadiness.isTrainingReady ? "Ready to train" : "Collecting evidence")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(personalizationReadiness.isTrainingReady ? .green : .secondary)
-                    }
-                }
-
-                Text("Training creates a candidate LoRA checkpoint. It only becomes active after a held-out evaluation report passes and you explicitly promote it.")
-                    .settingsDescriptionStyle()
-            }
-
             SettingsCard(title: "Files and Privacy") {
                 SettingsPathRow(title: "Style reference", path: styleReferencePath)
                 SettingsPathRow(title: "Learned preferences", path: learnedPreferencesPath)
@@ -259,13 +264,12 @@ struct SettingsView: View {
                 }
 
                 HStack {
-                    Button("Reveal in Finder") {
+                    Button("Reveal Shakespeare Folder") {
                         revealPersonalizationData()
                     }
                     Button("Delete Learning History", role: .destructive) {
                         showDeleteEventsConfirmation = true
                     }
-                    .disabled(personalizationReadiness.eventCount == 0)
                 }
             }
         }
@@ -275,19 +279,10 @@ struct SettingsView: View {
         SettingsPage {
             SettingsCard(title: "Document Typography") {
                 Picker("Font family", selection: $fontManager.currentFont) {
-                    Text("Lyon Text").tag("Lyon Text")
-                    Text("Gentium Plus").tag("Gentium Plus")
-                    Text("Source Serif 4").tag("Source Serif 4")
-                    Text("Scala").tag("Scala")
-                    Text("Charter").tag("Charter")
-                    Text("Signifier").tag("Signifier")
-                    Text("Edgar").tag("Edgar")
-                    Text("Quadraat").tag("Quadraat")
-                    Text("EBGaramond").tag("EBGaramond")
-                    Text("Times New Roman").tag("Times New Roman")
                     Text("Georgia").tag("Georgia")
                     Text("Palatino").tag("Palatino")
                     Text("Baskerville").tag("Baskerville")
+                    Text("Times New Roman").tag("Times New Roman")
                     Text("Helvetica Neue").tag("Helvetica Neue")
                     Text("San Francisco").tag("-apple-system")
                 }
@@ -343,8 +338,8 @@ struct SettingsView: View {
                 )
 
                 SettingsToggle(
-                    title: "Check grammar while typing",
-                    description: "Changed paragraphs are checked with the configured language-model provider.",
+                    title: "Check AI grammar while typing",
+                    description: "Off by default. Changed paragraphs use your paid OpenRouter account after you pause.",
                     isOn: Binding(
                         get: { textCheckingSettings.grammarCheckingEnabled },
                         set: { textCheckingSettings.grammarCheckingEnabled = $0 }
@@ -394,132 +389,16 @@ struct SettingsView: View {
 
     private var connectionsSettings: some View {
         SettingsPage {
-            SettingsCard(title: "Writing — Tinker & Inkling") {
-                    Label(
-                        tinkerConnected ? "Connected and ready" : "Not connected",
-                        systemImage: tinkerConnected ? "checkmark.circle.fill" : "circle.dashed"
-                    )
-                    .foregroundStyle(tinkerConnected ? .green : .secondary)
-
-                    Text("One Tinker API key authenticates the Inkling writing assistant and Tinker training. There is no separate Inkling key.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if let checkpoint = activeCheckpoint {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Active personal checkpoint")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(checkpoint)
-                                .font(.caption2)
-                                .lineLimit(2)
-                                .textSelection(.enabled)
-                        }
-                    }
-                }
-
-            SettingsCard(title: "Writing Connection") {
-                    HStack {
-                        Text("Tinker API key")
-                            .font(.headline)
-                        Spacer()
-                        Link("Get a key ↗", destination: InferenceSettings.tinkerConsoleURL)
-                            .font(.caption)
-                    }
-
-                    HStack {
-                        if showKey {
-                            TextField(
-                                tinkerConnected ? "Paste a new key to replace the current one" : "Paste TINKER_API_KEY",
-                                text: $tinkerKey
-                            )
-                                .textFieldStyle(.roundedBorder)
-                        } else {
-                            SecureField(
-                                tinkerConnected ? "Paste a new key to replace the current one" : "Paste TINKER_API_KEY",
-                                text: $tinkerKey
-                            )
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        Button {
-                            pasteTinkerKeyFromClipboard()
-                        } label: {
-                            Image(systemName: "doc.on.clipboard")
-                        }
-                        .help("Paste from Clipboard")
-                        Button {
-                            showKey.toggle()
-                        } label: {
-                            Image(systemName: showKey ? "eye.slash" : "eye")
-                        }
-                        .help(showKey ? "Hide API Key" : "Show API Key")
-                    }
-                    .disabled(isValidatingTinkerKey)
-
-                    HStack {
-                        Button(tinkerConnected ? "Update Connection" : "Connect") {
-                            Task { await saveTinkerKey() }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(
-                            tinkerKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                            isValidatingTinkerKey
-                        )
-
-                        if tinkerConnected {
-                            Button("Disconnect", role: .destructive) {
-                                showDisconnectConfirmation = true
-                            }
-                            .disabled(isValidatingTinkerKey)
-                        }
-
-                        if isValidatingTinkerKey {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Checking Inkling…")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        if tinkerSaved {
-                            Text("Connected")
-                                .foregroundStyle(.green)
-                                .font(.caption)
-                        }
-                    }
-
-                    if tinkerConnectionRequiresBilling {
-                        TinkerBillingNotice(
-                            message: "This key is valid, but Inkling cannot connect until the Tinker account has payment information or credits."
-                        )
-                    } else if !tinkerConnectionError.isEmpty {
-                        Label(tinkerConnectionError, systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Text("The key is checked against Inkling before it is stored in secure local credential storage.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-            SettingsCard(title: "Research Chat — OpenRouter") {
+            SettingsCard(title: "OpenRouter") {
                 Label(
                     openRouterConnected ? "Connected and ready" : "Not connected",
                     systemImage: openRouterConnected ? "checkmark.circle.fill" : "circle.dashed"
                 )
                 .foregroundStyle(openRouterConnected ? .green : .secondary)
 
-                Text("OpenRouter powers only the research sidebar. Shakespeare uses Perplexity Sonar by default for fast, economical web answers with source links.")
+                Text("One API key powers drafting, revision, grammar, style review, and cited research. Personal style context is sent only with writing features; research chat remains isolated from your permanent style profile.")
                     .settingsDescriptionStyle()
 
-                Label("Writing and personal style data stay on the Tinker path", systemImage: "arrow.triangle.branch")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            SettingsCard(title: "Research Chat Connection") {
                 HStack {
                     Text("OpenRouter API key")
                         .font(.headline)
@@ -595,7 +474,7 @@ struct SettingsView: View {
                         Image(systemName: "creditcard.trianglebadge.exclamationmark.fill")
                             .foregroundStyle(.orange)
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("This key is valid, but OpenRouter needs credits before research chat can run.")
+                            Text("This key is valid, but OpenRouter needs credits before model-powered features can run.")
                                 .font(.caption)
                             Link("Add OpenRouter credits ↗", destination: InferenceSettings.openRouterCreditsURL)
                                 .font(.caption.weight(.semibold))
@@ -611,7 +490,7 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Text("The key is validated before it is stored in macOS Keychain. Research questions and the relevant draft context are sent to OpenRouter only when you use chat.")
+                Text("The key is validated before it is stored in macOS Keychain. Requests disable provider data collection and are sent only when you use a model-powered feature.")
                     .settingsDescriptionStyle()
             }
 
@@ -620,9 +499,9 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         VStack(alignment: .leading, spacing: 5) {
                             Text("Writing model").font(.caption.weight(.semibold))
-                            TextField("Inkling base model", text: $tinkerModel)
+                            TextField("OpenRouter model", text: $writingModel)
                                 .textFieldStyle(.roundedBorder)
-                            Text("An evaluated and promoted personal checkpoint overrides this base model automatically.")
+                            Text("Used for drafting, revision, grammar, and style work. The default is moonshotai/kimi-k3; choose a smaller model here if cost matters more.")
                                 .settingsDescriptionStyle()
                         }
 
@@ -630,9 +509,9 @@ struct SettingsView: View {
 
                         VStack(alignment: .leading, spacing: 5) {
                             Text("Research chat model").font(.caption.weight(.semibold))
-                            TextField("OpenRouter model", text: $openRouterModel)
+                            TextField("OpenRouter model", text: $researchModel)
                                 .textFieldStyle(.roundedBorder)
-                            Text("The default, perplexity/sonar, prioritizes speed, low cost, and cited web answers.")
+                            Text("The default is moonshotai/kimi-k3. Research chat alone receives a bounded web-search tool for current, cited answers.")
                                 .settingsDescriptionStyle()
                         }
                     }
@@ -652,10 +531,10 @@ struct SettingsView: View {
 
     private var styleProposalSheet: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Proposed Learned Preferences")
+            Text("Proposed Style Profile")
                 .font(.headline)
 
-            Text("Review or edit this file before approving. Approval marks \(proposalEventIDs.count) feedback event\(proposalEventIDs.count == 1 ? "" : "s") as processed.")
+            Text("Review or edit this compact profile before approving. Approval marks \(proposalEventIDs.count) evidence item\(proposalEventIDs.count == 1 ? "" : "s") as processed.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -688,57 +567,6 @@ struct SettingsView: View {
         }
         .padding(20)
         .frame(width: 760, height: 620)
-    }
-
-    private func pasteTinkerKeyFromClipboard() {
-        guard let clipboardString = NSPasteboard.general.string(forType: .string) else { return }
-        tinkerKey = clipboardString.trimmingCharacters(in: .whitespacesAndNewlines)
-        tinkerConnectionError = ""
-        tinkerConnectionRequiresBilling = false
-    }
-
-    @MainActor
-    private func saveTinkerKey() async {
-        tinkerKey = tinkerKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !tinkerKey.isEmpty, !isValidatingTinkerKey else { return }
-
-        isValidatingTinkerKey = true
-        tinkerConnectionError = ""
-        tinkerConnectionRequiresBilling = false
-        tinkerSaved = false
-        defer { isValidatingTinkerKey = false }
-
-        do {
-            try await tinkerConnectionValidator.validate(apiKey: tinkerKey)
-            guard APIKeyStore.shared.setAPIKey(tinkerKey, service: "tinker") else {
-                tinkerConnectionError = "The key worked, but it could not be stored securely on this Mac."
-                return
-            }
-            tinkerKey = ""
-            tinkerConnected = true
-            tinkerSaved = true
-            NotificationCenter.default.post(name: .inklingConnectionChanged, object: nil)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                tinkerSaved = false
-            }
-        } catch is CancellationError {
-            return
-        } catch let error as TinkerConnectionValidator.ValidationError {
-            tinkerConnectionRequiresBilling = error == .billingRequired
-            tinkerConnectionError = error.localizedDescription
-        } catch {
-            tinkerConnectionError = error.localizedDescription
-        }
-    }
-
-    private func disconnectTinker() {
-        APIKeyStore.shared.deleteAPIKey(service: "tinker")
-        tinkerKey = ""
-        tinkerConnected = false
-        tinkerSaved = false
-        tinkerConnectionError = ""
-        tinkerConnectionRequiresBilling = false
-        NotificationCenter.default.post(name: .inklingConnectionChanged, object: nil)
     }
 
     private func pasteOpenRouterKeyFromClipboard() {
@@ -794,9 +622,26 @@ struct SettingsView: View {
     }
 
     private func revealPersonalizationData() {
-        let url = PersonalizationStorage.directoryURL
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let url = ShakespeareStorage.rootURL
+        try? ShakespeareStorage.prepare()
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    private func importWritingSamples(_ result: Result<[URL], Error>) {
+        writingSampleImportFailed = false
+        guard case let .success(urls) = result else {
+            if case let .failure(error) = result,
+               (error as NSError).code != NSUserCancelledError {
+                writingSampleImportFailed = true
+                writingSampleImportMessage = error.localizedDescription
+            }
+            return
+        }
+
+        let importResult = WritingSampleImporter.importFiles(urls)
+        writingSampleImportFailed = importResult.isFailure
+        writingSampleImportMessage = importResult.message
+        refreshStyleContext()
     }
 
     private func deleteTrainingEvents() {
@@ -811,19 +656,9 @@ struct SettingsView: View {
     private func refreshStyleContext() {
         _ = AuthorStyleReference.content
         personalizationReadiness = TrainingEventStore.shared.readiness()
-        pendingStyleDecisionCount = TrainingEventStore.shared.pendingDecisionCount()
-        activeCheckpoint = PersonalizationModelRegistry.activeSamplerPath
+        pendingProfileEvidenceCount = TrainingEventStore.shared.pendingProfileEvidenceCount()
         learnedPreferencesPreview = AuthorStyleReference.learnedPreferences
             .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func deactivatePersonalModel() {
-        do {
-            try PersonalizationModelRegistry.deactivate()
-            activeCheckpoint = nil
-        } catch {
-            styleUpdateError = error.localizedDescription
-        }
     }
 
     @MainActor
