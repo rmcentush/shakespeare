@@ -148,6 +148,33 @@ body {
   transform: none;
 }
 
+.source-link {
+  margin: 16px 0 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.source-link a {
+  color: var(--muted-ink);
+  text-decoration-color: rgba(93, 105, 103, 0.42);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  transition: color 180ms ease, text-decoration-color 180ms ease;
+}
+
+.source-link a:hover {
+  color: var(--ink);
+  text-decoration-color: currentColor;
+}
+
+.source-link a:focus-visible {
+  border-radius: 2px;
+  outline: 3px solid #719399;
+  outline-offset: 5px;
+}
+
 .scene-art {
   display: block;
   width: 100%;
@@ -267,5 +294,6 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .download { transition: none; }
+  .download,
+  .source-link a { transition: none; }
 }
