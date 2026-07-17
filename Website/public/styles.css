@@ -1,7 +1,7 @@
 :root {
   color-scheme: light;
   --cream: #f7f0df;
-  --sky-ink: #233b40;
+  --sky-ink: #253a3d;
 }
 
 * {
@@ -31,10 +31,15 @@ body {
   background: #263333;
 }
 
-.scene-image {
+.scene-art {
   position: absolute;
   z-index: 0;
   inset: 0;
+  display: block;
+}
+
+.scene-image {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -56,12 +61,13 @@ body {
 .message {
   position: absolute;
   z-index: 2;
-  top: clamp(32px, 7vh, 72px);
+  top: clamp(40px, 8vh, 82px);
   left: 50%;
   width: min(620px, calc(100vw - 44px));
   color: var(--sky-ink);
   text-align: center;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.38);
+  font-family: Iowan Old Style, Baskerville, "Palatino Linotype", Georgia, serif;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.34);
   transform: translateX(-50%);
 }
 
@@ -72,26 +78,40 @@ body {
 }
 
 .brand {
-  margin-bottom: clamp(8px, 1.2vh, 13px);
-  font-size: clamp(11px, 1.1vw, 13px);
-  font-weight: 650;
-  letter-spacing: 0.24em;
+  display: flex;
+  margin-bottom: clamp(10px, 1.5vh, 16px);
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(10px, 1vw, 12px);
+  font-weight: 600;
+  letter-spacing: 0.28em;
   text-transform: uppercase;
 }
 
+.brand::before,
+.brand::after {
+  width: clamp(28px, 4vw, 54px);
+  height: 1px;
+  background: currentColor;
+  content: "";
+  opacity: 0.42;
+}
+
 .message h1 {
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(38px, 5.3vw, 72px);
+  font-family: Iowan Old Style, Baskerville, "Palatino Linotype", Georgia, serif;
+  font-size: clamp(38px, 4.8vw, 66px);
+  font-style: italic;
   font-weight: 400;
-  letter-spacing: -0.035em;
-  line-height: 0.98;
+  letter-spacing: -0.025em;
+  line-height: 1;
 }
 
 .description {
-  margin-top: clamp(10px, 1.8vh, 17px);
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(15px, 1.5vw, 18px);
-  line-height: 1.3;
+  margin-top: clamp(12px, 1.8vh, 18px);
+  font-size: clamp(13px, 1.3vw, 16px);
+  letter-spacing: 0.035em;
+  line-height: 1.35;
 }
 
 .download {
@@ -100,20 +120,20 @@ body {
   bottom: clamp(22px, 4vh, 42px);
   left: 50%;
   display: flex;
-  min-width: min(252px, calc(100vw - 36px));
-  min-height: 56px;
-  padding: 0 14px 0 23px;
-  gap: 26px;
+  min-width: min(232px, calc(100vw - 36px));
+  min-height: 54px;
+  padding: 0 13px 0 20px;
+  gap: 18px;
   align-items: center;
   justify-content: space-between;
-  border: 1px solid rgba(255, 255, 255, 0.32);
-  border-radius: 999px;
-  background: rgba(13, 20, 20, 0.88);
-  box-shadow: 0 13px 32px rgba(20, 12, 7, 0.36);
+  border: 1px solid rgba(231, 210, 169, 0.56);
+  border-radius: 4px;
+  background: rgba(22, 25, 22, 0.9);
+  box-shadow: 0 12px 28px rgba(20, 12, 7, 0.34), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
   color: var(--cream);
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 16px;
-  letter-spacing: 0.01em;
+  font-family: Iowan Old Style, Baskerville, "Palatino Linotype", Georgia, serif;
+  font-size: 15px;
+  letter-spacing: 0.045em;
   text-decoration: none;
   transform: translateX(-50%);
   backdrop-filter: blur(10px);
@@ -122,11 +142,10 @@ body {
 
 .download span:last-child {
   display: grid;
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 30px;
   place-items: center;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.1);
+  border-left: 1px solid rgba(231, 210, 169, 0.3);
   font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
   font-size: 15px;
 }
@@ -146,7 +165,8 @@ body {
   .scene-image { object-position: 50% 50%; }
 
   .message {
-    top: clamp(28px, 6vh, 52px);
+    top: clamp(116px, 16vh, 176px);
+    width: min(520px, calc(100vw - 40px));
   }
 
   .download {
