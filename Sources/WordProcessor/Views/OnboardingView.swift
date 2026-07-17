@@ -82,7 +82,7 @@ struct OnboardingView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Set up Shakespeare")
                     .font(.system(size: 15, weight: .semibold))
-                Text("One key. Personal writing help.")
+                Text("One key. Writing that sounds like you.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -97,7 +97,7 @@ struct OnboardingView: View {
             credentialCard
             personalizationCard
 
-            PrivacyNote(text: "Key in Keychain. Style history stays on this Mac. Only short, relevant excerpts go to OpenRouter. Usage is billed to your account.")
+            PrivacyNote(text: "Your key stays in Keychain. Style data stays on this Mac; only short excerpts are sent for writing help. OpenRouter bills usage.")
 
         }
         .padding(.horizontal, 28)
@@ -106,26 +106,27 @@ struct OnboardingView: View {
     }
 
     private var personalizationCard: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 12) {
-                Toggle(isOn: $personalizationEnabled) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("2. Make it sound like me").font(.headline)
-                        Text("On by default. Turn off anytime.").font(.caption).foregroundStyle(.secondary)
-                    }
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle(isOn: $personalizationEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("2. Make it sound like me").font(.headline)
+                    Text("Learns from rewrites you save.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
+            }
+
+            HStack {
+                Text("Add samples for a faster start.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Spacer()
-                Button("Add Writing Samples…") {
+                Button("Add Samples…") {
                     writingSampleImportMessage = ""
                     showWritingSampleImporter = true
                 }
                 .disabled(!personalizationEnabled)
             }
-
-            Text("Add a few finished .txt or .md pieces. Shakespeare also learns from rewrites you keep after saving.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
 
             if !writingSampleImportMessage.isEmpty {
                 Label(
