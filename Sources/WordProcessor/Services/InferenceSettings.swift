@@ -34,7 +34,7 @@ enum InferenceSettings {
     static let kimiModel = "moonshotai/kimi-k3"
     static let grokModel = "x-ai/grok-4.5"
     static let defaultWritingModel = kimiModel
-    static let defaultResearchModel = kimiModel
+    static let defaultResearchModel = grokModel
     static let availableModels: [InferenceModelOption] = [
         .init(
             id: kimiModel,
