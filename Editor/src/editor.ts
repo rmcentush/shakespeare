@@ -101,7 +101,7 @@ import {
   resetPersonalizationOutcomeTracking,
 } from './pendingEdits';
 import { buildEditContextSnapshot } from './editContext';
-import { attachProofreading } from './proofreading';
+import { applyPersistedProofreadingUserState, attachProofreading } from './proofreading';
 
 function resetEditorSyncState() {
   resetDocSyncState();
@@ -119,6 +119,16 @@ interface PendingImageImport {
 
 const pendingImageImports = new Map<string, PendingImageImport>();
 const MAX_IMAGE_IMPORT_BYTES = 25 * 1024 * 1024;
+
+function referencedAssetSources(): string[] {
+  const sources = new Set<string>();
+  editor.state.doc.descendants((node) => {
+    if (node.type.name !== 'image') return;
+    const source = node.attrs.src;
+    if (typeof source === 'string' && isSafeDocumentImageSource(source)) sources.add(source);
+  });
+  return [...sources].slice(0, 2_048);
+}
 
 function requestImageImport(file: File, from: number, to: number) {
   if (file.size > MAX_IMAGE_IMPORT_BYTES) {
@@ -144,6 +154,7 @@ function requestImageImport(file: File, from: number, to: number) {
       requestId,
       dataURL,
       filename: file.name,
+      referencedSources: referencedAssetSources(),
     });
   };
   reader.onerror = () => pendingImageImports.delete(requestId);
@@ -254,6 +265,9 @@ const editor = new Editor({
   editorProps: {
     attributes: {
       class: 'editor-content',
+      role: 'textbox',
+      'aria-label': 'Document editor',
+      'aria-multiline': 'true',
       spellcheck: 'false',
       autocorrect: 'on',
     },
@@ -301,18 +315,24 @@ function setEditorZoomScale(scale: number) {
 // Register callbacks for Swift to call into JS
 registerSwiftCallbacks({
   loadContent(html: string) {
-    resetEditorSyncState();
-    rejectAllPendingEdits(editor, false);
-    editor.commands.setContent(sanitizeDocumentHTML(html), false);
-    restoreDefaultTypographyForEmptyEditor(editor);
-    normalizeDocumentSmartQuotes(editor);
-    renderFootnotesPanel(editor, true);
-    emitSelectionUpdate(editor);
-    emitCommentsChanged(editor, true);
+    try {
+      resetEditorSyncState();
+      rejectAllPendingEdits(editor, false);
+      editor.commands.setContent(sanitizeDocumentHTML(html), false);
+      restoreDefaultTypographyForEmptyEditor(editor);
+      normalizeDocumentSmartQuotes(editor);
+      renderFootnotesPanel(editor, true);
+      emitSelectionUpdate(editor);
+      emitCommentsChanged(editor, true);
+      return true;
+    } catch (error) {
+      console.error('Failed to load HTML content into editor', error);
+      return false;
+    }
   },
   loadJSONContent(json: string) {
-    resetEditorSyncState();
     try {
+      resetEditorSyncState();
       rejectAllPendingEdits(editor, false);
       const parsed = sanitizeDocumentJSON(JSON.parse(json));
       if (!parsed || typeof parsed !== 'object') {
@@ -324,9 +344,14 @@ registerSwiftCallbacks({
       renderFootnotesPanel(editor, true);
       emitSelectionUpdate(editor);
       emitCommentsChanged(editor, true);
+      return true;
     } catch (error) {
       console.error('Failed to load JSON content into editor', error);
+      return false;
     }
+  },
+  setEditorEditable(enabled: boolean) {
+    editor.setEditable(Boolean(enabled));
   },
   getDocumentSnapshot(): unknown {
     const snapshot = getDocumentTextSnapshot(editor);
@@ -338,6 +363,9 @@ registerSwiftCallbacks({
       characters: snapshot.characters,
       personalizationOutcomes: collectPersonalizationOutcomes(editor),
     };
+  },
+  getReferencedAssetSources(): string {
+    return JSON.stringify(referencedAssetSources());
   },
   acknowledgePersonalizationOutcomes(actionIds: string[]) {
     acknowledgePersonalizationOutcomes(Array.isArray(actionIds) ? actionIds : []);
@@ -473,6 +501,9 @@ registerSwiftCallbacks({
   },
   setProofreadingOptions(spelling: boolean, grammar: boolean, dialect: string) {
     proofreading.setOptions(spelling, grammar, dialect);
+  },
+  setProofreadingUserState(json: string) {
+    if (applyPersistedProofreadingUserState(json)) proofreading.reloadUserState();
   },
   setAIGrammarIssues(json: string) {
     proofreading.setAIGrammarIssues(json);

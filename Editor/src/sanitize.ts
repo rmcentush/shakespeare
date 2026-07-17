@@ -71,6 +71,39 @@ export function sanitizeDocumentHTML(html: string): string {
   return parsed.body.innerHTML;
 }
 
+const MODEL_REPLACEMENT_TAGS = new Set([
+  'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'strike', 'a', 'ul', 'ol',
+  'li', 'blockquote', 'h1', 'h2', 'h3', 'pre', 'code',
+]);
+
+export function sanitizeModelReplacementHTML(html: string): string {
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  parsed.querySelectorAll('script, style, link, meta, noscript, iframe, object, embed, img, svg, math')
+    .forEach((element) => element.remove());
+
+  for (const element of Array.from(parsed.body.querySelectorAll('*'))) {
+    const tagName = element.tagName.toLowerCase();
+    if (!MODEL_REPLACEMENT_TAGS.has(tagName)) {
+      element.replaceWith(...Array.from(element.childNodes));
+      continue;
+    }
+
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.name.toLowerCase();
+      if (tagName !== 'a' || !['href', 'title'].includes(name)) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  }
+
+  stripUnsafeURLs(parsed.body);
+  parsed.body.querySelectorAll('a[href]').forEach((link) => {
+    link.setAttribute('rel', 'noopener noreferrer');
+    link.setAttribute('target', '_blank');
+  });
+  return parsed.body.innerHTML;
+}
+
 export function sanitizeDocumentJSON(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(sanitizeDocumentJSON).filter((item) => item !== null);

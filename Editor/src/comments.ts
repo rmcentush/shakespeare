@@ -2,6 +2,7 @@ import { Editor, Mark, mergeAttributes } from '@tiptap/core';
 import { TextSelection } from '@tiptap/pm/state';
 import { sendToSwift } from './bridge';
 import { createPendingEdit, queuePendingEdits } from './pendingEdits';
+import { sanitizeModelReplacementHTML } from './sanitize';
 import { COMMENTS_SYNC_DEBOUNCE_MS } from './types';
 import {
   effectiveTextSelection,
@@ -645,6 +646,9 @@ export function removeComment(editor: Editor, commentId: string) {
 export function pendingReplaceComment(editor: Editor, commentId: string, editId: string, html: string): number {
   if (!html.trim()) return 0;
 
+  const sanitizedHTML = sanitizeModelReplacementHTML(html);
+  if (!sanitizedHTML.trim()) return 0;
+
   const comment = findCommentEntry(editor, commentId);
   if (!comment) return 0;
 
@@ -654,7 +658,7 @@ export function pendingReplaceComment(editor: Editor, commentId: string, editId:
     kind: 'selection',
     from: comment.rangeStart,
     to: comment.rangeEnd,
-    newHtml: html,
+    newHtml: sanitizedHTML,
     metadata: {
       learningCategory: comment.kind,
       rationale: comment.text,

@@ -151,6 +151,15 @@ struct ContentView: View {
                     editorViewModel.scheduleGrammarCheck()
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .editorDocumentMetricsUpdated, object: editorViewModel)) { notification in
+                guard let words = notification.userInfo?["words"] as? Int,
+                      let characters = notification.userInfo?["characters"] as? Int
+                else { return }
+                document.syncEditorMetrics(words: words, characters: characters)
+                editorViewModel.schedulePersistence(document: document)
+                editorViewModel.scheduleAmbientReview()
+                editorViewModel.scheduleGrammarCheck()
+            }
             .onReceive(NotificationCenter.default.publisher(for: .editorDocumentMutated, object: editorViewModel)) { _ in
                 document.markEditorMutation()
                 editorViewModel.schedulePersistence(document: document)
@@ -539,7 +548,7 @@ extension ContentView {
         let name = namedVersionName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
         Task {
-            let snapshot = await editorViewModel.latestSnapshot(for: document)
+            guard let snapshot = await editorViewModel.latestSnapshot(for: document) else { return }
             VersionStore.shared.saveVersion(filePath: url.path, snapshot: snapshot, name: name)
         }
         namedVersionName = ""

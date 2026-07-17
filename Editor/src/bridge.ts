@@ -15,12 +15,14 @@ declare global {
 export type BridgeMessageType =
   | 'editorReady'
   | 'contentUpdate'
+  | 'documentMetrics'
   | 'selectionChanged'
   | 'pendingEditUpdate'
   | 'editDecision'
   | 'commentsChanged'
   | 'commentActivated'
   | 'proofreadingUpdate'
+  | 'proofreadingUserStateChanged'
   | 'imageImportRequested'
   | 'openURL';
 
@@ -36,9 +38,11 @@ export function sendToSwift(type: BridgeMessageType, payload: unknown = {}): voi
 
 // Swift calls these functions on the JS side
 export function registerSwiftCallbacks(callbacks: {
-  loadContent: (html: string) => void;
-  loadJSONContent: (json: string) => void;
+  loadContent: (html: string) => boolean;
+  loadJSONContent: (json: string) => boolean;
+  setEditorEditable: (enabled: boolean) => void;
   getDocumentSnapshot: () => unknown;
+  getReferencedAssetSources: () => string;
   acknowledgePersonalizationOutcomes: (actionIds: string[]) => void;
   getPlainText: () => string;
   getSelectionClipboardData: () => string;
@@ -47,6 +51,7 @@ export function registerSwiftCallbacks(callbacks: {
   setSpellcheckEnabled: (enabled: boolean) => void;
   setAutocorrectEnabled: (enabled: boolean) => void;
   setProofreadingOptions: (spelling: boolean, grammar: boolean, dialect: string) => void;
+  setProofreadingUserState: (json: string) => void;
   setAIGrammarIssues: (json: string) => void;
   resetProofreadingDictionary: () => void;
   getGrammarContextSnapshot: () => string;

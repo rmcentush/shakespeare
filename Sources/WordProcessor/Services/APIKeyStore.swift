@@ -31,14 +31,29 @@ final class APIKeyStore: Sendable {
     private let keychainAccount = "default"
     private let sessionCache = APIKeySessionCache()
     private let usesDevelopmentCredentialStore: Bool
+    private let storageDirectoryOverride: URL?
+    private let keychainWriteOverride: (@Sendable (String, String) -> Bool)?
 
     private var storageDirectory: URL {
+        if let storageDirectoryOverride { return storageDirectoryOverride }
         try? ShakespeareStorage.prepare()
         return ShakespeareStorage.credentialsDirectoryURL
     }
 
     private init() {
         usesDevelopmentCredentialStore = !Self.hasStableSigningIdentity()
+        storageDirectoryOverride = nil
+        keychainWriteOverride = nil
+    }
+
+    init(
+        testingDevelopmentStore: Bool,
+        storageDirectory: URL,
+        keychainWrite: (@Sendable (String, String) -> Bool)? = nil
+    ) {
+        usesDevelopmentCredentialStore = testingDevelopmentStore
+        storageDirectoryOverride = storageDirectory
+        keychainWriteOverride = keychainWrite
     }
 
     /// Developer ID and App Store signatures include a stable team identifier.
@@ -83,8 +98,8 @@ final class APIKeyStore: Sendable {
         if sessionCache.value(for: service) != nil {
             return true
         }
-        if !usesDevelopmentCredentialStore, keychainContainsAPIKey(service: service) {
-            return true
+        if !usesDevelopmentCredentialStore {
+            return keychainContainsAPIKey(service: service)
         }
 
         guard let attributes = try? FileManager.default.attributesOfItem(
@@ -117,9 +132,8 @@ final class APIKeyStore: Sendable {
         }
 
         guard let key = fallbackAPIKey(service: service) else { return nil }
-        if setKeychainAPIKey(key, service: service) {
-            deleteFallbackAPIKey(service: service)
-        }
+        guard storeKeychainAPIKey(key, service: service) else { return nil }
+        deleteFallbackAPIKey(service: service)
         sessionCache.setValue(key, for: service)
         return key
     }
@@ -139,15 +153,16 @@ final class APIKeyStore: Sendable {
             return true
         }
 
-        if setKeychainAPIKey(normalizedKey, service: service) {
+        if storeKeychainAPIKey(normalizedKey, service: service) {
             deleteFallbackAPIKey(service: service)
             sessionCache.setValue(normalizedKey, for: service)
             return true
         }
 
-        guard setFallbackAPIKey(normalizedKey, service: service) else { return false }
-        sessionCache.setValue(normalizedKey, for: service)
-        return true
+        // A stable signed build must never downgrade a Keychain failure to a
+        // plaintext credential file. Preserve any existing credential and let
+        // the connection UI surface the failure.
+        return false
     }
 
     func deleteAPIKey(service: String) {
@@ -225,6 +240,13 @@ final class APIKeyStore: Sendable {
             print("APIKeyStore: Keychain add failed with status \(addStatus)")
         }
         return addStatus == errSecSuccess
+    }
+
+    private func storeKeychainAPIKey(_ key: String, service: String) -> Bool {
+        if let keychainWriteOverride {
+            return keychainWriteOverride(key, service)
+        }
+        return setKeychainAPIKey(key, service: service)
     }
 
     private func fallbackAPIKey(service: String) -> String? {

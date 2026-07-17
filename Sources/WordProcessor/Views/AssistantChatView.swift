@@ -91,7 +91,9 @@ struct AssistantChatView: View {
                             .padding(.vertical, 2)
                             .focused($isInputFocused)
                             .onSubmit {
-                                sendMessage()
+                                if !chatViewModel.isStreaming {
+                                    sendMessage()
+                                }
                             }
 
                         Button {
@@ -518,7 +520,6 @@ struct MessageBubble: View, Equatable {
     let onQuoteAssistant: (String) -> Void
     let onInsertAssistant: (String) -> Void
 
-    @State private var isHovering = false
     private let maxBubbleWidth: CGFloat = 280
 
     static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
@@ -559,12 +560,6 @@ struct MessageBubble: View, Equatable {
                             .padding(.trailing, 8)
                             .offset(y: -12)
                             .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing)))
-                        }
-                    }
-                    .onHover { hovering in
-                        guard message.role == .assistant, hasAssistantContent else { return }
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            isHovering = hovering
                         }
                     }
                     .contextMenu {
@@ -621,7 +616,7 @@ struct MessageBubble: View, Equatable {
     }
 
     private var showsAssistantToolbar: Bool {
-        message.role == .assistant && !isStreaming && isHovering && hasAssistantContent
+        message.role == .assistant && !isStreaming && hasAssistantContent
     }
 
     private func copyMessageToPasteboard(_ text: String) {

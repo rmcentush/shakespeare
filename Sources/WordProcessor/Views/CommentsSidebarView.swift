@@ -295,6 +295,13 @@ private struct CommentCard: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { onTap() }
+        .focusable()
+        .onKeyPress(.return) {
+            onTap()
+            return .handled
+        }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { onTap() }
     }
 
     private var metadataBadges: [String] {

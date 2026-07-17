@@ -75,7 +75,44 @@ private final class RecentDocumentRouter {
     }
 }
 
+@MainActor
+private final class DocumentSessionCoordinator {
+    static let shared = DocumentSessionCoordinator()
+
+    private var terminationHandlers: [UUID: () async -> Bool] = [:]
+
+    func register(id: UUID, handler: @escaping () async -> Bool) {
+        terminationHandlers[id] = handler
+    }
+
+    func unregister(id: UUID) {
+        terminationHandlers[id] = nil
+    }
+
+    func secureAllDocumentsForTermination() async -> Bool {
+        for handler in terminationHandlers.values {
+            guard await handler() else { return false }
+        }
+        return true
+    }
+}
+
+@MainActor
 private final class WordProcessorAppDelegate: NSObject, NSApplicationDelegate {
+    private var isPreparingForTermination = false
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !isPreparingForTermination else { return .terminateLater }
+        isPreparingForTermination = true
+
+        Task { @MainActor [weak self, weak sender] in
+            let secured = await DocumentSessionCoordinator.shared.secureAllDocumentsForTermination()
+            self?.isPreparingForTermination = false
+            sender?.reply(toApplicationShouldTerminate: secured)
+        }
+        return .terminateLater
+    }
+
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = NSMenu()
         let recentFiles = DocumentModel.recentFiles()
@@ -292,6 +329,7 @@ private struct EditorWindowRootView: View {
     @State private var document = DocumentModel()
     @State private var editorViewModel = EditorViewModel()
     @State private var recentDocumentHandlerID = UUID()
+    @State private var documentSessionID = UUID()
 
     var body: some View {
         ContentView()
@@ -302,9 +340,13 @@ private struct EditorWindowRootView: View {
                 RecentDocumentRouter.shared.register(id: recentDocumentHandlerID) { url in
                     editorViewModel.openFile(url: url, document: document)
                 }
+                DocumentSessionCoordinator.shared.register(id: documentSessionID) {
+                    await editorViewModel.prepareForTermination(document: document)
+                }
             }
             .onDisappear {
                 RecentDocumentRouter.shared.unregister(id: recentDocumentHandlerID)
+                DocumentSessionCoordinator.shared.unregister(id: documentSessionID)
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
                 guard let window = notification.object as? NSWindow,

@@ -1,6 +1,13 @@
 import Foundation
 
 final class StyleGuideUpdater {
+    private struct ApprovalJournal: Codable {
+        enum Phase: String, Codable { case pending, committed }
+
+        var phase: Phase
+        let previousPreferences: String
+        let previousProcessedIDs: [String]
+    }
     struct Proposal: Equatable, Sendable {
         let proposedMarkdown: String
         let eventIDs: [String]
@@ -25,6 +32,11 @@ final class StyleGuideUpdater {
 
     init(store: TrainingEventStore = .shared) {
         self.store = store
+        do {
+            try recoverInterruptedApproval()
+        } catch {
+            print("StyleGuideUpdater: failed to recover interrupted approval: \(error)")
+        }
     }
 
     func proposeUpdate() async throws -> Proposal {
@@ -116,9 +128,61 @@ final class StyleGuideUpdater {
     }
 
     func approve(_ proposal: Proposal) throws {
-        try store.writeLearnedPreferences(proposal.proposedMarkdown)
-        try store.markProcessed(ids: proposal.eventIDs)
-        AuthorStyleReference.reload()
+        try recoverInterruptedApproval()
+        let journal = ApprovalJournal(
+            phase: .pending,
+            previousPreferences: store.learnedPreferences(),
+            previousProcessedIDs: store.processedIDsSnapshot()
+        )
+        try writeJournal(journal)
+
+        do {
+            try store.writeLearnedPreferences(proposal.proposedMarkdown)
+            try store.markProcessed(ids: proposal.eventIDs)
+            try writeJournal(ApprovalJournal(
+                phase: .committed,
+                previousPreferences: journal.previousPreferences,
+                previousProcessedIDs: journal.previousProcessedIDs
+            ))
+            try FileManager.default.removeItem(at: approvalJournalURL)
+            AuthorStyleReference.reload()
+        } catch {
+            do {
+                try store.writeLearnedPreferences(journal.previousPreferences)
+                try store.restoreProcessedIDs(journal.previousProcessedIDs)
+                try? FileManager.default.removeItem(at: approvalJournalURL)
+                AuthorStyleReference.reload()
+            } catch let rollbackError {
+                print("StyleGuideUpdater: approval rollback failed: \(rollbackError)")
+            }
+            throw error
+        }
+    }
+
+    private var approvalJournalURL: URL {
+        AuthorStyleReference.styleDirectoryURL
+            .appendingPathComponent("style_profile_approval_transaction.json")
+    }
+
+    private func recoverInterruptedApproval() throws {
+        guard FileManager.default.fileExists(atPath: approvalJournalURL.path) else { return }
+        let data = try Data(contentsOf: approvalJournalURL)
+        let journal = try JSONDecoder().decode(ApprovalJournal.self, from: data)
+        if journal.phase == .pending {
+            try store.writeLearnedPreferences(journal.previousPreferences)
+            try store.restoreProcessedIDs(journal.previousProcessedIDs)
+            AuthorStyleReference.reload()
+        }
+        try FileManager.default.removeItem(at: approvalJournalURL)
+    }
+
+    private func writeJournal(_ journal: ApprovalJournal) throws {
+        let data = try JSONEncoder().encode(journal)
+        try data.write(to: approvalJournalURL, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: approvalJournalURL.path
+        )
     }
 
     static func unifiedDiff(old: String, new: String) -> String {

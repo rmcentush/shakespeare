@@ -45,12 +45,10 @@ enum WritingSampleImporter {
                 if accessed { url.stopAccessingSecurityScopedResource() }
             }
             do {
-                let values = try url.resourceValues(forKeys: [.fileSizeKey])
-                guard (values.fileSize ?? 0) <= maximumFileBytes else {
-                    rejected += 1
-                    continue
-                }
-                let text = try String(contentsOf: url, encoding: .utf8)
+                let text = try PackageFileSafety.readUTF8String(
+                    from: url,
+                    maximumBytes: maximumFileBytes
+                )
                 switch try TrainingEventStore.shared.appendWritingSample(text) {
                 case .imported:
                     imported += 1

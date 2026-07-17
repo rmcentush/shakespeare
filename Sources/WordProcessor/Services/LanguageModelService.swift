@@ -1,9 +1,6 @@
 import Foundation
 
 final class LanguageModelService: Sendable {
-    /// OpenRouter accepts at most three entries in the `models` fallback array.
-    /// A request can therefore cover one primary plus three fallback models.
-    static let maximumFallbackModelCount = 3
     static let maximumTransportRetryCount = 1
 
     private let purpose: InferencePurpose
@@ -94,15 +91,23 @@ final class LanguageModelService: Sendable {
 
                         var seenCitationURLs = Set<String>()
                         var streamFailure: String?
+                        var sawTerminalEvent = false
                         for try await line in bytes.lines {
                             try Task.checkCancellation()
                             guard line.hasPrefix("data:") else { continue }
                             let jsonString = line.dropFirst(5)
                                 .trimmingCharacters(in: .whitespaces)
-                            guard jsonString != "[DONE]",
-                                  let data = jsonString.data(using: .utf8),
+                            if jsonString == "[DONE]" {
+                                sawTerminalEvent = true
+                                break
+                            }
+                            guard !jsonString.isEmpty else { continue }
+                            guard let data = jsonString.data(using: .utf8),
                                   let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                            else { continue }
+                            else {
+                                streamFailure = "OpenRouter returned a malformed streaming event."
+                                break
+                            }
 
                             if let error = event["error"] as? [String: Any] {
                                 streamFailure = error["message"] as? String ?? "Unknown error"
@@ -115,6 +120,10 @@ final class LanguageModelService: Sendable {
                                !text.isEmpty {
                                 continuation.yield(.text(text))
                                 hasYieldedChunk = true
+                            }
+                            if let choice = (event["choices"] as? [[String: Any]])?.first,
+                               choice["finish_reason"] is String {
+                                sawTerminalEvent = true
                             }
 
                             for citation in Self.openRouterCitations(from: event)
@@ -131,6 +140,11 @@ final class LanguageModelService: Sendable {
                                 continue
                             }
                             continuation.finish(throwing: APIError.streamError(streamFailure))
+                            return
+                        }
+
+                        guard sawTerminalEvent else {
+                            continuation.finish(throwing: APIError.incompleteStream)
                             return
                         }
 
@@ -162,29 +176,11 @@ final class LanguageModelService: Sendable {
         }
     }
 
-    /// Preserves the writer's selected model order while keeping every network
-    /// request inside OpenRouter's one-primary-plus-three-fallback limit.
+    /// OpenRouter accepts the ordered `models` array as one server-side fallback
+    /// transaction. Keeping one HTTP request avoids duplicated prompts, search,
+    /// and billing ambiguity.
     static func modelBatches(for runtime: InferenceRuntime) -> [InferenceRuntime] {
-        let allModels = [runtime.model] + runtime.fallbackModels
-        let batchSize = maximumFallbackModelCount + 1
-        return stride(from: 0, to: allModels.count, by: batchSize).map { start in
-            let group = Array(allModels[start..<min(start + batchSize, allModels.count)])
-            let primary = group[0]
-            let supportsTemperature = group.allSatisfy { modelID in
-                if modelID == runtime.model { return runtime.supportsTemperature }
-                return InferenceSettings.modelOption(for: modelID)?.supportsTemperature ?? false
-            }
-            return InferenceRuntime(
-                providerID: runtime.providerID,
-                providerName: runtime.providerName,
-                messagesURL: runtime.messagesURL,
-                apiKeyService: runtime.apiKeyService,
-                model: primary,
-                fallbackModels: Array(group.dropFirst()),
-                webSearchEnabled: runtime.webSearchEnabled,
-                supportsTemperature: supportsTemperature
-            )
-        }
+        [runtime]
     }
 
     static func requestBody(
@@ -209,16 +205,18 @@ final class LanguageModelService: Sendable {
             )
         }
 
-        var provider: [String: Any] = ["data_collection": "deny"]
+        var provider: [String: Any] = [
+            "data_collection": "deny",
+            "zdr": true,
+        ]
         var body: [String: Any] = [
             "model": runtime.model,
             "max_tokens": maxTokens,
             "stream": true,
             "messages": requestMessages,
         ]
-        let boundedFallbacks = Array(runtime.fallbackModels.prefix(maximumFallbackModelCount))
-        if !boundedFallbacks.isEmpty {
-            body["models"] = boundedFallbacks
+        if !runtime.fallbackModels.isEmpty {
+            body["models"] = runtime.fallbackModels
         }
         if runtime.supportsTemperature, let temperature { body["temperature"] = temperature }
         if runtime.webSearchEnabled {
@@ -398,6 +396,7 @@ final class LanguageModelService: Sendable {
         case invalidResponse
         case httpError(Int, String)
         case streamError(String)
+        case incompleteStream
 
         var errorDescription: String? {
             switch self {
@@ -421,6 +420,8 @@ final class LanguageModelService: Sendable {
                 }
             case .streamError(let message):
                 return "OpenRouter stream error: \(message)"
+            case .incompleteStream:
+                return "OpenRouter ended the response before confirming completion. Partial text was not accepted as complete."
             }
         }
 
