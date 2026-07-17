@@ -35,6 +35,7 @@ export default function Home() {
 
         <div className="header-actions">
           <span className="release-note"><i aria-hidden="true" /> Beta for macOS 14+</span>
+          <a className="header-link" href="/how-it-works">How it works</a>
           <a className="header-download" href={downloadUrl} download>
             Download <span aria-hidden="true">↓</span>
           </a>

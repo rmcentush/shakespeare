@@ -22,6 +22,7 @@ test("renders the Shakespeare download page", async () => {
   assert.match(html, /<title>Shakespeare — Write like yourself\.<\/title>/i);
   assert.match(html, /Write like yourself/);
   assert.match(html, /Download for Mac/);
+  assert.match(html, /How it works/);
   assert.match(html, /Shakespeare-latest\.zip/);
   assert.match(html, /shakespeare-editor\.jpg/);
   assert.match(html, /Actual app/);
@@ -29,6 +30,21 @@ test("renders the Shakespeare download page", async () => {
   assert.match(html, /https:\/\/writeshakespeare\.com\//);
   assert.doesNotMatch(html, /github\.com|>Source<|>GitHub</i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
+});
+
+test("renders the Shakespeare setup and feature guide", async () => {
+  const response = await render("https://writeshakespeare.com/how-it-works");
+  assert.equal(response.status, 200);
+
+  const html = await response.text();
+  assert.match(html, /<title>How Shakespeare works<\/title>/i);
+  assert.match(html, /Three small steps/);
+  assert.match(html, /Add one OpenRouter key/);
+  assert.match(html, /Choose what it learns/);
+  assert.match(html, /Revision in your voice/);
+  assert.match(html, /Research beside the draft/);
+  assert.match(html, /Your words are not the product/);
+  assert.doesNotMatch(html, /github\.com|>Source<|>GitHub</i);
 });
 
 test("redirects www to the canonical domain", async () => {
