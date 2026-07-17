@@ -1,7 +1,8 @@
 # Shakespeare download site
 
-The public landing page and macOS download for Shakespeare. It runs as a
-Cloudflare Worker with static assets on the Shakespeare Cloudflare account.
+The public landing page and macOS download for Shakespeare. It is intentionally
+small: one hand-written HTML page, one stylesheet, and a tiny Cloudflare Worker
+for redirects and static asset delivery.
 
 ## Local development
 
@@ -16,11 +17,11 @@ The local site is served at `http://localhost:3000`.
 
 ```bash
 npm run build
-node --test tests/rendered-html.test.mjs
+npm test
 ```
 
-The Worker entry point is emitted at `dist/server/index.js`; public assets are
-copied to `dist/client`.
+There is no application bundle or client JavaScript. Wrangler serves `public/`
+directly, and `/how-it-works` redirects to the section on the home page.
 
 ## Release downloads
 
