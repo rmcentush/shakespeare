@@ -13,7 +13,7 @@
     "lint": "node --check worker/index.js && node --check tests/static-site.test.mjs"
   },
   "devDependencies": {
-    "wrangler": "4.92.0"
+    "wrangler": "^4.111.0"
   },
   "type": "module"
 }
