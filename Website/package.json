@@ -29,7 +29,7 @@
     "eslint-config-next": "16.2.6",
     "react-server-dom-webpack": "19.2.6",
     "typescript": "5.9.3",
-    "vinext": "0.0.50",
+    "vinext": "0.2.1",
     "vite": "8.0.13",
     "wrangler": "4.92.0"
   },
