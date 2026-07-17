@@ -38,20 +38,17 @@ export function sendToSwift(type: BridgeMessageType, payload: unknown = {}): voi
 export function registerSwiftCallbacks(callbacks: {
   loadContent: (html: string) => void;
   loadJSONContent: (json: string) => void;
-  getContent: () => string;
   getDocumentSnapshot: () => unknown;
   acknowledgePersonalizationOutcomes: (actionIds: string[]) => void;
   getPlainText: () => string;
   getSelectionClipboardData: () => string;
   applyFormat: (command: string, value?: string) => void;
   focus: () => void;
-  setEditable: (editable: boolean) => void;
   setSpellcheckEnabled: (enabled: boolean) => void;
   setAutocorrectEnabled: (enabled: boolean) => void;
   setProofreadingOptions: (spelling: boolean, grammar: boolean, dialect: string) => void;
   setAIGrammarIssues: (json: string) => void;
   resetProofreadingDictionary: () => void;
-  getProofreadingState: () => string;
   getGrammarContextSnapshot: () => string;
   completeImageImport: (requestId: string, source: string, errorMessage?: string) => void;
   setZoomScale: (scale: number) => void;
@@ -67,11 +64,6 @@ export function registerSwiftCallbacks(callbacks: {
   deleteSelection: () => void;
   replaceSelectionHTML: (html: string) => void;
   insertHTMLAtCursor: (html: string) => void;
-  findAndReplaceText: (find: string, replaceHtml: string, replaceAllOccurrences: boolean) => number;
-  pendingReplaceSelection: (id: string, html: string, target?: any, metadata?: import('./types').PendingEditMetadata) => number;
-  pendingInsertAtCursor: (id: string, html: string, target?: any, metadata?: import('./types').PendingEditMetadata) => number;
-  pendingFindAndReplace: (id: string, find: string, replaceHtml: string, replaceAll: boolean) => number;
-  pendingProposeEdit: (id: string, target: any, replaceHtml: string, replaceAll: boolean, metadata?: import('./types').PendingEditMetadata) => number;
   acceptAllPendingEdits: () => void;
   rejectAllPendingEdits: () => void;
   acceptPendingEdit: (id: string) => boolean;
@@ -79,8 +71,6 @@ export function registerSwiftCallbacks(callbacks: {
   focusPendingEdit: (id: string) => boolean;
   focusNextPendingEdit: () => boolean;
   focusPreviousPendingEdit: () => boolean;
-  getPendingEdits: () => string;
-  getPendingEditCount: () => number;
   getEditContextSnapshot: () => string;
   addComment: (commentId: string) => boolean;
   addCommentAtRange: (commentJSON: string) => boolean;
@@ -89,7 +79,6 @@ export function registerSwiftCallbacks(callbacks: {
   removeComment: (commentId: string) => void;
   focusComment: (commentId: string) => void;
   pendingReplaceComment: (commentId: string, editId: string, html: string) => number;
-  getComments: () => string;
 }): void {
   (window as any).editorAPI = callbacks;
 }

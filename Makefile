@@ -1,4 +1,4 @@
-.PHONY: all build run clean editor editor-tests typecheck privacy-check release-script-check website-check check swift install update package deploy-site release evals document-asset-evals storage-layout-evals style-context-evals style-profile-evals writing-quality-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
+.PHONY: all build run clean editor editor-tests typecheck privacy-check release-script-check website-check check swift install update package deploy-site release evals document-asset-evals document-package-safety-evals storage-layout-evals style-context-evals chat-context-evals style-profile-evals ledger-retention-evals writing-quality-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 all: build
 
@@ -47,6 +47,10 @@ document-asset-evals:
 	swiftc Sources/WordProcessor/Services/DocumentAssetReference.swift scripts/document-asset-evals.swift -o /tmp/document-asset-evals
 	/tmp/document-asset-evals
 
+document-package-safety-evals:
+	swiftc Sources/WordProcessor/Services/PackageFileSafety.swift scripts/document-package-safety-evals.swift -o /tmp/document-package-safety-evals
+	/tmp/document-package-safety-evals
+
 api-key-store-evals:
 	swiftc Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/APIKeyStore.swift scripts/api-key-store-evals.swift -o /tmp/api-key-store-evals
 	/tmp/api-key-store-evals
@@ -59,9 +63,17 @@ style-context-evals:
 	swiftc Sources/WordProcessor/Services/StyleContextAssembler.swift scripts/style-context-evals.swift -o /tmp/style-context-evals
 	/tmp/style-context-evals
 
+chat-context-evals:
+	swiftc Sources/WordProcessor/Services/ChatDocumentContextAssembler.swift scripts/chat-context-evals.swift -o /tmp/chat-context-evals
+	/tmp/chat-context-evals
+
 style-profile-evals:
 	swiftc Sources/WordProcessor/Services/StyleProfileCompiler.swift Sources/WordProcessor/Services/StyleProfileDraftStore.swift scripts/style-profile-evals.swift -o /tmp/style-profile-evals
 	/tmp/style-profile-evals
+
+ledger-retention-evals:
+	swiftc Sources/WordProcessor/Services/PersonalizationLedgerRetention.swift scripts/ledger-retention-evals.swift -o /tmp/ledger-retention-evals
+	/tmp/ledger-retention-evals
 
 writing-quality-evals:
 	swiftc Sources/WordProcessor/Services/AmbientReviewContract.swift scripts/writing-quality-evals.swift -o /tmp/writing-quality-evals
@@ -84,7 +96,11 @@ language-model-wire-evals:
 	swiftc Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/APIKeyStore.swift Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/LanguageModelService.swift scripts/language-model-wire-evals.swift -o /tmp/language-model-wire-evals
 	/tmp/language-model-wire-evals
 
-evals: release-script-check editor-tests document-asset-evals storage-layout-evals style-context-evals style-profile-evals writing-quality-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals
+focus-mode-escape-evals:
+	swiftc -parse-as-library Sources/WordProcessor/Views/FocusModeEscapeMonitor.swift scripts/focus-mode-escape-evals.swift -o /tmp/focus-mode-escape-evals
+	/tmp/focus-mode-escape-evals
+
+evals: release-script-check editor-tests document-asset-evals document-package-safety-evals storage-layout-evals style-context-evals chat-context-evals style-profile-evals ledger-retention-evals writing-quality-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 # Build release
 build: copy-assets
@@ -108,8 +124,15 @@ install: package
 update:
 	bash scripts/update-from-public-download.sh
 
-# Validate the site and deploy it to Cloudflare. R2 releases stay independent.
+# Recovery-only production deploy. Routine site delivery is push-based in Cloudflare.
 deploy-site: Website/node_modules/.package-lock.json
+	@if [ "$$(git branch --show-current)" != "main" ] || [ -n "$$(git status --porcelain --untracked-files=normal)" ]; then \
+		echo "Deploy the production site only from a clean main branch." >&2; exit 1; \
+	fi
+	@git fetch --quiet origin main
+	@if [ "$$(git rev-parse HEAD)" != "$$(git rev-parse origin/main)" ]; then \
+		echo "Local main must exactly match origin/main." >&2; exit 1; \
+	fi
 	cd Website && npm run build && npx wrangler deploy --config wrangler.jsonc
 
 # Build, sign, notarize, verify, and publish one release from this Mac.

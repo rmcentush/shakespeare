@@ -23,6 +23,7 @@ Enable **Learn From My Writing** in **Settings → My Style**, then choose **Add
 
 - Files remain local in the owner-only Shakespeare data folder.
 - Exact duplicates, very short pieces, unstructured pieces, and oversized files are rejected.
+- The local library accepts at most 50 source samples, keeping storage and retrieval predictable.
 - At request time, local lexical retrieval selects no more than two relevant excerpts under a 1,600-character component budget, with at most one excerpt from each source file.
 - When the writer asks to refine the durable profile, Shakespeare samples the beginning, middle, and end of at most five unprocessed source files. The complete files are not sent.
 - Five substantial, independent pieces are a useful starting point.
@@ -53,7 +54,9 @@ All mutable style data is under:
 └── style/
 ```
 
-The tree and files are owner-only. **Delete Learning History** removes samples, events, and learned preferences. It does not delete documents, recovery drafts, version history, settings, or the OpenRouter key.
+The tree and files are owner-only. **Delete Learning History** removes samples, events, prepared profile drafts, and learned preferences. It keeps the writer-maintained `writing_style_reference.md` and does not delete documents, recovery drafts, version history, settings, or the OpenRouter key.
+
+The event ledger compacts after 4,000 records or 20 MB. Imported samples and unreviewed profile evidence are retained; old processed edit telemetry is reduced to the 1,500 most recent decisions and their outcomes. Event IDs are cached in memory so ordinary append checks remain constant-time after the initial load.
 
 The local ledger retains a versioned historical field named `trainingEligible` for backward-compatible decoding. In the current product it means “high-confidence learning signal”; no training pipeline consumes it.
 
@@ -64,6 +67,7 @@ The local ledger retains a versioned historical field named `trainingEligible` f
 - Ambient review examines at most 16 changed or cursor-near blocks plus the 2,600-character document-flow map.
 - Imported samples and confirmed rewrites are locally retrieved instead of appended wholesale.
 - Profile refinement sends bounded cross-document excerpts and at most 40 compact edit records, never the raw ledger.
+- Research chat uses query-aware excerpts under 8,000 characters, expanding to at most 14,000 only for an explicit whole-draft request; chat history is capped separately.
 - System guidance is cache-marked where OpenRouter and the selected model support prompt caching.
 - Writing and research both default to `moonshotai/kimi-k3`. The selected model remains primary in a full OpenRouter-native reliability waterfall, and both purposes share one credential.
 - No vector database, embedding call, background upload, hosted control plane, or Python runtime is required.

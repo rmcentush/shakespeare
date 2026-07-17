@@ -39,12 +39,33 @@ Worker fails closed if the manifest or archive is missing. Downloads are not
 part of static site deployments, so changing the landing page cannot erase or
 silently replace a release.
 
-## Publish
+## Automatic delivery
+
+GitHub `main` is the source of truth. Cloudflare Workers Builds watches this
+directory, runs the locked build and tests, and deploys successful `main`
+changes. Pull-request branches upload preview versions without promoting them.
+
+Use these Cloudflare build settings:
+
+- Repository: `rmcentush/shakespeare`
+- Production branch: `main`
+- Root directory: `Website`
+- Build command: `npm ci && npm run build`
+- Deploy command: `npx wrangler deploy --config wrangler.jsonc`
+- Non-production branch builds: enabled
+- Non-production deploy command: `npx wrangler versions upload --config wrangler.jsonc`
+- Build watch path: `Website/*`
+
+Grant the Cloudflare GitHub App access only to this repository. GitHub Actions
+is not part of the delivery path.
+
+## Manual recovery
+
+From the repository root, a clean, current `main` checkout can redeploy the
+same source with:
 
 ```bash
-npx wrangler deploy --config wrangler.jsonc
+make deploy-site
 ```
 
 Production: <https://writeshakespeare.com>
-
-Cloudflare Workers Builds should use `Website` as the root directory, `npm ci && npm run build` as the build command, `npx wrangler deploy --config wrangler.jsonc` as the deploy command, and `main` as the production branch. GitHub Actions is not used.

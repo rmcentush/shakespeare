@@ -460,16 +460,6 @@ class ProofreadingController {
     });
   }
 
-  stateJSON(): string {
-    return JSON.stringify({
-      enabled: this.options.spelling || this.options.grammar || this.grammarIssues.length > 0,
-      spelling: this.options.spelling,
-      grammar: this.options.grammar,
-      dialect: this.options.dialect,
-      issueCount: this.allIssues().length,
-    });
-  }
-
   grammarContextJSON(): string {
     return JSON.stringify({ blocks: collectTextBlocks(this.editor) });
   }
@@ -880,7 +870,6 @@ export interface ProofreadingControllerAPI {
   setOptions(spelling: boolean, grammar: boolean, dialect: string): void;
   setAIGrammarIssues(json: string): void;
   resetDictionary(): void;
-  stateJSON(): string;
   grammarContextJSON(): string;
 }
 

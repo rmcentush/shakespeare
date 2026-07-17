@@ -94,7 +94,7 @@ struct SettingsView: View {
             Button("Delete Learning History", role: .destructive) { deleteTrainingEvents() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes imported samples, learned preferences, and local learning history. Saved documents, recovery drafts, version history, settings, and API keys are not removed.")
+            Text("This removes imported samples, learned preferences, and local learning history. Your editable style reference, documents, settings, and API key are kept.")
         }
         .confirmationDialog(
             "Disconnect OpenRouter?",

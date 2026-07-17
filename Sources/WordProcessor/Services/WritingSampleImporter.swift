@@ -8,8 +8,9 @@ enum WritingSampleImporter {
         let imported: Int
         let duplicates: Int
         let rejected: Int
+        let limitReached: Int
 
-        var isFailure: Bool { imported == 0 && rejected > 0 }
+        var isFailure: Bool { imported == 0 && (rejected > 0 || limitReached > 0) }
 
         var message: String {
             var parts: [String] = []
@@ -25,6 +26,9 @@ enum WritingSampleImporter {
                         + (rejected == 1 ? "" : "s")
                 )
             }
+            if limitReached > 0 {
+                parts.append("skipped \(limitReached) because the 50-sample library is full")
+            }
             return parts.isEmpty ? "No samples selected." : parts.joined(separator: "; ") + "."
         }
     }
@@ -33,6 +37,7 @@ enum WritingSampleImporter {
         var imported = 0
         var duplicates = 0
         var rejected = max(urls.count - maximumFiles, 0)
+        var limitReached = 0
 
         for url in urls.prefix(maximumFiles) {
             let accessed = url.startAccessingSecurityScopedResource()
@@ -51,6 +56,8 @@ enum WritingSampleImporter {
                     imported += 1
                 case .duplicate:
                     duplicates += 1
+                case .sampleLimitReached:
+                    limitReached += 1
                 case .learningDisabled, .tooShort, .tooLong, .insufficientStructure:
                     rejected += 1
                 }
@@ -59,6 +66,11 @@ enum WritingSampleImporter {
             }
         }
 
-        return Result(imported: imported, duplicates: duplicates, rejected: rejected)
+        return Result(
+            imported: imported,
+            duplicates: duplicates,
+            rejected: rejected,
+            limitReached: limitReached
+        )
     }
 }

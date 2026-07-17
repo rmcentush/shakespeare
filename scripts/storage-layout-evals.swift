@@ -112,7 +112,31 @@ struct StorageLayoutEvals {
             fail("application data root is not owner-only")
         }
 
-        print("Storage layout evals passed (migration, deduplication, privacy, idempotence).")
+        let styleDirectory = root.appendingPathComponent("personalization/style")
+        let referenceURL = styleDirectory.appendingPathComponent("writing_style_reference.md")
+        let learnedURL = styleDirectory.appendingPathComponent("learned_preferences.md")
+        let draftURL = styleDirectory.appendingPathComponent("pending_style_profile.json")
+        try "writer-owned reference".write(to: referenceURL, atomically: true, encoding: .utf8)
+        try "learned rule".write(to: learnedURL, atomically: true, encoding: .utf8)
+        try "pending review".write(to: draftURL, atomically: true, encoding: .utf8)
+
+        try ShakespeareStorage.resetPersonalization(rootURL: root)
+
+        guard try String(contentsOf: referenceURL, encoding: .utf8) == "writer-owned reference"
+        else { fail("learning reset deleted the writer's editable style reference") }
+        for deletedURL in [learnedURL, draftURL, root.appendingPathComponent(
+            "personalization/events/training_events.jsonl"
+        )] where fileManager.fileExists(atPath: deletedURL.path) {
+            fail("learning reset retained private evidence: \(deletedURL.lastPathComponent)")
+        }
+        let referencePermissions = try fileManager.attributesOfItem(atPath: referenceURL.path)[
+            .posixPermissions
+        ] as? NSNumber
+        guard referencePermissions?.intValue == 0o600 else {
+            fail("preserved style reference is not owner-only")
+        }
+
+        print("Storage layout evals passed (migration, reset safety, privacy, idempotence).")
     }
 
     private static func fail(_ message: String) -> Never {

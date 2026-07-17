@@ -14,10 +14,10 @@ import {
   serializeClipboardDataForRange,
   serializeDocumentPlainText,
 } from './docSync';
+import { selectEditContextBlocks } from './editContextSelection';
 
-// ProseMirror docs are immutable; cache the block index by doc identity so
-// repeated lookups within one revision (edit-context snapshot plus per-tool
-// block resolution) walk the document once.
+// ProseMirror docs are immutable; cache the complete local index by doc
+// identity, then select a bounded, cursor-aware view for the Swift bridge.
 const editBlockIndexCache = new WeakMap<object, EditContextBlock[]>();
 
 export function buildEditBlockIndex(doc: any): EditContextBlock[] {
@@ -39,8 +39,6 @@ function buildEditBlockIndexUncached(doc: any): EditContextBlock[] {
   const blocks: EditContextBlock[] = [];
 
   const visit = (node: any, pos: number, path: number[], isRoot: boolean) => {
-    if (blocks.length >= MAX_EDIT_CONTEXT_BLOCKS) return;
-
     if (node.isTextblock) {
       const text = node.textBetween(0, node.content.size, '\n', '\n');
       const pathString = path.join('.');
@@ -57,7 +55,6 @@ function buildEditBlockIndexUncached(doc: any): EditContextBlock[] {
     }
 
     node.forEach((child: any, offset: number, index: number) => {
-      if (blocks.length >= MAX_EDIT_CONTEXT_BLOCKS) return;
       const childPos = (isRoot ? 0 : pos + 1) + offset;
       visit(child, childPos, [...path, index], false);
     });
@@ -97,7 +94,6 @@ function bracketPlaceholders(blocks: EditContextBlock[]): EditContextPlaceholder
 export function buildEditContextSnapshot(editor: Editor): EditContextSnapshot {
   const plainText = serializeDocumentPlainText(editor);
   const activeSelection = effectiveTextSelection(editor);
-  const blocks = buildEditBlockIndex(editor.state.doc);
   const selection = activeSelection
     ? {
       from: activeSelection.from,
@@ -110,6 +106,11 @@ export function buildEditContextSnapshot(editor: Editor): EditContextSnapshot {
     : null;
 
   const cursorPosition = selection?.to ?? editor.state.selection.from;
+  const blocks = selectEditContextBlocks(
+    buildEditBlockIndex(editor.state.doc),
+    cursorPosition,
+    MAX_EDIT_CONTEXT_BLOCKS
+  );
 
   return {
     revision: getDocumentRevision(),

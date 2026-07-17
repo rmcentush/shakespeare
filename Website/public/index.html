@@ -4,51 +4,49 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Shakespeare for Mac</title>
-    <meta name="description" content="A quiet writing app for macOS.">
-    <meta name="theme-color" content="#8fb8c4">
+    <meta name="description" content="Shakespeare is a local-first writing app for Mac that helps you write like yourself.">
+    <meta name="theme-color" content="#8eaab3">
     <link rel="canonical" href="https://writeshakespeare.com/">
+    <link rel="preload" href="/v3/sea-desk-hero.jpg" as="image" media="(orientation: landscape)" fetchpriority="high">
+    <link rel="preload" href="/v3/sea-desk-hero-portrait.jpg" as="image" media="(orientation: portrait)" fetchpriority="high">
     <meta property="og:type" content="website">
     <meta property="og:title" content="Shakespeare for Mac">
-    <meta property="og:description" content="A quiet writing app for macOS.">
+    <meta property="og:description" content="A local-first writing app for Mac that helps you write like yourself.">
     <meta property="og:url" content="https://writeshakespeare.com/">
-    <meta name="twitter:card" content="summary">
-    <link rel="stylesheet" href="/styles.css">
+    <meta property="og:image" content="https://writeshakespeare.com/v3/sea-desk-hero.jpg">
+    <meta property="og:image:alt" content="A watercolor of an open wooden window above a writing desk overlooking the sea.">
+    <meta name="twitter:card" content="summary_large_image">
+    <link rel="stylesheet" href="/v3/styles.css">
   </head>
   <body>
     <main class="scene">
-      <h1 class="sr-only">Shakespeare for Mac</h1>
-
-      <div class="window" aria-hidden="true">
-        <div class="view">
-          <div class="sky">
-            <span class="sun"></span>
-            <span class="cloud cloud-one"></span>
-            <span class="cloud cloud-two"></span>
-          </div>
-          <div class="sea">
-            <span class="sea-light"></span>
-            <span class="wave wave-one"></span>
-            <span class="wave wave-two"></span>
-            <span class="wave wave-three"></span>
-          </div>
+      <div class="layout">
+        <div class="message">
+          <p class="brand">Shakespeare</p>
+          <h1>Write like yourself.</h1>
+          <p class="description">A local-first writing app for Mac.</p>
+          <a class="download" href="/downloads/Shakespeare-latest.zip" download>
+            <span>Download for Mac</span>
+            <span aria-hidden="true">↓</span>
+          </a>
         </div>
-        <span class="mullion mullion-vertical"></span>
-        <span class="mullion mullion-horizontal"></span>
-        <span class="sill"></span>
+        <picture class="scene-art">
+          <source
+            media="(orientation: portrait)"
+            srcset="/v3/sea-desk-hero-portrait.jpg"
+            width="1024"
+            height="1536"
+          >
+          <img
+            class="scene-image"
+            src="/v3/sea-desk-hero.jpg"
+            width="1536"
+            height="1024"
+            alt=""
+            fetchpriority="high"
+          >
+        </picture>
       </div>
-
-      <div class="desk" aria-hidden="true">
-        <div class="paper"></div>
-        <div class="pen">
-          <span class="pen-band"></span>
-          <span class="pen-nib"></span>
-        </div>
-      </div>
-
-      <a class="download" href="/downloads/Shakespeare-latest.zip" download>
-        <span>Download Shakespeare</span>
-        <span aria-hidden="true">↓</span>
-      </a>
     </main>
   </body>
 </html>

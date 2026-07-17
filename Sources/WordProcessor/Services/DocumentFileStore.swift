@@ -9,6 +9,9 @@ actor DocumentFileStore {
     static let currentSchemaVersion = 1
     static let maximumImportedImageBytes = 25 * 1024 * 1024
     static let maximumPackageAssetBytes = 250 * 1024 * 1024
+    static let maximumManifestBytes = 64 * 1024
+    static let maximumDocumentContentBytes = 32 * 1024 * 1024
+    static let maximumPlainTextPreviewBytes = 16 * 1024 * 1024
 
     struct FileSnapshot: Sendable {
         var canonicalJSON: String?
@@ -148,6 +151,7 @@ actor DocumentFileStore {
         case missingPackageManifest
         case invalidDataURL
         case invalidPackagePath(String)
+        case invalidPackageManifest
         case assetTooLarge(maximumMegabytes: Int)
         case packageAssetsTooLarge(maximumMegabytes: Int)
         case incompletePackageWrite(String)
@@ -160,6 +164,8 @@ actor DocumentFileStore {
                 return "The document contains an invalid embedded asset."
             case .invalidPackagePath(let filename):
                 return "The document package contains an unsafe file path (\(filename))."
+            case .invalidPackageManifest:
+                return "The document package manifest contains invalid values."
             case .assetTooLarge(let maximumMegabytes):
                 return "Images must be \(maximumMegabytes) MB or smaller."
             case .packageAssetsTooLarge(let maximumMegabytes):
@@ -176,7 +182,10 @@ actor DocumentFileStore {
                 return try loadPackage(from: url)
             }
 
-            let html = try String(contentsOf: url, encoding: .utf8)
+            let html = try PackageFileSafety.readUTF8String(
+                from: url,
+                maximumBytes: Self.maximumDocumentContentBytes
+            )
             let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
             let createdAt = attributes?[.creationDate] as? Date ?? Date()
             let modifiedAt = attributes?[.modificationDate] as? Date ?? createdAt
@@ -358,8 +367,22 @@ actor DocumentFileStore {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
 
-        let manifestData = try Data(contentsOf: manifestURL, options: .mappedIfSafe)
+        let manifestData = try PackageFileSafety.readData(
+            from: manifestURL,
+            maximumBytes: Self.maximumManifestBytes
+        )
         let manifest = try decoder.decode(PackageManifest.self, from: manifestData)
+        try PackageFileSafety.validateSchemaVersion(
+            manifest.schemaVersion,
+            supported: Self.currentSchemaVersion
+        )
+        guard !manifest.documentID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              manifest.documentID.count <= 128,
+              manifest.wordCount >= 0,
+              manifest.characterCount >= 0
+        else {
+            throw FileStoreError.invalidPackageManifest
+        }
 
         let plainText: String
         if let plainTextFileName = manifest.plainTextFileName {
@@ -369,7 +392,11 @@ actor DocumentFileStore {
             ) else {
                 throw FileStoreError.invalidPackagePath(plainTextFileName)
             }
-            plainText = (try? String(contentsOf: plainTextURL, encoding: .utf8)) ?? ""
+            plainText = try PackageFileSafety.readUTF8String(
+                from: plainTextURL,
+                maximumBytes: Self.maximumPlainTextPreviewBytes,
+                displayName: plainTextFileName
+            )
         } else {
             plainText = ""
         }
@@ -382,7 +409,11 @@ actor DocumentFileStore {
         }
         switch manifest.contentFormat {
         case .prosemirrorJSON:
-            let canonicalJSON = try String(contentsOf: contentURL, encoding: .utf8)
+            let canonicalJSON = try PackageFileSafety.readUTF8String(
+                from: contentURL,
+                maximumBytes: Self.maximumDocumentContentBytes,
+                displayName: manifest.contentFileName
+            )
             return FileSnapshot(
                 canonicalJSON: canonicalJSON,
                 htmlContent: "",
@@ -396,7 +427,11 @@ actor DocumentFileStore {
             )
 
         case .html:
-            let html = try String(contentsOf: contentURL, encoding: .utf8)
+            let html = try PackageFileSafety.readUTF8String(
+                from: contentURL,
+                maximumBytes: Self.maximumDocumentContentBytes,
+                displayName: manifest.contentFileName
+            )
             return FileSnapshot(
                 canonicalJSON: nil,
                 htmlContent: html,
@@ -437,6 +472,22 @@ actor DocumentFileStore {
         let contentFormat: ContentFormat = hasCanonicalJSON ? .prosemirrorJSON : .html
         let contentFileName = hasCanonicalJSON ? "content.json" : "content.html"
         let plainTextFileName = "preview.txt"
+        let contentData = Data(
+            (hasCanonicalJSON ? snapshot.canonicalJSON! : snapshot.htmlContent).utf8
+        )
+        let plainTextData = Data(snapshot.plainText.utf8)
+        guard contentData.count <= Self.maximumDocumentContentBytes else {
+            throw PackageFileSafetyError.fileTooLarge(
+                filename: contentFileName,
+                maximumBytes: Self.maximumDocumentContentBytes
+            )
+        }
+        guard plainTextData.count <= Self.maximumPlainTextPreviewBytes else {
+            throw PackageFileSafetyError.fileTooLarge(
+                filename: plainTextFileName,
+                maximumBytes: Self.maximumPlainTextPreviewBytes
+            )
+        }
 
         let manifest = PackageManifest(
             schemaVersion: snapshot.schemaVersion,
@@ -461,11 +512,11 @@ actor DocumentFileStore {
         )
         fileWrappers[contentFileName] = regularFileWrapper(
             named: contentFileName,
-            contents: Data((hasCanonicalJSON ? snapshot.canonicalJSON! : snapshot.htmlContent).utf8)
+            contents: contentData
         )
         fileWrappers[plainTextFileName] = regularFileWrapper(
             named: plainTextFileName,
-            contents: Data(snapshot.plainText.utf8)
+            contents: plainTextData
         )
 
         let assetWrappers = preparedPackage.assets.reduce(into: [String: FileWrapper]()) { result, entry in
@@ -487,7 +538,10 @@ actor DocumentFileStore {
     /// corrupted write surfaces as a save error instead of silent data loss.
     private func validateWrittenPackage(at url: URL, contentFileName: String) throws {
         let manifestURL = url.appendingPathComponent("manifest.json")
-        guard let manifestData = try? Data(contentsOf: manifestURL), !manifestData.isEmpty else {
+        guard let manifestData = try? PackageFileSafety.readData(
+            from: manifestURL,
+            maximumBytes: Self.maximumManifestBytes
+        ), !manifestData.isEmpty else {
             throw FileStoreError.incompletePackageWrite("manifest.json missing or empty")
         }
         let decoder = JSONDecoder()

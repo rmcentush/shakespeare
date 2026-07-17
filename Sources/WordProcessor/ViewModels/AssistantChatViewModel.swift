@@ -13,10 +13,9 @@ final class AssistantChatViewModel {
     @ObservationIgnored private var apiMessages: [[String: Any]] = []
     @ObservationIgnored private var requestTask: Task<Void, Never>?
 
-    private static let maxApiMessages = 16
+    private static let maxApiMessages = 12
     private static let maxVisibleMessages = 60
-    private static let maxAPIHistoryCharacters = 36_000
-    private nonisolated static let maxDocumentContextCharacters = 20_000
+    private static let maxAPIHistoryCharacters = 24_000
     private static let flushChunkThreshold = 32
     private static let flushInterval: TimeInterval = 0.2
 
@@ -102,7 +101,11 @@ final class AssistantChatViewModel {
             trimVisibleMessages()
         }
 
-        let systemPrompt = await buildSystemPrompt(documentContent: documentContent)
+        let systemPrompt = await buildSystemPrompt(
+            documentContent: documentContent,
+            query: text,
+            quotedSelection: quotedSelection
+        )
         var fullText = ""
         var citations: [(title: String, url: String)] = []
         var flushCount = 0
@@ -113,7 +116,7 @@ final class AssistantChatViewModel {
                 messages: apiMessages,
                 systemPrompt: systemPrompt,
                 temperature: 0.2,
-                maxTokens: 2_400
+                maxTokens: 1_800
             ) {
                 switch chunk {
                 case .text(let text):
@@ -161,13 +164,25 @@ final class AssistantChatViewModel {
         }
     }
 
-    private func buildSystemPrompt(documentContent: String) async -> [[String: Any]] {
+    private func buildSystemPrompt(
+        documentContent: String,
+        query: String,
+        quotedSelection: String?
+    ) async -> [[String: Any]] {
         let preparedDocument = await Task.detached(priority: .utility) {
-            Self.prepareDocumentContext(documentContent)
+            ChatDocumentContextAssembler.assemble(
+                document: documentContent,
+                query: query,
+                selection: quotedSelection
+            )
         }.value
 
         var blocks: [[String: Any]] = [
-            ["type": "text", "text": Self.baseSystemPrompt],
+            [
+                "type": "text",
+                "text": Self.baseSystemPrompt,
+                "cache_control": ["type": "ephemeral"],
+            ],
             [
                 "type": "text",
                 "text": "Current date: \(Date.now.formatted(.iso8601.year().month().day()))"
@@ -239,31 +254,6 @@ final class AssistantChatViewModel {
         default:
             return 8
         }
-    }
-
-    private nonisolated static func prepareDocumentContext(_ text: String) -> String {
-        guard !text.isEmpty else { return "" }
-
-        let normalized = text
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-            .replacingOccurrences(of: "\u{00a0}", with: " ")
-            .replacingOccurrences(of: "[ \t]+", with: " ", options: .regularExpression)
-            .replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !normalized.isEmpty else { return "" }
-        guard normalized.count > maxDocumentContextCharacters else { return normalized }
-
-        let headCount = maxDocumentContextCharacters / 2
-        let tailCount = maxDocumentContextCharacters - headCount
-        return """
-        \(normalized.prefix(headCount))
-
-        [Document truncated for performance. Middle content omitted.]
-
-        \(normalized.suffix(tailCount))
-        """
     }
 
     private nonisolated static func appendingSources(

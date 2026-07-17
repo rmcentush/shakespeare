@@ -343,7 +343,7 @@ function collectCommentEntriesUncached(doc: any): CommentEntry[] {
   ));
 }
 
-export function collectComments(editor: Editor): CommentData[] {
+function collectComments(editor: Editor): CommentData[] {
   return collectCommentEntries(editor.state.doc).map((comment) => ({
     commentId: comment.commentId,
     text: comment.text,

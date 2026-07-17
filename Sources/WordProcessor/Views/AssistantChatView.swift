@@ -119,15 +119,16 @@ struct AssistantChatView: View {
                             .stroke(Color.primary.opacity(isInputFocused ? 0.16 : 0.09), lineWidth: 1)
                     )
                 } else {
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Connect OpenRouter for research chat")
-                                .font(.caption.weight(.semibold))
-                            Text("Writing tools and local proofreading still work without it.")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
+                    HStack(spacing: 8) {
+                        Text("Connect OpenRouter for research chat")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                            .layoutPriority(1)
+
+                        Spacer(minLength: 0)
+
                         SettingsLink {
                             Label("Connect", systemImage: "key")
                         }
@@ -139,6 +140,7 @@ struct AssistantChatView: View {
                         })
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
+                        .fixedSize()
                     }
                     .padding(.horizontal, 4)
                 }

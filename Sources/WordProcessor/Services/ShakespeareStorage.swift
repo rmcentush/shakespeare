@@ -49,18 +49,64 @@ enum ShakespeareStorage {
     }
 
     static func resetPersonalization() throws {
+        try resetPersonalization(rootURL: rootURL)
+    }
+
+    /// Removes locally learned evidence while preserving the writer-maintained
+    /// style reference. The injectable root keeps deletion behavior testable.
+    static func resetPersonalization(rootURL: URL) throws {
         lock.lock()
         defer { lock.unlock() }
+
         let fileManager = FileManager.default
-        let personalization = personalizationDirectoryURL
-        if fileManager.fileExists(atPath: personalization.path) {
-            try fileManager.removeItem(at: personalization)
+        let standardizedRoot = rootURL.standardizedFileURL
+        let personalization = standardizedRoot
+            .appendingPathComponent("personalization", isDirectory: true)
+        let events = personalization.appendingPathComponent("events", isDirectory: true)
+        let style = personalization.appendingPathComponent("style", isDirectory: true)
+
+        try createPrivateDirectory(standardizedRoot, fileManager: fileManager)
+        try createPrivateDirectory(personalization, fileManager: fileManager)
+
+        for entry in try fileManager.contentsOfDirectory(
+            at: personalization,
+            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey],
+            options: []
+        ) {
+            if entry.lastPathComponent == "style" {
+                let values = try entry.resourceValues(
+                    forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+                )
+                if values.isDirectory != true || values.isSymbolicLink == true {
+                    try fileManager.removeItem(at: entry)
+                }
+                continue
+            }
+            try fileManager.removeItem(at: entry)
         }
-        for directory in [
-            personalization,
-            personalizationEventsDirectoryURL,
-            styleDirectoryURL,
-        ] {
+
+        try createPrivateDirectory(style, fileManager: fileManager)
+        for entry in try fileManager.contentsOfDirectory(
+            at: style,
+            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
+            options: []
+        ) {
+            let values = try entry.resourceValues(
+                forKeys: [.isRegularFileKey, .isSymbolicLinkKey]
+            )
+            let isWritableReference = entry.lastPathComponent == "writing_style_reference.md"
+                && values.isRegularFile == true
+                && values.isSymbolicLink != true
+            if isWritableReference {
+                try fileManager.setAttributes(
+                    [.posixPermissions: 0o600], ofItemAtPath: entry.path
+                )
+            } else {
+                try fileManager.removeItem(at: entry)
+            }
+        }
+
+        for directory in [personalization, events, style] {
             try createPrivateDirectory(directory, fileManager: fileManager)
         }
     }

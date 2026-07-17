@@ -1,28 +1,49 @@
-# Releasing Shakespeare
+# Development and releasing
 
-Shakespeare uses no GitHub Actions compute. Cloudflare Workers Builds owns the
-website, Cloudflare R2 owns versioned app archives, and a trusted Mac performs
-the only platform-specific work: universal compilation, Developer ID signing,
-Apple notarization, and ticket stapling.
+This file is the canonical delivery contract for Shakespeare.
 
-## Routine checks
+## Source of truth
 
-Run the complete deterministic gate locally:
+GitHub `main` owns the complete product history. Every production artifact must
+come from committed source on `main`; Cloudflare is the build, hosting, and
+release-storage plane, not a second source repository.
 
-```bash
-make check
-```
+The normal change flow is:
 
-For optional push-based website deployment, connect Cloudflare Workers Builds
-to `main` with:
+1. Work on a feature branch.
+2. Run `make check` locally.
+3. Commit and push the branch to GitHub.
+4. Merge through a pull request.
+5. Let Cloudflare deploy website changes from `main`.
 
+GitHub Actions is intentionally absent. This avoids hosted runner minutes and
+keeps Apple signing credentials off GitHub. Native app releases remain an
+explicit operation because they require macOS, Developer ID signing, Apple
+notarization, and ticket stapling.
+
+## Cloudflare website CI/CD
+
+Connect the `shakespeare-download` Worker to GitHub with these settings:
+
+- Repository: `rmcentush/shakespeare`
+- Production branch: `main`
 - Root directory: `Website`
 - Build command: `npm ci && npm run build`
 - Deploy command: `npx wrangler deploy --config wrangler.jsonc`
+- Non-production branch builds: enabled
+- Non-production deploy command: `npx wrangler versions upload --config wrangler.jsonc`
+- Build watch path: `Website/*`
+- Build cache: enabled
+
+Restrict the Cloudflare GitHub App to this repository. Successful production
+builds deploy automatically; pull-request branches create preview versions.
+`make deploy-site` exists only for recovery and refuses to deploy a dirty,
+non-`main`, or stale checkout.
 
 The R2 binding is declared in `Website/wrangler.jsonc`. Static deployments
-exclude `public/downloads`; the Worker reads `releases/current.json` and then
-serves the referenced immutable archive.
+exclude `public/downloads`; the Worker reads `releases/current.json` and serves
+the immutable archive it names. Therefore a website deploy cannot overwrite or
+erase the current app download.
 
 ## One-time Mac setup
 
@@ -36,7 +57,7 @@ xcrun notarytool store-credentials shakespeare
 If Wrangler can access more than one Cloudflare account, export the Shakespeare
 account ID as `CLOUDFLARE_ACCOUNT_ID` in the release shell. Do not commit it.
 
-## Publish
+## Publish the macOS app
 
 From a clean, up-to-date `main` branch:
 
@@ -48,8 +69,17 @@ NOTARYTOOL_PROFILE=shakespeare \
 make release
 ```
 
-The command validates all sources, builds and signs the universal app, submits
-it to Apple, staples the ticket, uploads an immutable archive to R2, deploys
-the Worker, advances the small current-release manifest, verifies the live ZIP
-and checksum, and finally pushes a version tag. If a post-switch step fails,
-the prior R2 manifest is restored.
+The command:
+
+1. Requires a clean `main` exactly matching `origin/main`.
+2. Runs `make check`.
+3. Builds, signs, notarizes, and staples the universal app.
+4. Uploads an immutable versioned archive to R2.
+5. Validates and deploys the Worker from the same checkout.
+6. Atomically advances `releases/current.json`.
+7. Downloads the public ZIP and proves its checksum, signature, and notarization.
+8. Creates and pushes the version tag.
+
+If a post-switch step fails, the prior R2 manifest is restored. Existing
+versioned archives remain immutable, so rollback changes only the small
+manifest pointer.

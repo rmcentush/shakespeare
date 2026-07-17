@@ -3,6 +3,25 @@ import Foundation
 enum StyleLearningPolicy {
     static let minimumConfirmedRewriteCharacters = 60
 
+    /// Durable profile evidence must reflect an active writer choice. Merely
+    /// accepting model prose unchanged is useful interaction history, but it
+    /// must not teach that same prose back to the model as the writer's voice.
+    static func isDurableStyleEvidence(
+        outcome: String?,
+        finalText: String?,
+        trainingEligible: Bool?,
+        confidence: Double?
+    ) -> Bool {
+        guard trainingEligible == true,
+              (confidence ?? 0) >= 0.8,
+              ["accepted_modified", "later_accepted", "rejected_rewritten"]
+                .contains(outcome ?? ""),
+              let text = finalText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty
+        else { return false }
+        return true
+    }
+
     static func isConfirmedUserRewrite(outcome: String?, finalText: String?) -> Bool {
         guard ["accepted_modified", "rejected_rewritten"].contains(outcome ?? ""),
               let text = finalText?.trimmingCharacters(in: .whitespacesAndNewlines),
