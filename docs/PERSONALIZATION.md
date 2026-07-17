@@ -1,73 +1,49 @@
 # Personalization
 
-Shakespeare personalizes writing through bounded context, not remote post-training. This keeps the system immediate, inspectable, inexpensive, and easy to delete.
+Shakespeare learns through bounded context, not remote fine-tuning. Learning is
+on by default, disclosed during setup, and can be paused or disabled under
+**Settings → My Style**.
 
-## Layers and precedence
+## What is used
 
-For a style-aware writing request, Shakespeare assembles at most 8,000 characters (about 2,000 tokens) in this order:
+For style-aware writing, Shakespeare may use:
 
-1. Preserve the writer's requested meaning, facts, quotations, and explicit instructions.
-2. Apply reviewed learned preferences.
-3. Use up to two recent rewrites the writer actively changed and saved as positive, non-general examples.
-4. Use task-relevant excerpts from the editable author reference.
-5. Use up to two relevant writing-sample excerpts as rhythm and voice examples.
-6. Use the current document only for topic and continuity.
+1. the writer's requested meaning, facts, quotations, and instructions;
+2. reviewed preferences;
+3. up to two recent rewrites the writer changed and saved;
+4. relevant sections of the editable style reference; and
+5. up to two relevant excerpts from deliberately imported samples.
 
-Samples are never instructions or factual sources. The prompt explicitly forbids copying their names, facts, quotations, or distinctive phrases. Research chat and ordinary grammar checks do not receive permanent style context.
+The style packet is capped at 8,000 characters. A separate 2,600-character map
+provides limited document flow and continuity. Samples are examples of voice,
+not instructions or factual sources, and their distinctive content must not be
+copied.
 
-For edit and rewrite suggestions, Shakespeare also builds a separate document-flow map capped at 2,600 characters. It includes headings, opening and ending material, section boundaries, target-adjacent paragraphs, and evenly spaced checkpoints. The model uses this sparse map to understand the thesis, progression, transitions, and role of the editable passage, but it may target only the separately supplied full-fidelity blocks.
+Research chat and ordinary grammar checks do not receive permanent style
+context.
 
-## Starting from writing samples
+## Samples and edits
 
-Enable **Learn From My Writing** in **Settings → My Style**, then choose **Add Samples…**. Import `.txt` or `.md` files that you wrote and consider representative.
+Use **Add Samples…** to import representative `.txt` or `.md` files. Files stay
+in Shakespeare's owner-only local data folder; only selected excerpts are sent
+for relevant style-aware requests.
 
-- Files remain local in the owner-only Shakespeare data folder.
-- Exact duplicates, very short pieces, unstructured pieces, and oversized files are rejected.
-- The local library accepts at most 50 source samples, keeping storage and retrieval predictable.
-- At request time, local lexical retrieval selects no more than two relevant excerpts under a 1,600-character component budget, with at most one excerpt from each source file.
-- When the writer asks to refine the durable profile, Shakespeare samples the beginning, middle, and end of at most five unprocessed source files. The complete files are not sent.
-- Five substantial, independent pieces are a useful starting point.
-
-This provides value immediately; there is no training job, uploaded dataset, checkpoint, or second provider account.
-
-## Learning from edits
-
-Learning is on by default and can be paused at any time. An explicit disabled choice is preserved. While enabled:
-
-1. Shakespeare records a proposed edit decision locally.
-2. Accepting or rejecting it does not by itself create a durable preference.
-3. On successful save, the editor classifies whether the text was kept, revised, reverted, or rewritten.
-4. Only high-confidence outcomes can contribute to the style evidence pool.
-5. Text the writer actively modified or rewrote can enter a two-example runtime layer on the next review. Accepted-unchanged model prose is excluded to prevent self-reinforcement.
-6. Repeated signals can be proposed as learned preferences.
-7. The writer reviews and edits every proposed preference before approval.
-
-Raw events and approved preferences remain separate. This avoids treating an accidental click or temporary wording choice as the writer's voice.
+Accepting or rejecting a suggestion does not create a lasting preference by
+itself. Shakespeare waits for a successful save, uses only high-confidence
+outcomes, and never learns from accepted-unchanged model prose. Repeated signals
+can become proposed preferences, but the writer must review them before use.
 
 ## Storage and deletion
 
-All mutable style data is under:
+Mutable personalization data is stored under:
 
 ```text
 ~/Library/Application Support/Shakespeare/personalization/
-├── events/
-└── style/
 ```
 
-The tree and files are owner-only. **Delete Learning History** removes samples, events, prepared profile drafts, and learned preferences. It keeps the writer-maintained `writing_style_reference.md` and does not delete documents, recovery drafts, version history, settings, or the OpenRouter key.
+**Delete Learning History** removes samples, events, profile drafts, and learned
+preferences. It keeps the writer-maintained style reference and does not delete
+documents, recovery drafts, versions, settings, or the OpenRouter key.
 
-The event ledger compacts after 4,000 records or 20 MB. Imported samples and unreviewed profile evidence are retained; old processed edit telemetry is reduced to the 1,500 most recent decisions and their outcomes. Event IDs are cached in memory so ordinary append checks remain constant-time after the initial load.
-
-The local ledger retains a versioned historical field named `trainingEligible` for backward-compatible decoding. In the current product it means “high-confidence learning signal”; no training pipeline consumes it.
-
-## Efficiency safeguards
-
-- Style packets have a hard 8,000-character ceiling and a 2,000-token target.
-- The durable profile has a separate 1,800-character ceiling.
-- Ambient review examines at most 16 changed or cursor-near blocks plus the 2,600-character document-flow map.
-- Imported samples and confirmed rewrites are locally retrieved instead of appended wholesale.
-- Profile refinement sends bounded cross-document excerpts and at most 40 compact edit records, never the raw ledger.
-- Research chat uses query-aware excerpts under 8,000 characters, expanding to at most 14,000 only for an explicit whole-draft request; chat history is capped separately.
-- System guidance is cache-marked where OpenRouter and the selected model support prompt caching.
-- Writing and research both default to `moonshotai/kimi-k3`. The selected model remains primary in a full OpenRouter-native reliability waterfall, and both purposes share one credential.
-- No vector database, embedding call, background upload, hosted control plane, or Python runtime is required.
+The local history and sample library are bounded and compacted automatically.
+The raw ledger is never uploaded as background data.
