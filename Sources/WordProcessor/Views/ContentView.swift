@@ -37,6 +37,7 @@ struct ContentView: View {
             dampingFraction: 0.9,
             blendDuration: 0.08
         )
+        static let focusModeAnimation = Animation.easeInOut(duration: 0.24)
     }
 
     private struct MainLayoutWidths {
@@ -54,6 +55,7 @@ struct ContentView: View {
     @Environment(EditorViewModel.self) private var editorViewModel
     @State private var activeSidebar: SidebarPanel?
     @State private var isDistractionFree = false
+    @State private var isFocusModeTransitioning = false
     @State private var showFindBar = false
     @State private var showReplace = false
     @State private var findBarFocusRequest = 0
@@ -241,6 +243,10 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode, object: editorViewModel)) { _ in
                 toggleFocusMode()
             }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { notification in
+                guard isDistractionFree, notificationBelongsToEditorWindow(notification) else { return }
+                finishFocusModeExit()
+            }
             .onChange(of: editorViewModel.pendingEditCount) {
                 if editorViewModel.pendingEditCount == 0, activeSidebar == .suggestions {
                     withAnimation(Layout.sidebarAnimation) {
@@ -307,21 +313,15 @@ struct ContentView: View {
                     VStack {
                         HStack {
                             Spacer()
-                            Button {
-                                toggleFocusMode()
-                            } label: {
-                                Image(systemName: "arrow.down.right.and.arrow.up.left")
-                                    .font(.system(size: 14))
-                                    .foregroundColor(.secondary)
-                                    .padding(8)
-                                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
-                            }
-                            .buttonStyle(.plain)
-                            .padding(12)
-                            .help("Exit Focus Mode (Cmd+Shift+F or Esc)")
+                            FocusModeExitButton(
+                                isExiting: isFocusModeTransitioning,
+                                action: toggleFocusMode
+                            )
+                            .padding(16)
                         }
                         Spacer()
                     }
+                    .transition(.opacity)
                 }
                 if editorViewModel.pendingEditCount > 0 {
                     VStack {
@@ -410,7 +410,7 @@ struct ContentView: View {
             .keyboardShortcut("f", modifiers: [.command, .shift])
             .hidden()
 
-        // ESC closes transient UI first, otherwise rejects only the current suggestion.
+        // ESC closes transient UI first, then leaves Focus Mode before acting on suggestions.
         Button("") {
             if showFindBar {
                 editorViewModel.clearFind()
@@ -419,10 +419,10 @@ struct ContentView: View {
                     showReplace = false
                 }
                 editorViewModel.focusEditor()
-            } else if editorViewModel.pendingEditCount > 0 {
-                editorViewModel.rejectActivePendingEdit()
             } else if isDistractionFree {
                 toggleFocusMode()
+            } else if editorViewModel.pendingEditCount > 0 {
+                editorViewModel.rejectActivePendingEdit()
             }
         }
         .keyboardShortcut(.escape, modifiers: [])
@@ -547,13 +547,56 @@ extension ContentView {
 
     func toggleFocusMode() {
         let window = editorViewModel.webView?.window ?? NSApp.mainWindow
-        withAnimation(.easeInOut(duration: 0.3)) {
-            isDistractionFree.toggle()
-        }
+        guard !isFocusModeTransitioning else { return }
+
         if isDistractionFree {
-            window?.toggleFullScreen(nil)
-        } else if let window, window.styleMask.contains(.fullScreen) {
+            guard let window, window.styleMask.contains(.fullScreen) else {
+                finishFocusModeExit()
+                return
+            }
+
+            // Keep the focused layout stable while AppKit animates the window. Restoring
+            // the toolbar and sidebars before that animation finishes makes the editor jump.
+            isFocusModeTransitioning = true
             window.toggleFullScreen(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                guard isFocusModeTransitioning else { return }
+                if window.styleMask.contains(.fullScreen) {
+                    // AppKit kept the window full screen, so allow another exit attempt.
+                    isFocusModeTransitioning = false
+                } else {
+                    finishFocusModeExit()
+                }
+            }
+        } else {
+            withAnimation(Layout.focusModeAnimation) {
+                isDistractionFree = true
+            }
+            guard let window, !window.styleMask.contains(.fullScreen) else { return }
+            DispatchQueue.main.async {
+                window.toggleFullScreen(nil)
+            }
+        }
+    }
+
+    private func notificationBelongsToEditorWindow(_ notification: Notification) -> Bool {
+        guard let notificationWindow = notification.object as? NSWindow,
+              let editorWindow = editorViewModel.webView?.window ?? NSApp.mainWindow
+        else { return false }
+        return notificationWindow === editorWindow
+    }
+
+    private func finishFocusModeExit() {
+        guard isDistractionFree else { return }
+
+        // didExitFullScreen arrives before SwiftUI has necessarily completed its own
+        // window-size pass. One run-loop turn keeps the chrome restoration continuous.
+        DispatchQueue.main.async {
+            withAnimation(Layout.focusModeAnimation) {
+                isDistractionFree = false
+                isFocusModeTransitioning = false
+            }
+            editorViewModel.focusEditor()
         }
     }
 }
@@ -562,6 +605,55 @@ extension Notification.Name {
     static let toggleFocusMode = Notification.Name("toggleFocusMode")
     static let editorDocumentMutated = Notification.Name("editorDocumentMutated")
     static let editorCommentActivated = Notification.Name("editorCommentActivated")
+}
+
+private struct FocusModeExitButton: View {
+    let isExiting: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                if isExiting {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.down.right.and.arrow.up.left")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+
+                Text(isExiting ? "Returning…" : "Exit Focus")
+                    .font(.system(size: 12, weight: .medium))
+
+                if !isExiting {
+                    Text("esc")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 4))
+                }
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 9))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(Color.primary.opacity(isHovered ? 0.15 : 0.09), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(isHovered ? 0.12 : 0.07), radius: 8, y: 3)
+            .contentShape(RoundedRectangle(cornerRadius: 9))
+        }
+        .buttonStyle(.plain)
+        .disabled(isExiting)
+        .opacity(isHovered || isExiting ? 1 : 0.82)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .help("Exit Focus Mode (Cmd+Shift+F or Esc)")
+    }
 }
 
 struct PendingEditsBar: View {
