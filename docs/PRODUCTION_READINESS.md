@@ -10,8 +10,9 @@ Reviewed July 16, 2026. Shakespeare is now a compact local macOS application wit
 - Personalization is enabled by default, clearly disclosed, locally stored, reviewable, bounded, pausable, and deletable.
 - Document packages use size limits, atomic writes, path/symlink checks, and custom-scheme asset loading.
 - Model edits remain reviewable proposals rather than silent document mutations.
-- CI type-checks the editor, builds the release app, verifies the universal app bundle, and runs deterministic regression evals.
+- `make check` type-checks the editor, builds the release app, verifies release scripts, validates the Cloudflare site, and runs deterministic regression evals locally without hosted CI minutes.
 - Release automation fails closed unless Developer ID signing and Apple notarization succeed.
+- Cloudflare Workers serves the site while R2 stores immutable versioned release archives behind an atomic current-release manifest.
 
 ## Remaining launch gates
 
@@ -19,6 +20,6 @@ Reviewed July 16, 2026. Shakespeare is now a compact local macOS application wit
 2. **Release proof:** configure the signing/notarization secrets and retain evidence from a successful public release artifact.
 3. **Provider behavior:** test Kimi K3 and the Grok fallback against latency, writing quality, structured-output reliability, mandatory reasoning cost, failover behavior, and the bounded chat-search budget.
 4. **Privacy disclosure:** publish a concise policy explaining which feature sends which bounded context to OpenRouter and how local style history is deleted.
-5. **Governance:** require CI and reviewed changes on `main`, enable secret scanning, and protect release tags.
+5. **Governance:** require reviewed changes on `main`, enable secret scanning, and protect release tags; deterministic validation remains the required local pre-push gate.
 
 The app should not claim fully local AI: model-powered writing and research send scoped text to OpenRouter. It can accurately claim local-first documents, offline spelling, one user-owned API key, no Shakespeare-hosted prose service, and no background model training.
