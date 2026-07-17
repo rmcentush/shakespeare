@@ -57,6 +57,7 @@ export function registerSwiftCallbacks(callbacks: {
   setZoomScale: (scale: number) => void;
   getSelectedText: () => string;
   setThemeCSS: (css: string) => void;
+  setDefaultTypography: (fontFamily: string, fontSize: number, lineHeight: number) => void;
   findInDocument: (query: string) => number;
   findNext: () => string;
   findPrevious: () => string;

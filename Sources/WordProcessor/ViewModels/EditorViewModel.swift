@@ -68,6 +68,10 @@ final class EditorViewModel {
         var isBold = false
         var isItalic = false
         var isUnderline = false
+        var isStrike = false
+        var isBulletList = false
+        var isOrderedList = false
+        var isBlockquote = false
         var heading = 0
         var textAlign = "left"
         var hasSelection = false
@@ -76,6 +80,13 @@ final class EditorViewModel {
         var isLink = false
         var linkHref = ""
         var textColor = ""
+        var isTextColorMixed = false
+        var fontFamily = ""
+        var isFontFamilyMixed = false
+        var fontSize = ""
+        var isFontSizeMixed = false
+        var lineHeight = ""
+        var isLineHeightMixed = false
         var isFootnote = false
         var footnoteText = ""
         var isImage = false
@@ -90,6 +101,10 @@ final class EditorViewModel {
             isBold = state.isBold
             isItalic = state.isItalic
             isUnderline = state.isUnderline
+            isStrike = state.isStrike
+            isBulletList = state.isBulletList
+            isOrderedList = state.isOrderedList
+            isBlockquote = state.isBlockquote
             heading = state.heading
             textAlign = state.textAlign
             hasSelection = state.hasSelection
@@ -98,6 +113,13 @@ final class EditorViewModel {
             isLink = state.isLink
             linkHref = state.linkHref
             textColor = state.textColor
+            isTextColorMixed = state.isTextColorMixed
+            fontFamily = state.fontFamily
+            isFontFamilyMixed = state.isFontFamilyMixed
+            fontSize = state.fontSize
+            isFontSizeMixed = state.isFontSizeMixed
+            lineHeight = state.lineHeight
+            isLineHeightMixed = state.isLineHeightMixed
             isFootnote = state.isFootnote
             footnoteText = state.footnoteText
             isImage = state.isImage
@@ -604,6 +626,13 @@ final class EditorViewModel {
 
     func setThemeCSS(_ css: String) {
         callEditorAPI("setThemeCSS", arguments: [css])
+    }
+
+    func setDefaultTypography(fontFamily: String, fontSize: Double, lineHeight: Double) {
+        callEditorAPI(
+            "setDefaultTypography",
+            arguments: [fontFamily, fontSize, lineHeight]
+        )
     }
 
     // MARK: - Document Editing (for assistant tool use)

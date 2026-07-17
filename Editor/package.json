@@ -1,8 +1,10 @@
 {
   "name": "wordprocessor-editor",
   "private": true,
+  "type": "module",
   "scripts": {
     "build": "node esbuild.config.mjs",
+    "test": "node --test tests/*.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

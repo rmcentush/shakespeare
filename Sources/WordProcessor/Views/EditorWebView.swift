@@ -48,6 +48,12 @@ struct EditorWebView: NSViewRepresentable {
             let appearance = UserDefaults.standard.string(forKey: "editorAppearance") ?? "system"
             let themeCSS = FontManager.shared.themedCSS(for: appearance)
             viewModel.setThemeCSS(themeCSS)
+            let fontManager = FontManager.shared
+            viewModel.setDefaultTypography(
+                fontFamily: fontManager.currentFont,
+                fontSize: fontManager.currentSize,
+                lineHeight: fontManager.currentLineHeight
+            )
             viewModel.applyCurrentZoomToWebView()
             TextCheckingSettings.shared.editorDidBecomeReady()
         }

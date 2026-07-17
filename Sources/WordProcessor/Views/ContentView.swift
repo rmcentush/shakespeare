@@ -156,9 +156,12 @@ struct ContentView: View {
                 editorViewModel.grammarCheckingSettingsDidChange()
             }
             .onReceive(NotificationCenter.default.publisher(for: .fontSettingsChanged)) { _ in
-                let appearance = UserDefaults.standard.string(forKey: "editorAppearance") ?? "system"
-                let css = FontManager.shared.themedCSS(for: appearance)
-                editorViewModel.setThemeCSS(css)
+                let settings = FontManager.shared
+                editorViewModel.setDefaultTypography(
+                    fontFamily: settings.currentFont,
+                    fontSize: settings.currentSize,
+                    lineHeight: settings.currentLineHeight
+                )
             }
             .onDisappear {
                 editorViewModel.flushPendingChanges(document: document)

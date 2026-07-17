@@ -3,9 +3,45 @@ import UniformTypeIdentifiers
 
 struct ToolbarView: View {
     @Environment(EditorViewModel.self) private var viewModel
-    @State private var fontManager = FontManager.shared
-    private let lineHeightOptions: [Double] = Array(stride(from: 1.0, through: 2.4, by: 0.1)).map {
+    private static let mixedTypographyValue = "__mixed__"
+    private static let customTypographyValue = "__custom__"
+    private static let defaultTypographyValue = "__default__"
+    private let lineHeightOptions: [Double] = Array(stride(from: 1.0, through: 2.5, by: 0.1)).map {
         Double(round($0 * 10) / 10)
+    }
+
+    private var selectedFontFamily: String {
+        if viewModel.selectionState.isFontFamilyMixed {
+            return Self.mixedTypographyValue
+        }
+        let value = viewModel.selectionState.fontFamily
+        if value.isEmpty { return FontManager.baseFont }
+        return FontManager.availableFonts.contains(value) ? value : Self.customTypographyValue
+    }
+
+    private var selectedFontSize: Int {
+        if viewModel.selectionState.isFontSizeMixed { return 0 }
+        guard !viewModel.selectionState.fontSize.isEmpty else {
+            return Int(FontManager.baseSize)
+        }
+        let value = viewModel.selectionState.fontSize
+            .replacingOccurrences(of: "px", with: "")
+        guard let size = Double(value), size.rounded() == size else { return -1 }
+        let integerSize = Int(size)
+        return (12...28).contains(integerSize) ? integerSize : -1
+    }
+
+    private var selectedLineHeight: String {
+        if viewModel.selectionState.isLineHeightMixed {
+            return Self.mixedTypographyValue
+        }
+        guard let value = Double(viewModel.selectionState.lineHeight) else {
+            return Self.defaultTypographyValue
+        }
+        guard lineHeightOptions.contains(where: { abs($0 - value) < 0.001 }) else {
+            return Self.customTypographyValue
+        }
+        return String(format: "%.1f", value)
     }
 
     var body: some View {
@@ -32,12 +68,17 @@ struct ToolbarView: View {
         HStack(spacing: 2) {
             // Font picker
             Picker("", selection: Binding(
-                get: { fontManager.currentFont },
+                get: { selectedFontFamily },
                 set: { newFont in
-                    fontManager.currentFont = newFont
-                    persistTypographySettings()
+                    guard FontManager.availableFonts.contains(newFont) else { return }
+                    viewModel.applyFormat("fontFamily", value: newFont)
                 }
             )) {
+                if selectedFontFamily == Self.mixedTypographyValue {
+                    Text("Mixed").tag(Self.mixedTypographyValue)
+                } else if selectedFontFamily == Self.customTypographyValue {
+                    Text("Custom").tag(Self.customTypographyValue)
+                }
                 Text("Georgia").tag("Georgia")
                 Text("Palatino").tag("Palatino")
                 Text("Baskerville").tag("Baskerville")
@@ -48,12 +89,17 @@ struct ToolbarView: View {
             .frame(width: 140)
 
             Picker("", selection: Binding(
-                get: { Int(fontManager.currentSize.rounded()) },
+                get: { selectedFontSize },
                 set: { newSize in
-                    fontManager.currentSize = Double(newSize)
-                    persistTypographySettings()
+                    guard (12...28).contains(newSize) else { return }
+                    viewModel.applyFormat("fontSize", value: "\(newSize)")
                 }
             )) {
+                if selectedFontSize == 0 {
+                    Text("Mixed").tag(0)
+                } else if selectedFontSize == -1 {
+                    Text("Custom").tag(-1)
+                }
                 ForEach(Array(12...28), id: \.self) { size in
                     Text("\(size) px").tag(size)
                 }
@@ -62,14 +108,24 @@ struct ToolbarView: View {
             .help("Font Size")
 
             Picker("", selection: Binding(
-                get: { fontManager.currentLineHeight },
+                get: { selectedLineHeight },
                 set: { newHeight in
-                    fontManager.currentLineHeight = newHeight
-                    persistTypographySettings()
+                    if newHeight == Self.defaultTypographyValue {
+                        viewModel.applyFormat("unsetLineHeight")
+                    } else if Double(newHeight) != nil {
+                        viewModel.applyFormat("lineHeight", value: newHeight)
+                    }
                 }
             )) {
+                if selectedLineHeight == Self.mixedTypographyValue {
+                    Text("Mixed").tag(Self.mixedTypographyValue)
+                } else if selectedLineHeight == Self.customTypographyValue {
+                    Text("Custom").tag(Self.customTypographyValue)
+                }
+                Text("Default").tag(Self.defaultTypographyValue)
                 ForEach(lineHeightOptions, id: \.self) { lineHeight in
-                    Text(String(format: "%.1fx", lineHeight)).tag(lineHeight)
+                    Text(String(format: "%.1fx", lineHeight))
+                        .tag(String(format: "%.1f", lineHeight))
                 }
             }
             .frame(width: 74)
@@ -90,7 +146,7 @@ struct ToolbarView: View {
                 FormatButton(icon: "underline", isActive: viewModel.selectionState.isUnderline) {
                     viewModel.applyFormat("underline")
                 }
-                FormatButton(icon: "strikethrough", isActive: false) {
+                FormatButton(icon: "strikethrough", isActive: viewModel.selectionState.isStrike) {
                     viewModel.applyFormat("strike")
                 }
                 LinkButton()
@@ -116,13 +172,13 @@ struct ToolbarView: View {
 
             // Lists
             Group {
-                FormatButton(icon: "list.bullet", isActive: false) {
+                FormatButton(icon: "list.bullet", isActive: viewModel.selectionState.isBulletList) {
                     viewModel.applyFormat("bulletList")
                 }
-                FormatButton(icon: "list.number", isActive: false) {
+                FormatButton(icon: "list.number", isActive: viewModel.selectionState.isOrderedList) {
                     viewModel.applyFormat("orderedList")
                 }
-                FormatButton(icon: "text.quote", isActive: false) {
+                FormatButton(icon: "text.quote", isActive: viewModel.selectionState.isBlockquote) {
                     viewModel.applyFormat("blockquote")
                 }
             }
@@ -204,10 +260,6 @@ struct ToolbarView: View {
         }
     }
 
-    private func persistTypographySettings() {
-        fontManager.save()
-        NotificationCenter.default.post(name: .fontSettingsChanged, object: nil)
-    }
 }
 
 struct AppearanceToggle: View {
@@ -422,6 +474,7 @@ struct TextColorButton: View {
     ]
 
     private var activeColor: Color? {
+        guard !viewModel.selectionState.isTextColorMixed else { return nil }
         let c = viewModel.selectionState.textColor.lowercased()
         guard !c.isEmpty else { return nil }
         return Self.palette.first(where: { c == $0.hex })?.color
@@ -481,7 +534,10 @@ struct TextColorButton: View {
                     .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
-                .disabled(viewModel.selectionState.textColor.isEmpty)
+                .disabled(
+                    viewModel.selectionState.textColor.isEmpty &&
+                    !viewModel.selectionState.isTextColorMixed
+                )
             }
             .padding(10)
         }
