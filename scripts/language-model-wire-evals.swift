@@ -117,6 +117,9 @@ struct LanguageModelWireEvals {
                 modelOverride: option.id
             )
             let expectedFallbacks = allModelIDs.filter { $0 != option.id }
+            let expectedWireFallbacks = Array(
+                expectedFallbacks.prefix(LanguageModelService.maximumFallbackModelCount)
+            )
             precondition(selectedRuntime.model == option.id)
             precondition(selectedRuntime.fallbackModels == expectedFallbacks)
             let selectedBody = LanguageModelService.requestBody(
@@ -128,7 +131,8 @@ struct LanguageModelWireEvals {
                 maxTokens: 512
             )
             precondition(selectedBody["model"] as? String == option.id)
-            precondition(selectedBody["models"] as? [String] == expectedFallbacks)
+            precondition(selectedBody["models"] as? [String] == expectedWireFallbacks)
+            precondition(expectedWireFallbacks.count <= 3)
         }
 
         let customRuntime = InferenceSettings.runtime(

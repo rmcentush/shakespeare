@@ -713,11 +713,24 @@ private struct AssistantMessageContent: View {
     var body: some View {
         Group {
             if isStreaming {
-                Text(verbatim: content)
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .font(AssistantChatFont.message)
-                    .lineSpacing(3)
+                if content.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+
+                        Text("Thinking…")
+                            .font(AssistantChatFont.message)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Shakespeare is thinking")
+                } else {
+                    Text(verbatim: content)
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .font(AssistantChatFont.message)
+                        .lineSpacing(3)
+                }
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(Array(blocks.enumerated()), id: \.offset) { entry in

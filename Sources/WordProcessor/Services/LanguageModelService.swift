@@ -1,6 +1,8 @@
 import Foundation
 
 final class LanguageModelService: Sendable {
+    static let maximumFallbackModelCount = 3
+
     private let purpose: InferencePurpose
     private let modelOverride: String?
     private let session: URLSession
@@ -169,8 +171,9 @@ final class LanguageModelService: Sendable {
             "stream": true,
             "messages": requestMessages,
         ]
-        if !runtime.fallbackModels.isEmpty {
-            body["models"] = runtime.fallbackModels
+        let fallbackModels = Array(runtime.fallbackModels.prefix(maximumFallbackModelCount))
+        if !fallbackModels.isEmpty {
+            body["models"] = fallbackModels
         }
         if runtime.supportsTemperature, let temperature { body["temperature"] = temperature }
         if runtime.webSearchEnabled {
