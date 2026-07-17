@@ -2,6 +2,7 @@ import Foundation
 
 final class LanguageModelService: Sendable {
     static let maximumTransportRetryCount = 1
+    static let maximumFallbackModelsPerRequest = 3
 
     private let purpose: InferencePurpose
     private let modelOverride: String?
@@ -181,11 +182,30 @@ final class LanguageModelService: Sendable {
         }
     }
 
-    /// OpenRouter accepts the ordered `models` array as one server-side fallback
-    /// transaction. Keeping one HTTP request avoids duplicated prompts, search,
-    /// and billing ambiguity.
+    /// OpenRouter caps the `models` fallback array at three entries. Preserve the
+    /// user's complete ordered waterfall by splitting larger catalogs into
+    /// non-overlapping batches, each with one primary and up to three fallbacks.
     static func modelBatches(for runtime: InferenceRuntime) -> [InferenceRuntime] {
-        [runtime]
+        let orderedModelIDs = [runtime.model] + runtime.fallbackModels
+        let batchSize = maximumFallbackModelsPerRequest + 1
+
+        return stride(from: 0, to: orderedModelIDs.count, by: batchSize).map { start in
+            let end = min(start + batchSize, orderedModelIDs.count)
+            let modelIDs = Array(orderedModelIDs[start..<end])
+            let primaryModel = modelIDs[0]
+
+            return InferenceRuntime(
+                providerID: runtime.providerID,
+                providerName: runtime.providerName,
+                messagesURL: runtime.messagesURL,
+                apiKeyService: runtime.apiKeyService,
+                model: primaryModel,
+                fallbackModels: Array(modelIDs.dropFirst()),
+                webSearchEnabled: runtime.webSearchEnabled,
+                supportsTemperature: InferenceSettings.modelOption(for: primaryModel)?.supportsTemperature
+                    ?? runtime.supportsTemperature
+            )
+        }
     }
 
     static func requestBody(
@@ -220,8 +240,11 @@ final class LanguageModelService: Sendable {
             "stream": true,
             "messages": requestMessages,
         ]
-        if !runtime.fallbackModels.isEmpty {
-            body["models"] = runtime.fallbackModels
+        let fallbackModels = Array(
+            runtime.fallbackModels.prefix(maximumFallbackModelsPerRequest)
+        )
+        if !fallbackModels.isEmpty {
+            body["models"] = fallbackModels
         }
         if runtime.supportsTemperature, let temperature { body["temperature"] = temperature }
         if runtime.webSearchEnabled {

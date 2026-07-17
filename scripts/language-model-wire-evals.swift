@@ -9,7 +9,7 @@ struct LanguageModelWireEvals {
         buildsPrivateStructuredRequest()
         enablesBoundedWebSearchForChatOnly()
         validatesCuratedModelCatalog()
-        configuresFullServerSideModelWaterfall()
+        configuresBoundedModelWaterfall()
         boundsClientRetriesAroundProviderWaterfall()
         await rejectsIncompleteAndMalformedStreams()
         print("Language-model wire evals passed (request privacy, routing, citations, terminal SSE).")
@@ -112,7 +112,7 @@ struct LanguageModelWireEvals {
         precondition(parameters?["max_characters"] as? Int == 2_000)
     }
 
-    private static func configuresFullServerSideModelWaterfall() {
+    private static func configuresBoundedModelWaterfall() {
         let allModelIDs = InferenceSettings.availableModels.map(\.id)
         for option in InferenceSettings.availableModels {
             let selectedRuntime = InferenceSettings.runtime(
@@ -130,14 +130,21 @@ struct LanguageModelWireEvals {
                 temperature: 0.2,
                 maxTokens: 512
             )
-            precondition(defensivelyBoundedBody["models"] as? [String] == expectedFallbacks)
+            precondition(
+                defensivelyBoundedBody["models"] as? [String]
+                    == Array(expectedFallbacks.prefix(LanguageModelService.maximumFallbackModelsPerRequest))
+            )
             let batches = LanguageModelService.modelBatches(for: selectedRuntime)
-            precondition(batches.count == 1)
+            precondition(batches.count == 2)
             let routedModelIDs = batches.flatMap { [$0.model] + $0.fallbackModels }
             precondition(routedModelIDs == [option.id] + expectedFallbacks)
             precondition(Set(routedModelIDs).count == routedModelIDs.count)
 
             for batch in batches {
+                precondition(
+                    batch.fallbackModels.count
+                        <= LanguageModelService.maximumFallbackModelsPerRequest
+                )
                 let selectedBody = LanguageModelService.requestBody(
                     runtime: batch,
                     messages: [["role": "user", "content": "Revise this paragraph."]],
@@ -159,6 +166,7 @@ struct LanguageModelWireEvals {
         let customBatches = LanguageModelService.modelBatches(for: customRuntime)
         let customRoutedIDs = customBatches.flatMap { [$0.model] + $0.fallbackModels }
         precondition(customRoutedIDs == [customRuntime.model] + allModelIDs)
+        precondition(customBatches.count == 2)
     }
 
     private static func validatesCuratedModelCatalog() {
@@ -210,7 +218,7 @@ struct LanguageModelWireEvals {
         precondition(
             LanguageModelService.modelBatches(
                 for: InferenceSettings.runtime(purpose: .assistant)
-            ).count == 1
+            ).count == 2
         )
     }
 

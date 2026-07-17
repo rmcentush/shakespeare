@@ -16,7 +16,7 @@ struct AssistantChatView: View {
             // Messages list
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
+                    LazyVStack(alignment: .leading, spacing: 14) {
                         if chatViewModel.messages.isEmpty {
                             AssistantEmptyState(
                                 isConnected: hasResearchConnection,
@@ -41,7 +41,8 @@ struct AssistantChatView: View {
                             .frame(height: 1)
                             .id("bottom")
                     }
-                    .padding()
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 16)
                     .background {
                         ChatScrollObserver { isNearBottom in
                             shouldFollowLatestMessage = isNearBottom
@@ -57,7 +58,9 @@ struct AssistantChatView: View {
                 }
             }
 
-            Divider()
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(height: 1)
 
             // Input area
             VStack(alignment: .leading, spacing: 8) {
@@ -77,11 +80,21 @@ struct AssistantChatView: View {
                             attachSelection()
                         } label: {
                             Image(systemName: "text.quote")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(pendingSelection == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.accentColor))
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(
+                                    pendingSelection == nil
+                                        ? AnyShapeStyle(.secondary)
+                                        : AnyShapeStyle(Color.accentColor)
+                                )
+                                .frame(width: 28, height: 28)
+                                .background(
+                                    pendingSelection == nil
+                                        ? Color.primary.opacity(0.045)
+                                        : Color.accentColor.opacity(0.12),
+                                    in: Circle()
+                                )
                         }
                         .buttonStyle(.plain)
-                        .padding(.bottom, 3)
                         .help("Attach selected text")
 
                         TextField("Ask about the draft or research the web…", text: smartQuotedInputText, axis: .vertical)
@@ -103,22 +116,29 @@ struct AssistantChatView: View {
                                 sendMessage()
                             }
                         } label: {
-                            Image(systemName: chatViewModel.isStreaming ? "stop.circle.fill" : "arrow.up.circle.fill")
-                                .font(.system(size: 21))
-                                .foregroundColor(buttonColor)
+                            Image(systemName: chatViewModel.isStreaming ? "stop.fill" : "arrow.up")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 28, height: 28)
+                                .background(buttonColor, in: Circle())
                         }
                         .buttonStyle(.plain)
                         .disabled(!chatViewModel.isStreaming && inputText.isEmpty)
                     }
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, 8)
                     .padding(.vertical, 7)
                     .background(
-                        RoundedRectangle(cornerRadius: 17, style: .continuous)
-                            .fill(Color(nsColor: .textBackgroundColor))
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Color(nsColor: .controlBackgroundColor))
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 17, style: .continuous)
-                            .stroke(Color.primary.opacity(isInputFocused ? 0.16 : 0.09), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(
+                                isInputFocused
+                                    ? Color.accentColor.opacity(0.42)
+                                    : Color.primary.opacity(0.09),
+                                lineWidth: 1
+                            )
                     )
                 } else {
                     HStack(spacing: 8) {
@@ -147,9 +167,11 @@ struct AssistantChatView: View {
                     .padding(.horizontal, 4)
                 }
             }
-            .padding(10)
+            .padding(12)
+            .background(Color(nsColor: .windowBackgroundColor))
         }
         .frame(maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             refreshConnectionStatus()
         }
@@ -165,7 +187,9 @@ struct AssistantChatView: View {
         if chatViewModel.isStreaming {
             return .orange
         }
-        return inputText.isEmpty ? .secondary : .accentColor
+        return inputText.isEmpty
+            ? Color(nsColor: .tertiaryLabelColor)
+            : .accentColor
     }
 
     private var smartQuotedInputText: Binding<String> {
@@ -293,20 +317,28 @@ private struct AssistantEmptyState: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
-            Image(systemName: "globe.americas.fill")
-                .font(.system(size: 24))
-                .foregroundStyle(Color.accentColor)
+            HStack(alignment: .center, spacing: 11) {
+                Image(systemName: "globe.americas.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 34, height: 34)
+                    .background(Color.accentColor.opacity(0.1), in: Circle())
 
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Research Chat")
-                    .font(.headline)
-                Text(isConnected
-                    ? "Ask questions without leaving the draft. Kimi can search the live web and return source links in its answer."
-                    : "Connect OpenRouter once for writing help, grammar, and fast cited web research.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Research Chat")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("Draft-aware · source-backed")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
             }
+
+            Text(isConnected
+                ? "Ask about your draft or research the live web. Shakespeare returns concise answers with source links."
+                : "Connect OpenRouter once for writing help, grammar, and source-backed research.")
+                .font(.system(size: 12.5))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             if isConnected {
                 VStack(alignment: .leading, spacing: 7) {
@@ -320,19 +352,27 @@ private struct AssistantEmptyState: View {
                             onChoosePrompt(prompt)
                         } label: {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Image(systemName: "arrow.up.right")
-                                    .font(.caption)
                                 Text(prompt)
-                                    .font(.caption)
+                                    .font(.system(size: 12))
                                     .multilineTextAlignment(.leading)
                                 Spacer(minLength: 0)
+                                Image(systemName: "arrow.up.right")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.tertiary)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 8)
                         }
                         .buttonStyle(.plain)
-                        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
+                        .background(
+                            Color(nsColor: .controlBackgroundColor),
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+                        )
                     }
                 }
             }
@@ -391,7 +431,7 @@ private enum AssistantChatFont {
     static let message = text(size: 13.5)
 
     static func text(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight, design: .serif)
+        .system(size: size, weight: weight)
     }
 }
 
@@ -520,12 +560,13 @@ struct MessageBubble: View, Equatable {
     let onQuoteAssistant: (String) -> Void
     let onInsertAssistant: (String) -> Void
 
-    private let maxBubbleWidth: CGFloat = 280
+    private let maxUserBubbleWidth: CGFloat = 360
 
     static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
         lhs.message.id == rhs.message.id
             && lhs.message.content == rhs.message.content
             && lhs.message.detail == rhs.message.detail
+            && lhs.message.deliveryState == rhs.message.deliveryState
             && lhs.message.quotedSelection == rhs.message.quotedSelection
             && lhs.isStreaming == rhs.isStreaming
             && lhs.canInsertIntoDocument == rhs.canInsertIntoDocument
@@ -541,43 +582,56 @@ struct MessageBubble: View, Equatable {
                     }
                 }
         case .user, .assistant:
-            HStack {
+            HStack(alignment: .top, spacing: 0) {
                 if message.role == .user { Spacer(minLength: 40) }
 
                 bubbleContent
                     .padding(12)
-                    .frame(maxWidth: maxBubbleWidth, alignment: .leading)
+                    .frame(
+                        maxWidth: message.role == .assistant ? .infinity : maxUserBubbleWidth,
+                        alignment: .leading
+                    )
                     .background(bubbleBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay(alignment: .topTrailing) {
-                        if showsAssistantToolbar {
-                            AssistantBubbleToolbar(
-                                canInsertIntoDocument: canInsertIntoDocument,
-                                onCopy: { copyMessageToPasteboard(message.combinedText) },
-                                onQuote: { onQuoteAssistant(message.content) },
-                                onInsert: { onInsertAssistant(message.content) }
-                            )
-                            .padding(.trailing, 8)
-                            .offset(y: -12)
-                            .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing)))
-                        }
-                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 15, style: .continuous)
+                            .stroke(bubbleBorderColor, lineWidth: 1)
+                    )
                     .contextMenu {
                         Button("Copy") {
                             copyMessageToPasteboard(message.combinedText)
                         }
                     }
 
-                if message.role == .assistant { Spacer(minLength: 40) }
+                if message.role == .assistant { Spacer(minLength: 24) }
             }
-            .zIndex(showsAssistantToolbar ? 1 : 0)
         }
     }
 
     @ViewBuilder
     private var bubbleContent: some View {
         if message.role == .assistant {
-            AssistantMessageContent(content: message.content, isStreaming: isStreaming)
+            VStack(alignment: .leading, spacing: 10) {
+                if isStreaming || hasAssistantContent {
+                    AssistantMessageContent(content: message.content, isStreaming: isStreaming)
+                }
+
+                if message.deliveryState != .normal {
+                    AssistantDeliveryStatusView(state: message.deliveryState)
+                }
+
+                if showsAssistantToolbar {
+                    Divider()
+                        .overlay(Color.primary.opacity(0.06))
+
+                    AssistantBubbleToolbar(
+                        canInsertIntoDocument: canInsertIntoDocument,
+                        onCopy: { copyMessageToPasteboard(message.combinedText) },
+                        onQuote: { onQuoteAssistant(message.content) },
+                        onInsert: { onInsertAssistant(message.content) }
+                    )
+                }
+            }
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 if let quote = message.quotedSelection, !quote.isEmpty {
@@ -606,9 +660,15 @@ struct MessageBubble: View, Equatable {
 
     private var bubbleBackground: Color {
         if message.role == .user {
-            return Color.accentColor.opacity(0.15)
+            return Color.accentColor.opacity(0.13)
         }
         return Color(nsColor: .controlBackgroundColor)
+    }
+
+    private var bubbleBorderColor: Color {
+        message.role == .user
+            ? Color.accentColor.opacity(0.12)
+            : Color.primary.opacity(0.065)
     }
 
     private var hasAssistantContent: Bool {
@@ -616,13 +676,62 @@ struct MessageBubble: View, Equatable {
     }
 
     private var showsAssistantToolbar: Bool {
-        message.role == .assistant && !isStreaming && hasAssistantContent
+        message.role == .assistant
+            && !isStreaming
+            && hasAssistantContent
+            && message.deliveryState == .normal
     }
 
     private func copyMessageToPasteboard(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+    }
+}
+
+private struct AssistantDeliveryStatusView: View {
+    let state: ChatMessage.DeliveryState
+
+    var body: some View {
+        switch state {
+        case .normal:
+            EmptyView()
+        case .cancelled:
+            HStack(spacing: 7) {
+                Image(systemName: "xmark.circle")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Request cancelled")
+                    .font(.system(size: 11.5, weight: .medium))
+            }
+            .foregroundStyle(.secondary)
+        case .failed(let title, let detail):
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.orange)
+                    .padding(.top, 1)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    Text(detail)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(
+                Color.orange.opacity(0.075),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.orange.opacity(0.16), lineWidth: 1)
+            )
+        }
     }
 }
 
@@ -670,32 +779,54 @@ private struct AssistantBubbleToolbar: View {
     let onCopy: () -> Void
     let onQuote: () -> Void
     let onInsert: () -> Void
+    @State private var didCopy = false
 
     var body: some View {
-        HStack(spacing: 6) {
-            toolbarButton(title: "Copy", action: onCopy)
-            toolbarButton(title: "Quote", action: onQuote)
-            toolbarButton(title: "Insert", action: onInsert, disabled: !canInsertIntoDocument)
+        HStack(spacing: 2) {
+            toolbarButton(
+                title: didCopy ? "Copied" : "Copy",
+                systemImage: didCopy ? "checkmark" : "doc.on.doc",
+                action: copy
+            )
+            toolbarButton(title: "Quote", systemImage: "text.quote", action: onQuote)
+            toolbarButton(
+                title: "Insert",
+                systemImage: "arrow.down.doc",
+                action: onInsert,
+                disabled: !canInsertIntoDocument
+            )
+            Spacer(minLength: 0)
         }
-        .padding(5)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(
-            Capsule()
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.08), radius: 8, y: 3)
     }
 
-    private func toolbarButton(title: String, action: @escaping () -> Void, disabled: Bool = false) -> some View {
-        Button(title, action: action)
+    private func toolbarButton(
+        title: String,
+        systemImage: String,
+        action: @escaping () -> Void,
+        disabled: Bool = false
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .labelStyle(.titleAndIcon)
+        }
             .buttonStyle(.plain)
             .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(disabled ? .secondary : .primary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(disabled ? Color.clear : Color.white.opacity(0.001), in: Capsule())
-            .contentShape(Capsule())
+            .foregroundStyle(disabled ? Color.secondary : Color.primary.opacity(0.78))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 5)
+            .background(Color.primary.opacity(disabled ? 0 : 0.045), in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(RoundedRectangle(cornerRadius: 6))
             .disabled(disabled)
+    }
+
+    private func copy() {
+        onCopy()
+        didCopy = true
+
+        Task {
+            try? await Task.sleep(nanoseconds: 1_250_000_000)
+            didCopy = false
+        }
     }
 }
 

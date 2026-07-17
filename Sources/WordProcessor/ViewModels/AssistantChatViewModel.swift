@@ -71,8 +71,9 @@ final class AssistantChatViewModel {
               messages[lastIndex].content.isEmpty
         else { return }
 
-        messages[lastIndex].content = "Request cancelled."
-        streamingContentLength = messages[lastIndex].content.count
+        messages[lastIndex].content = ""
+        messages[lastIndex].deliveryState = .cancelled
+        streamingContentLength = 0
     }
 
     private func runSendMessage(
@@ -118,7 +119,11 @@ final class AssistantChatViewModel {
             quotedSelection: quotedSelection
         )
         guard !Task.isCancelled, generation == requestGeneration else {
-            updateAssistantMessage(id: assistantMessageID, content: "Request cancelled.")
+            updateAssistantMessage(
+                id: assistantMessageID,
+                content: "",
+                deliveryState: .cancelled
+            )
             return
         }
         var fullText = ""
@@ -157,7 +162,11 @@ final class AssistantChatViewModel {
             if cleaned.isEmpty {
                 updateAssistantMessage(
                     id: assistantMessageID,
-                    content: "OpenRouter returned no text. Please try the question again."
+                    content: "",
+                    deliveryState: .failed(
+                        title: "No response received",
+                        detail: "Please try your question again."
+                    )
                 )
                 return
             }
@@ -171,15 +180,18 @@ final class AssistantChatViewModel {
         } catch is CancellationError {
             updateAssistantMessage(
                 id: assistantMessageID,
-                content: fullText.isEmpty
-                    ? "Request cancelled."
-                    : fullText + "\n\n_Response interrupted._"
+                content: fullText,
+                deliveryState: .cancelled
             )
         } catch {
-            let errorText = "Error: \(error.localizedDescription)"
+            let presentation = Self.userFacingError(for: error)
             updateAssistantMessage(
                 id: assistantMessageID,
-                content: fullText.isEmpty ? errorText : fullText + "\n\n" + errorText
+                content: fullText,
+                deliveryState: .failed(
+                    title: presentation.title,
+                    detail: presentation.detail
+                )
             )
         }
     }
@@ -234,10 +246,84 @@ final class AssistantChatViewModel {
         return message.id
     }
 
-    private func updateAssistantMessage(id: UUID, content: String) {
+    private func updateAssistantMessage(
+        id: UUID,
+        content: String,
+        deliveryState: ChatMessage.DeliveryState? = nil
+    ) {
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
         messages[index].content = content
+        if let deliveryState {
+            messages[index].deliveryState = deliveryState
+        }
         streamingContentLength = content.count
+    }
+
+    private static func userFacingError(for error: Error) -> (title: String, detail: String) {
+        if let apiError = error as? LanguageModelService.APIError {
+            switch apiError {
+            case .noAPIKey:
+                return (
+                    "OpenRouter isn’t connected",
+                    "Reconnect your API key in Settings, then try again."
+                )
+            case .invalidResponse:
+                return (
+                    "The research service sent an invalid response",
+                    "Please try again in a moment."
+                )
+            case .httpError(let statusCode, _):
+                switch statusCode {
+                case 401, 403:
+                    return (
+                        "Your OpenRouter connection needs attention",
+                        "Update the saved API key in Settings, then try again."
+                    )
+                case 402:
+                    return (
+                        "OpenRouter credits are required",
+                        "Add credits to the connected account, then try again."
+                    )
+                case 429:
+                    return (
+                        "Research is busy right now",
+                        "Wait a moment, then try your question again."
+                    )
+                default:
+                    return (
+                        "Couldn’t complete that request",
+                        "Please try again. If it continues, choose another research model in Settings."
+                    )
+                }
+            case .streamError, .incompleteStream:
+                return (
+                    "The response was interrupted",
+                    "Please try your question again."
+                )
+            }
+        }
+
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet, .networkConnectionLost:
+                return (
+                    "You appear to be offline",
+                    "Check your connection, then try again."
+                )
+            case .timedOut:
+                return (
+                    "The request timed out",
+                    "Please try your question again."
+                )
+            default:
+                break
+            }
+        }
+
+        return (
+            "Couldn’t complete that request",
+            "Please try again in a moment."
+        )
     }
 
     private func trimVisibleMessages() {
