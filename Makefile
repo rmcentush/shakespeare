@@ -31,8 +31,8 @@ release-script-check: delivery-contract-check
 website-check: Website/node_modules/.package-lock.json
 	cd Website && npm run build
 
-# Portable, zero-credential checks run by Cloudflare for every pull request and
-# main-branch push. Swift/AppKit validation remains the local `make check` gate.
+# Portable, zero-credential checks run by Cloudflare for every main-branch push.
+# Swift/AppKit validation remains the local `make check` gate before pushing.
 cloud-ci: privacy-check release-script-check typecheck editor-tests website-check
 
 # Full deterministic validation. This replaces automatic GitHub-hosted CI.

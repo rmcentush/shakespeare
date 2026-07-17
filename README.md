@@ -83,6 +83,13 @@ make install  # Build and install in /Applications
 See [Contributing](CONTRIBUTING.md) for repository conventions and
 [Development and releasing](docs/RELEASING.md) for publishing.
 
+## Security
+
+Report suspected vulnerabilities privately through
+[GitHub Security Advisories](../../security/advisories/new). Please do not open
+a public issue for an undisclosed vulnerability. See the
+[security policy](SECURITY.md) for details.
+
 ## License
 
 Shakespeare is available under the [MIT License](LICENSE). Third-party

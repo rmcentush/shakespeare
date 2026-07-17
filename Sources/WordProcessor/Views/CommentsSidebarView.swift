@@ -307,7 +307,7 @@ private struct CommentCard: View {
     private var metadataBadges: [String] {
         var badges: [String] = []
         if comment.source == "agent" {
-            badges.append(comment.authorName.isEmpty ? "Agent" : comment.authorName)
+            badges.append(comment.authorName.isEmpty ? "Editor" : comment.authorName)
         }
         if !comment.kind.isEmpty {
             badges.append(comment.kind.capitalized)

@@ -9,6 +9,19 @@ if [ -n "$(git ls-files '.github/workflows/*')" ]; then
     exit 1
 fi
 
+branch_automation_files=(
+    ".github/dependabot.yml"
+    ".github/dependabot.yaml"
+    ".github/pull_request_template.md"
+)
+
+for file in "${branch_automation_files[@]}"; do
+    if [ -e "$file" ] && git ls-files --error-unmatch "$file" >/dev/null 2>&1; then
+        echo "Delivery contract failed: branch-oriented automation is intentionally disabled ($file)." >&2
+        exit 1
+    fi
+done
+
 if [ -n "$(git ls-files 'Website/public/downloads/*')" ]; then
     echo "Delivery contract failed: release archives must never ship as static website assets." >&2
     exit 1

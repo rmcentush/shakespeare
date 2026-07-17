@@ -16,6 +16,9 @@ done < <(find "$app_bundle" -type f -size -64M -print0)
 
 labels=(
     "absolute macOS home path"
+    "absolute Linux home path"
+    "absolute Windows home path"
+    "personal email address"
     "OpenRouter credential"
     "GitHub credential"
     "AWS access key"
@@ -26,6 +29,9 @@ labels=(
 
 patterns=(
     '/Users/[A-Za-z0-9._-]+/'
+    '/home/[A-Za-z0-9._-]+/'
+    '[A-Za-z]:\\Users\\[A-Za-z0-9._-]+\\'
+    '[A-Za-z0-9._%+-]+@(gmail|hotmail|outlook|icloud|yahoo|protonmail|fastmail)\.[A-Za-z]{2,}'
     'sk-or-v1-[A-Za-z0-9_-]{20,}'
     '(github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,})'
     'AKIA[0-9A-Z]{16}'

@@ -252,7 +252,7 @@ function storedIgnoredAIGrammarIssues(): Set<string> {
   }
 }
 
-function aiGrammarFingerprint(problem: string, replacement: string): string {
+function grammarSuggestionFingerprint(problem: string, replacement: string): string {
   return `${problem}\u0000${replacement}`;
 }
 
@@ -434,7 +434,7 @@ class ProofreadingController {
         || typeof payload.replacement !== 'string'
         || payload.from >= payload.to
         || payload.to > this.editor.state.doc.content.size
-        || ignored.has(aiGrammarFingerprint(payload.problem, payload.replacement))
+        || ignored.has(grammarSuggestionFingerprint(payload.problem, payload.replacement))
       ) return [];
 
       const current = this.editor.state.doc.textBetween(payload.from, payload.to, '\n', '\n');
@@ -896,7 +896,7 @@ class ProofreadingController {
     if (issue.source === 'ai') {
       const ignored = storedIgnoredAIGrammarIssues();
       const replacement = issue.suggestions[0]?.replacement ?? '';
-      ignored.add(aiGrammarFingerprint(issue.problem, replacement));
+      ignored.add(grammarSuggestionFingerprint(issue.problem, replacement));
       writeStoredString(IGNORED_AI_GRAMMAR_KEY, JSON.stringify([...ignored]));
       this.grammarIssues = this.grammarIssues.filter((candidate) => candidate.id !== issue.id);
       this.hidePopover();

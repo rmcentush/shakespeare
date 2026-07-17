@@ -1,8 +1,8 @@
 # Development and releasing
 
-GitHub `main` is the source of truth. Work on a branch, run `make check`, and
-merge through a pull request after the Cloudflare check passes. Cloudflare
-deploys the website; signed macOS releases run explicitly from a trusted Mac.
+GitHub `main` is the source of truth. Make focused commits directly on `main`
+after running `make check`, then push `main`. Cloudflare deploys the website;
+signed macOS releases run explicitly from a trusted Mac.
 
 ## Cloudflare
 
@@ -13,8 +13,7 @@ Connect the `shakespeare-download` Worker with:
 - Root directory: `Website`
 - Build command: `npm ci && npm run ci`
 - Deploy command: `npx wrangler deploy --config wrangler.jsonc`
-- Non-production builds: enabled
-- Non-production deploy: `npx wrangler versions upload --config wrangler.jsonc`
+- Non-production builds: disabled
 - Build watch include path: `*`
 - Build cache: enabled
 
@@ -63,6 +62,7 @@ publisher automatically.
 
 ## Repository controls
 
-Protect `main` with pull requests, the Cloudflare check, and blocked force
-pushes/deletion. Protect `v*` tags and use squash merging. Keep credentials,
-private keys, account details, and purchase records outside Git.
+Allow maintainers to push focused, validated commits directly to `main`. Block
+force pushes and branch deletion, protect `v*` tags, and keep credentials,
+private keys, account details, and purchase records outside Git. Do not enable
+automation that creates routine dependency-update or feature branches.

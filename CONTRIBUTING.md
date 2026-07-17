@@ -10,10 +10,25 @@ make run
 
 ## Workflow
 
-1. Branch from `main`.
+1. Switch to `main` and fast-forward it from `origin/main`.
 2. Keep the change focused and update relevant tests or documentation.
 3. Run `make check`.
-4. Push and merge through a pull request after the Cloudflare check passes.
+4. Commit the validated change directly on `main`, synchronize once more, and
+   push `main`.
+
+```bash
+git switch main
+git pull --ff-only origin main
+# Make one focused change, then run make check.
+git add <files>
+git commit -m "Describe the change"
+git pull --rebase origin main
+git push origin main
+```
+
+Do not create routine feature, automation, or dependency-update branches.
+Use a temporary branch only when isolation is explicitly required for a risky
+or externally contributed change, and delete it after integration.
 
 Commit only durable product, build, release, or licensing documentation. Keep
 temporary notes, credentials, local paths, app archives, and unrelated files
