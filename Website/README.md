@@ -37,6 +37,9 @@ The ZIP and checksum are intentionally ignored by Git. Release automation
 stages the notarized artifact, verifies it, builds the site, deploys it, and
 then fails unless the live URL and checksum match that exact artifact.
 
+After staging a release archive, `npm run verify-download` checks the ignored
+ZIP and checksum. Ordinary `npm test` remains safe to run in a fresh checkout.
+
 ## Publish
 
 ```bash
