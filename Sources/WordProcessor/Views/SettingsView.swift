@@ -43,6 +43,8 @@ struct SettingsView: View {
     @State private var showWritingSampleImporter = false
     @State private var writingSampleImportMessage = ""
     @State private var writingSampleImportFailed = false
+    @State private var modelAvailability: [String: OpenRouterModelAvailabilityService.ModelStatus] = [:]
+    @State private var isCheckingModelAvailability = false
 
     // Font settings
     @State private var fontManager = FontManager.shared
@@ -71,6 +73,8 @@ struct SettingsView: View {
         .frame(width: 680, height: 640)
         .onAppear {
             openRouterConnected = APIKeyStore.shared.getAPIKey(service: "openrouter") != nil
+            writingModel = InferenceSettings.normalizedModelID(writingModel)
+            researchModel = InferenceSettings.normalizedModelID(researchModel)
             refreshStyleContext()
         }
         .onChange(of: personalizationEnabled) { _, enabled in
@@ -513,17 +517,32 @@ struct SettingsView: View {
 
                         Divider()
 
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("Kimi automatically falls back to Grok Latest. Other selections run directly.")
-                                .settingsDescriptionStyle()
-                            Spacer(minLength: 12)
+                        HStack {
                             Link("Compare pricing ↗", destination: InferenceSettings.openRouterModelsURL)
                                 .font(.caption.weight(.semibold))
+                            Spacer()
+                            Button {
+                                Task { await refreshModelAvailability(forceRefresh: true) }
+                            } label: {
+                                if isCheckingModelAvailability {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else {
+                                    Label("Refresh status", systemImage: "arrow.clockwise")
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .font(.caption.weight(.semibold))
+                            .disabled(isCheckingModelAvailability)
+                            .help("Check OpenRouter model availability without using credits")
                         }
                     }
                     .padding(.top, 8)
                 }
             }
+        }
+        .task {
+            await refreshModelAvailability()
         }
     }
 
@@ -546,9 +565,10 @@ struct SettingsView: View {
                 Text(title)
                     .font(.caption.weight(.semibold))
                 Spacer()
+                modelAvailabilityBadge(for: selection.wrappedValue)
                 Picker(title, selection: selection) {
                     ForEach(InferenceSettings.availableModels) { model in
-                        Text(model.selectionLabel).tag(model.id)
+                        Text(model.name).tag(model.id)
                     }
                     if InferenceSettings.modelOption(for: selection.wrappedValue) == nil {
                         Text("Previous custom model").tag(selection.wrappedValue)
@@ -569,6 +589,57 @@ struct SettingsView: View {
                     .textSelection(.enabled)
             }
         }
+    }
+
+    private func modelAvailabilityBadge(for modelID: String) -> some View {
+        let status = modelAvailability[modelID]
+        let label: String
+        let systemImage: String
+        let color: Color
+
+        switch status {
+        case .online:
+            label = "Online"
+            systemImage = "circle.fill"
+            color = .green
+        case .available:
+            label = "Available"
+            systemImage = "circle"
+            color = .green
+        case .offline:
+            label = "Offline"
+            systemImage = "exclamationmark.circle.fill"
+            color = .red
+        case .unknown:
+            label = "Unknown"
+            systemImage = "questionmark.circle"
+            color = .secondary
+        case nil:
+            label = isCheckingModelAvailability ? "Checking" : "Unknown"
+            systemImage = isCheckingModelAvailability ? "clock" : "questionmark.circle"
+            color = .secondary
+        }
+
+        return Label(label, systemImage: systemImage)
+            .font(.caption2)
+            .foregroundStyle(color)
+            .help("Free OpenRouter availability check; no model request is sent")
+    }
+
+    @MainActor
+    private func refreshModelAvailability(forceRefresh: Bool = false) async {
+        guard !isCheckingModelAvailability else { return }
+        isCheckingModelAvailability = true
+        let statuses = await OpenRouterModelAvailabilityService.shared.statuses(
+            for: InferenceSettings.availableModels.map(\.id),
+            forceRefresh: forceRefresh
+        )
+        guard !Task.isCancelled else {
+            isCheckingModelAvailability = false
+            return
+        }
+        modelAvailability = statuses
+        isCheckingModelAvailability = false
     }
 
     private var styleProposalSheet: some View {
