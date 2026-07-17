@@ -2173,6 +2173,7 @@ final class EditorViewModel {
                 runtime: ambientReviewService.currentRuntime
             )
             if !acknowledgedOutcomes.isEmpty {
+                document.acknowledgePersonalizationOutcomes(acknowledgedOutcomes)
                 callEditorAPI("acknowledgePersonalizationOutcomes", arguments: [acknowledgedOutcomes])
                 Task { await StyleProfileRefinementCoordinator.shared.prepareIfNeeded() }
             }

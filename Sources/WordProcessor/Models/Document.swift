@@ -17,6 +17,7 @@ final class DocumentModel: @unchecked Sendable {
     var isDirty: Bool = false
     var wordCount: Int = 0
     var characterCount: Int = 0
+    private(set) var personalizationOutcomes: [PersonalizationOutcomeSnapshot] = []
     var documentID: String = UUID().uuidString
     var schemaVersion: Int = DocumentFileStore.currentSchemaVersion
     var createdAt: Date = Date()
@@ -106,6 +107,12 @@ final class DocumentModel: @unchecked Sendable {
         Self.addToRecentFiles(url)
     }
 
+    func acknowledgePersonalizationOutcomes(_ actionIDs: [String]) {
+        guard !actionIDs.isEmpty else { return }
+        let acknowledged = Set(actionIDs)
+        personalizationOutcomes.removeAll { acknowledged.contains($0.actionID) }
+    }
+
     func load(snapshot: DocumentFileStore.FileSnapshot, from url: URL) {
         documentGeneration &+= 1
         applySnapshot(snapshot, fileURL: url, markDirty: false, resetRevision: true)
@@ -154,7 +161,8 @@ final class DocumentModel: @unchecked Sendable {
             documentID: documentID,
             schemaVersion: schemaVersion,
             createdAt: createdAt,
-            modifiedAt: modifiedAt
+            modifiedAt: modifiedAt,
+            personalizationOutcomes: personalizationOutcomes
         )
     }
 
@@ -170,6 +178,7 @@ final class DocumentModel: @unchecked Sendable {
         self.fileURL = fileURL
         wordCount = snapshot.wordCount
         characterCount = snapshot.characterCount
+        personalizationOutcomes = snapshot.personalizationOutcomes
         documentID = snapshot.documentID
         schemaVersion = snapshot.schemaVersion
         createdAt = snapshot.createdAt

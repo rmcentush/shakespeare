@@ -40,6 +40,16 @@ final class TrainingEventStore: @unchecked Sendable {
     static let maximumWritingSampleCharacters = 100_000
     static let minimumWritingSampleWords = 300
     static let maximumWritingSamples = 50
+    private static let maximumReadableEventLogBytes = 24 * 1_024 * 1_024
+    private static let maximumProcessedIDsBytes = 4 * 1_024 * 1_024
+
+    private enum StoreError: LocalizedError {
+        case ledgerUnreadable
+
+        var errorDescription: String? {
+            "The local learning ledger is unreadable; new learning was paused to preserve it."
+        }
+    }
 
     struct Consent: Codable, Equatable, Sendable {
         let collectionEnabled: Bool
@@ -155,6 +165,7 @@ final class TrainingEventStore: @unchecked Sendable {
     private var cachedEventIDs: Set<String>?
     private var cachedEventLogSize: UInt64?
     private var lastCompactionAttemptEventCount = 0
+    private var ledgerReadFailed = false
 
     var eventLogURL: URL {
         try? ShakespeareStorage.prepare()
@@ -606,6 +617,7 @@ final class TrainingEventStore: @unchecked Sendable {
         cachedEventIDs = []
         cachedEventLogSize = 0
         lastCompactionAttemptEventCount = 0
+        ledgerReadFailed = false
         UserDefaults.standard.removeObject(forKey: "personalizationSnapshotHashes")
     }
 
@@ -672,7 +684,11 @@ final class TrainingEventStore: @unchecked Sendable {
     }
 
     private func processedIDsUnlocked() -> Set<String> {
-        guard let data = try? Data(contentsOf: processedIDsURL),
+        guard let data = try? PackageFileSafety.readData(
+                from: processedIDsURL,
+                maximumBytes: Self.maximumProcessedIDsBytes,
+                displayName: processedIDsURL.lastPathComponent
+              ),
               let ids = try? decoder.decode([String].self, from: data)
         else { return [] }
         return Set(ids)
@@ -691,15 +707,31 @@ final class TrainingEventStore: @unchecked Sendable {
             if cachedEventIDs == nil { cachedEventIDs = Set(cachedEvents.map(\.id)) }
             return cachedEvents
         }
-        guard let raw = try? String(contentsOf: eventLogURL, encoding: .utf8) else {
+        guard fileSize <= Self.maximumReadableEventLogBytes,
+              let raw = try? PackageFileSafety.readUTF8String(
+                from: eventLogURL,
+                maximumBytes: Self.maximumReadableEventLogBytes,
+                displayName: eventLogURL.lastPathComponent
+              )
+        else {
+            ledgerReadFailed = fileSize > 0
             cachedEvents = []
             cachedEventIDs = []
             cachedEventLogSize = 0
             return []
         }
-        let events = raw.split(separator: "\n").compactMap { line in
-            try? decoder.decode(Event.self, from: Data(line.utf8))
+        var events: [Event] = []
+        for line in raw.split(separator: "\n") {
+            guard let event = try? decoder.decode(Event.self, from: Data(line.utf8)) else {
+                ledgerReadFailed = true
+                cachedEvents = []
+                cachedEventIDs = []
+                cachedEventLogSize = fileSize
+                return []
+            }
+            events.append(event)
         }
+        ledgerReadFailed = false
         cachedEvents = events
         cachedEventIDs = Set(events.map(\.id))
         cachedEventLogSize = fileSize
@@ -720,6 +752,7 @@ final class TrainingEventStore: @unchecked Sendable {
     }
 
     private func appendUnlocked(_ event: Event) throws {
+        guard !ledgerReadFailed else { throw StoreError.ledgerUnreadable }
         try ensureStorageUnlocked()
         let data = try encoder.encode(event)
         var line = Data()

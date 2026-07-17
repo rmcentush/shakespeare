@@ -166,7 +166,11 @@ final class StyleGuideUpdater {
 
     private func recoverInterruptedApproval() throws {
         guard FileManager.default.fileExists(atPath: approvalJournalURL.path) else { return }
-        let data = try Data(contentsOf: approvalJournalURL)
+        let data = try PackageFileSafety.readData(
+            from: approvalJournalURL,
+            maximumBytes: 5 * 1_024 * 1_024,
+            displayName: approvalJournalURL.lastPathComponent
+        )
         let journal = try JSONDecoder().decode(ApprovalJournal.self, from: data)
         if journal.phase == .pending {
             try store.writeLearnedPreferences(journal.previousPreferences)

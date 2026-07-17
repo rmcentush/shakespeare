@@ -816,16 +816,17 @@ actor DocumentFileStore {
     }
 
     private func imageAssetData(contentsOf url: URL) throws -> Data {
-        let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-        guard values.isRegularFile == true else {
-            throw CocoaError(.fileReadUnsupportedScheme)
-        }
-        if let fileSize = values.fileSize, fileSize > Self.maximumImportedImageBytes {
+        do {
+            return try PackageFileSafety.readData(
+                from: url,
+                maximumBytes: Self.maximumImportedImageBytes,
+                displayName: url.lastPathComponent
+            )
+        } catch PackageFileSafetyError.fileTooLarge {
             throw FileStoreError.assetTooLarge(
-                maximumMegabytes: Self.maximumImportedImageBytes / 1024 / 1024
+                maximumMegabytes: Self.maximumImportedImageBytes / 1_024 / 1_024
             )
         }
-        return try Data(contentsOf: url, options: .mappedIfSafe)
     }
 
     private func dataFromDataURL(
