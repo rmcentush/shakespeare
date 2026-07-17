@@ -41,25 +41,28 @@ silently replace a release.
 
 ## Automatic delivery
 
-GitHub `main` is the source of truth. Cloudflare Workers Builds watches this
-directory, runs the locked build and tests, and deploys successful `main`
-changes. Pull-request branches upload non-production Worker versions without
-promoting them; they are inspected from Cloudflare rather than a public preview
-URL because the release bucket is production-only.
+GitHub `main` is the source of truth. Cloudflare Workers Builds runs the
+portable repository checks for every pull request and deploys successful
+`main` commits. Pull-request branches upload non-production Worker versions
+without promoting them; they are inspected from Cloudflare rather than a public
+preview URL because the release bucket is production-only.
 
 Use these Cloudflare build settings:
 
 - Repository: `rmcentush/shakespeare`
 - Production branch: `main`
 - Root directory: `Website`
-- Build command: `npm ci && npm run build`
+- Build command: `npm ci && npm run ci`
 - Deploy command: `npx wrangler deploy --config wrangler.jsonc`
 - Non-production branch builds: enabled
 - Non-production deploy command: `npx wrangler versions upload --config wrangler.jsonc`
-- Build watch path: `Website/*`
+- Build watch include path: `*`
+- Build watch exclude path: leave empty
 
 Grant the Cloudflare GitHub App access only to this repository. GitHub Actions
-is not part of the delivery path.
+is not part of the delivery path. The Cloudflare check covers the Worker,
+editor tests and types, privacy boundary, and delivery scripts; `make check` on
+a Mac adds the Swift/AppKit build and Swift regression evals.
 
 ## Manual recovery
 

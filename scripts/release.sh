@@ -8,29 +8,19 @@ version="${VERSION:-}"
 version="${version#v}"
 build_number="${BUILD_NUMBER:-}"
 signing_identity="${CODESIGN_IDENTITY:-}"
-notary_profile="${NOTARYTOOL_PROFILE:-}"
+notary_profile="${NOTARYTOOL_PROFILE:-shakespeare}"
 bucket="shakespeare-releases"
 manifest_key="releases/current.json"
 allow_initial_release="${ALLOW_INITIAL_RELEASE:-0}"
 
 if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]] ||
    [[ ! "$build_number" =~ ^[0-9]+$ ]]; then
-    echo "Usage: VERSION=1.2.3 BUILD_NUMBER=123 CODESIGN_IDENTITY='Developer ID Application: …' NOTARYTOOL_PROFILE=shakespeare make release" >&2
+    echo "Usage: VERSION=1.2.3 BUILD_NUMBER=123 make release" >&2
     exit 1
 fi
 
 if [ "$(uname -s)" != "Darwin" ]; then
     echo "A distributable Shakespeare release must be built on macOS." >&2
-    exit 1
-fi
-
-if [ -z "$signing_identity" ] || [ "$signing_identity" = "-" ]; then
-    echo "CODESIGN_IDENTITY must name a Developer ID Application identity." >&2
-    exit 1
-fi
-
-if [ -z "$notary_profile" ]; then
-    echo "NOTARYTOOL_PROFILE must name credentials stored with xcrun notarytool store-credentials." >&2
     exit 1
 fi
 
@@ -52,13 +42,16 @@ if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
     exit 1
 fi
 
-if ! security find-identity -v -p codesigning | grep -F "$signing_identity" >/dev/null; then
-    echo "Developer ID signing identity is not available in Keychain." >&2
-    exit 1
+if [ -z "$signing_identity" ]; then
+    signing_identities="$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p')"
+    if [ "$(printf '%s\n' "$signing_identities" | sed '/^$/d' | wc -l | tr -d ' ')" -eq 1 ]; then
+        signing_identity="$signing_identities"
+    fi
 fi
 
-xcrun notarytool history --keychain-profile "$notary_profile" >/dev/null
-bash scripts/verify-release-provenance.sh
+CODESIGN_IDENTITY="$signing_identity" \
+NOTARYTOOL_PROFILE="$notary_profile" \
+    bash scripts/release-readiness.sh
 (cd Editor && npm ci)
 (cd Website && npm ci)
 make check
