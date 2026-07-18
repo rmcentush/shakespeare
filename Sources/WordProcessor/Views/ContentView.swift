@@ -76,7 +76,6 @@ private struct DocumentTitleTextField: NSViewRepresentable {
         var onCommit: () -> Void
         var onCancel: () -> Void
         private var isCancelling = false
-        private var hasBegunEditing = false
 
         init(
             text: Binding<String>,
@@ -95,13 +94,7 @@ private struct DocumentTitleTextField: NSViewRepresentable {
             text.wrappedValue = textField.stringValue
         }
 
-        func controlTextDidBeginEditing(_ notification: Notification) {
-            hasBegunEditing = true
-        }
-
         func controlTextDidEndEditing(_ notification: Notification) {
-            guard hasBegunEditing else { return }
-            hasBegunEditing = false
             if isCancelling {
                 isCancelling = false
             } else {

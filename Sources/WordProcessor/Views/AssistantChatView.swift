@@ -310,9 +310,9 @@ private struct AssistantEmptyState: View {
     let onChoosePrompt: (String) -> Void
 
     private let prompts = [
-        "Fact-check the claims in this draft and cite sources.",
-        "Find current evidence that supports this argument.",
-        "What important context or counterarguments am I missing?",
+        "Fact-check this draft.",
+        "Find supporting evidence.",
+        "What am I missing?",
     ]
 
     var body: some View {
