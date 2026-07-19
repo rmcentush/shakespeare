@@ -184,7 +184,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Style profile")
                             .fontWeight(.medium)
-                        Text(styleProfileStatus)
+                        Text("\(styleProfileStatus) · compact notes, not a prose archive")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -382,7 +382,7 @@ struct SettingsView: View {
             }
 
             SettingsCard(title: "Dictionary and Privacy") {
-                Text("Spelling is checked locally by Harper. An on-demand thorough proofread is available from the Spelling and Grammar menu.")
+                Text("Spelling is checked locally by Harper. Run an on-demand thorough proofread from the Shakespeare menu or press Command-Option-P.")
                     .settingsDescriptionStyle()
 
                 Button("Reset Learned Words and Ignored Issues") {

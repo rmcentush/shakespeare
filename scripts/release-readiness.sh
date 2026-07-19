@@ -19,13 +19,51 @@ else
     fail "releases require macOS"
 fi
 
-for command in git node npm swift xcrun security; do
+for command in git node npm swift xcrun xcodebuild security codesign ditto lipo spctl shasum curl; do
     if command -v "$command" >/dev/null 2>&1; then
         pass "$command is installed"
     else
         fail "$command is not installed"
     fi
 done
+
+if node -e '
+const [major, minor] = process.versions.node.split(".").map(Number);
+process.exit(major > 22 || (major === 22 && minor >= 13) ? 0 : 1);
+'; then
+    pass "Node.js 22.13 or newer"
+else
+    fail "Node.js 22.13 or newer is required (found $(node --version 2>/dev/null || echo unavailable))"
+fi
+
+xcode_major="$(xcodebuild -version 2>/dev/null | sed -n '1s/^Xcode \([0-9][0-9]*\).*/\1/p')"
+if [[ "$xcode_major" =~ ^[0-9]+$ ]] && [ "$xcode_major" -ge 26 ]; then
+    pass "Xcode 26 or newer"
+else
+    fail "select a full Xcode 26+ installation with xcode-select"
+fi
+
+for developer_tool in notarytool stapler; do
+    if xcrun --find "$developer_tool" >/dev/null 2>&1; then
+        pass "Apple $developer_tool tool is available"
+    else
+        fail "Xcode is missing $developer_tool"
+    fi
+done
+
+wrangler="$repository_root/Website/node_modules/.bin/wrangler"
+if [ -x "$wrangler" ] && [ "$($wrangler --version 2>/dev/null | awk '{print $2}')" = "4.111.0" ]; then
+    pass "pinned Wrangler 4.111.0"
+else
+    fail "run npm ci in Website to install pinned Wrangler 4.111.0"
+fi
+
+available_kb="$(df -Pk "$repository_root" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+if [[ "$available_kb" =~ ^[0-9]+$ ]] && [ "$available_kb" -ge 8388608 ]; then
+    pass "at least 8 GB of free disk space"
+else
+    fail "at least 8 GB of free disk space is required for release artifacts"
+fi
 
 if [ "$(git branch --show-current 2>/dev/null)" = "main" ]; then
     pass "current branch is main"

@@ -21,18 +21,20 @@ private final class APIKeySessionCache: @unchecked Sendable {
     }
 }
 
-/// Stores API keys in the macOS Keychain. Owner-only files under Application
-/// Support are used by locally built bundles whose changing ad-hoc signatures
-/// would otherwise trigger repeated Keychain authorization dialogs.
+/// Stores API keys in the macOS Keychain. A legacy owner-only credential file
+/// is read only to migrate older installations; new credentials are never
+/// written outside Keychain, including in ad-hoc development builds.
 final class APIKeyStore: Sendable {
     static let shared = APIKeyStore()
     static let keychainItemLabel = "Shakespeare"
     static let keychainServicePrefix = "com.shakespeare.credential.v2"
     private let keychainAccount = "default"
     private let sessionCache = APIKeySessionCache()
-    private let usesDevelopmentCredentialStore: Bool
     private let storageDirectoryOverride: URL?
+    private let keychainContainsOverride: (@Sendable (String) -> Bool)?
+    private let keychainReadOverride: (@Sendable (String) -> String?)?
     private let keychainWriteOverride: (@Sendable (String, String) -> Bool)?
+    private let keychainDeleteOverride: (@Sendable (String) -> Void)?
 
     private var storageDirectory: URL {
         if let storageDirectoryOverride { return storageDirectoryOverride }
@@ -41,44 +43,25 @@ final class APIKeyStore: Sendable {
     }
 
     private init() {
-        usesDevelopmentCredentialStore = !Self.hasStableSigningIdentity()
         storageDirectoryOverride = nil
+        keychainContainsOverride = nil
+        keychainReadOverride = nil
         keychainWriteOverride = nil
+        keychainDeleteOverride = nil
     }
 
     init(
-        testingDevelopmentStore: Bool,
         storageDirectory: URL,
-        keychainWrite: (@Sendable (String, String) -> Bool)? = nil
+        keychainContains: (@Sendable (String) -> Bool)? = nil,
+        keychainRead: (@Sendable (String) -> String?)? = nil,
+        keychainWrite: (@Sendable (String, String) -> Bool)? = nil,
+        keychainDelete: (@Sendable (String) -> Void)? = nil
     ) {
-        usesDevelopmentCredentialStore = testingDevelopmentStore
         storageDirectoryOverride = storageDirectory
+        keychainContainsOverride = keychainContains
+        keychainReadOverride = keychainRead
         keychainWriteOverride = keychainWrite
-    }
-
-    /// Developer ID and App Store signatures include a stable team identifier.
-    /// Ad-hoc local builds do not, so their code requirement changes on every
-    /// rebuild and macOS would ask for Keychain permission again.
-    static func hasStableSigningIdentity(bundleURL: URL = Bundle.main.bundleURL) -> Bool {
-        var staticCode: SecStaticCode?
-        guard SecStaticCodeCreateWithPath(bundleURL as CFURL, SecCSFlags(), &staticCode) == errSecSuccess,
-              let staticCode
-        else {
-            return false
-        }
-
-        var signingInformation: CFDictionary?
-        guard SecCodeCopySigningInformation(
-            staticCode,
-            SecCSFlags(rawValue: kSecCSSigningInformation),
-            &signingInformation
-        ) == errSecSuccess,
-              let information = signingInformation as? [String: Any],
-              let teamIdentifier = information[kSecCodeInfoTeamIdentifier as String] as? String
-        else {
-            return false
-        }
-        return !teamIdentifier.isEmpty
+        keychainDeleteOverride = keychainDelete
     }
 
     private func keyFilePath(service: String) -> URL? {
@@ -98,16 +81,11 @@ final class APIKeyStore: Sendable {
         if sessionCache.value(for: service) != nil {
             return true
         }
-        if !usesDevelopmentCredentialStore {
-            return keychainContainsAPIKey(service: service)
-        }
+        if containsKeychainAPIKey(service: service) { return true }
 
-        guard let attributes = try? FileManager.default.attributesOfItem(
-            atPath: fallbackPath.path
-        ), let size = attributes[.size] as? NSNumber else {
-            return false
-        }
-        return size.intValue > 0
+        // Report a legacy file as connected only until the next authorized read,
+        // when it is migrated to Keychain and securely removed.
+        return legacyCredentialExists(at: fallbackPath)
     }
 
     /// Automatic background work may use a key only after the writer has already
@@ -121,12 +99,7 @@ final class APIKeyStore: Sendable {
         if let cachedKey = sessionCache.value(for: service) {
             return cachedKey
         }
-        if usesDevelopmentCredentialStore {
-            guard let key = fallbackAPIKey(service: service) else { return nil }
-            sessionCache.setValue(key, for: service)
-            return key
-        }
-        if let key = keychainAPIKey(service: service) {
+        if let key = readKeychainAPIKey(service: service) {
             sessionCache.setValue(key, for: service)
             return key
         }
@@ -147,27 +120,21 @@ final class APIKeyStore: Sendable {
             return true
         }
 
-        if usesDevelopmentCredentialStore {
-            guard setFallbackAPIKey(normalizedKey, service: service) else { return false }
-            sessionCache.setValue(normalizedKey, for: service)
-            return true
-        }
-
         if storeKeychainAPIKey(normalizedKey, service: service) {
             deleteFallbackAPIKey(service: service)
             sessionCache.setValue(normalizedKey, for: service)
             return true
         }
 
-        // A stable signed build must never downgrade a Keychain failure to a
-        // plaintext credential file. Preserve any existing credential and let
-        // the connection UI surface the failure.
+        // Never downgrade a Keychain failure to a plaintext credential file.
         return false
     }
 
     func deleteAPIKey(service: String) {
         guard keyFilePath(service: service) != nil else { return }
-        if !usesDevelopmentCredentialStore {
+        if let keychainDeleteOverride {
+            keychainDeleteOverride(service)
+        } else {
             SecItemDelete(keychainQuery(service: service) as CFDictionary)
         }
         deleteFallbackAPIKey(service: service)
@@ -209,6 +176,14 @@ final class APIKeyStore: Sendable {
 
         let status = SecItemCopyMatching(query as CFDictionary, nil)
         return status == errSecSuccess || status == errSecInteractionNotAllowed
+    }
+
+    private func containsKeychainAPIKey(service: String) -> Bool {
+        keychainContainsOverride?(service) ?? keychainContainsAPIKey(service: service)
+    }
+
+    private func readKeychainAPIKey(service: String) -> String? {
+        keychainReadOverride?(service) ?? keychainAPIKey(service: service)
     }
 
     private func setKeychainAPIKey(_ key: String, service: String) -> Bool {
@@ -256,51 +231,10 @@ final class APIKeyStore: Sendable {
         return key.isEmpty ? nil : key
     }
 
-    private func setFallbackAPIKey(_ key: String, service: String) -> Bool {
-        guard let path = keyFilePath(service: service) else { return false }
-        let directory = storageDirectory
-        do {
-            try FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o700],
-                ofItemAtPath: directory.path
-            )
-        } catch {
-            print("APIKeyStore: failed to prepare secure storage: \(error)")
-            return false
-        }
-
-        let temporaryPath = directory.appendingPathComponent(".\(UUID().uuidString).tmp")
-        let created = FileManager.default.createFile(
-            atPath: temporaryPath.path,
-            contents: Data(key.utf8),
-            attributes: [.posixPermissions: 0o600]
-        )
-        guard created else {
-            print("APIKeyStore: failed to write API key file for service \(service)")
-            return false
-        }
-
-        do {
-            if FileManager.default.fileExists(atPath: path.path) {
-                _ = try FileManager.default.replaceItemAt(path, withItemAt: temporaryPath)
-            } else {
-                try FileManager.default.moveItem(at: temporaryPath, to: path)
-            }
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: path.path
-            )
-            return true
-        } catch {
-            try? FileManager.default.removeItem(at: temporaryPath)
-            print("APIKeyStore: failed to store API key for service \(service): \(error)")
-            return false
-        }
+    private func legacyCredentialExists(at path: URL) -> Bool {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path.path),
+              let size = attributes[.size] as? NSNumber else { return false }
+        return size.intValue > 0
     }
 
     private func deleteFallbackAPIKey(service: String) {

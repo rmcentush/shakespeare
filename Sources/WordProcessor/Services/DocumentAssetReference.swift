@@ -49,6 +49,32 @@ enum DocumentAssetReference {
         })
     }
 
+    /// Extracts image references structurally so JSON escaping (for example
+    /// `\/`) cannot hide a package asset from validation.
+    static func filenames(inCanonicalJSON json: String) -> Set<String> {
+        guard let data = json.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data)
+        else { return [] }
+
+        var result: Set<String> = []
+        func visit(_ value: Any) {
+            if let array = value as? [Any] {
+                array.forEach(visit)
+                return
+            }
+            guard let object = value as? [String: Any] else { return }
+            if object["type"] as? String == "image",
+               let attrs = object["attrs"] as? [String: Any],
+               let source = attrs["src"] as? String,
+               let filename = filename(from: source) {
+                result.insert(filename)
+            }
+            object.values.forEach(visit)
+        }
+        visit(root)
+        return result
+    }
+
     static func isSafeFilename(_ filename: String) -> Bool {
         guard !filename.isEmpty,
               filename != ".",

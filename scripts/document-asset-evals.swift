@@ -9,10 +9,11 @@ struct DocumentAssetEvals {
         expectRoundTrip(&failures)
         expectUnsafeURLsRejected(&failures)
         expectReferencesExtracted(&failures)
+        expectJSONReferencesExtracted(&failures)
         try expectContainedFiles(&failures)
 
         if failures.isEmpty {
-            print("Document asset evals passed (4 groups).")
+            print("Document asset evals passed (5 groups).")
             return
         }
 
@@ -21,6 +22,14 @@ struct DocumentAssetEvals {
             print("- \(failure)")
         }
         exit(1)
+    }
+
+    private static func expectJSONReferencesExtracted(_ failures: inout [String]) {
+        let json = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"image","attrs":{"src":"shakespeare-document:\/\/asset\/cover.png"}}]}]}"#
+        let filenames = DocumentAssetReference.filenames(inCanonicalJSON: json)
+        if filenames != Set(["cover.png"]) {
+            failures.append("expected escaped canonical JSON asset references to be extracted")
+        }
     }
 
     private static func expectReferencesExtracted(_ failures: inout [String]) {

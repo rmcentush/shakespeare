@@ -5,17 +5,20 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 
 test("ships a minimal app-aligned landing page and a fail-closed release action", async () => {
-  const [html, css, editorImage, appIcon] = await Promise.all([
+  const [html, css, editorImage, appIcon, favicon, headers] = await Promise.all([
     readFile(new URL("public/index.html", root), "utf8"),
     readFile(new URL("public/v4/styles.css", root), "utf8"),
     readFile(new URL("public/v4/shakespeare-editor.jpg", root)),
     readFile(new URL("public/v4/app-icon.png", root)),
+    readFile(new URL("public/v4/favicon.png", root)),
+    readFile(new URL("public/_headers", root), "utf8"),
   ]);
 
   assert.match(html, /^<!doctype html>/i);
   assert.match(html, /class="app-frame"/);
   assert.match(html, /v4\/shakespeare-editor\.jpg/);
   assert.match(html, /v4\/app-icon\.png/);
+  assert.match(html, /v4\/favicon\.png/);
   assert.match(html, /<h1[^>]*>Write like yourself\.<\/h1>/);
   assert.match(html, /A writing app for Mac/);
   assert.match(html, /A quiet editor that helps without taking over\./);
@@ -24,6 +27,7 @@ test("ships a minimal app-aligned landing page and a fail-closed release action"
   assert.match(html, /<li>Research with sources<\/li>/);
   assert.match(html, /Release unavailable/);
   assert.match(html, /data-release-action aria-disabled="true"/);
+  assert.match(html, /<!-- release-control:start -->[\s\S]*<!-- release-control:end -->/);
   assert.match(html, /href="https:\/\/github\.com\/rmcentush\/shakespeare"/);
   assert.match(html, />Source<\/a>/);
   assert.doesNotMatch(html, /Shakespeare-latest\.zip/);
@@ -33,7 +37,7 @@ test("ships a minimal app-aligned landing page and a fail-closed release action"
   assert.match(html, /<header\b[\s\S]*<nav\b[\s\S]*<footer\b/i);
   assert.doesNotMatch(html, /<script\b/i);
   assert.doesNotMatch(css, /@import|url\(/i);
-  assert.match(css, /#007aff/i);
+  assert.match(css, /--blue: #0062cc/i);
   assert.match(css, /Georgia/);
   assert.match(css, /-apple-system/);
   assert.match(css, /@media \(max-width: 900px\)/);
@@ -41,8 +45,12 @@ test("ships a minimal app-aligned landing page and a fail-closed release action"
   assert.match(css, /prefers-reduced-motion/);
   assert.ok(editorImage.length > 50_000);
   assert.ok(appIcon.length > 100_000);
+  assert.ok(favicon.length < 50_000);
   assert.deepEqual([...editorImage.subarray(0, 3)], [0xff, 0xd8, 0xff]);
   assert.deepEqual([...appIcon.subarray(1, 4)], [0x50, 0x4e, 0x47]);
+  assert.deepEqual([...favicon.subarray(1, 4)], [0x50, 0x4e, 0x47]);
+  assert.match(headers, /Content-Security-Policy: default-src 'none'/);
+  assert.match(headers, /X-Frame-Options: DENY/);
 });
 
 test("redirects retired routes before serving the scene", async () => {
@@ -141,6 +149,7 @@ test("serves one release atomically from an R2 manifest", async () => {
     ["get", "releases/current.json"],
     ["get", archiveKey],
     ["get", "releases/current.json"],
+    ["head", archiveKey],
     ["get", "releases/current.json"],
     ["head", archiveKey],
   ]);
@@ -198,4 +207,57 @@ test("fails closed when the R2 release manifest is invalid", async () => {
   );
   assert.equal(response.status, 503);
   assert.equal(response.headers.get("cache-control"), "no-store");
+});
+
+test("degrades safely when R2 operations fail", async () => {
+  const { default: worker } = await import("../worker/index.js");
+  const source = await readFile(new URL("public/index.html", root), "utf8");
+  const validManifest = {
+    version: "1.2.3",
+    buildNumber: 123,
+    archiveKey: "releases/v1.2.3/Shakespeare.zip",
+    sha256: "a".repeat(64),
+    bundleIdentifier: "com.shakespeare.app",
+    teamIdentifier: "AB12CD34EF",
+    notarized: true,
+    sourceCommit: "b".repeat(40),
+  };
+
+  const missingManifest = await worker.fetch(
+    new Request("https://writeshakespeare.com/downloads/Shakespeare-latest.zip"),
+    {
+      ASSETS: { fetch: async () => new Response(source) },
+      RELEASES: { get: async () => { throw new Error("R2 unavailable"); } },
+    },
+  );
+  assert.equal(missingManifest.status, 503);
+  assert.equal(missingManifest.headers.get("x-content-type-options"), "nosniff");
+
+  const homepage = await worker.fetch(new Request("https://writeshakespeare.com/"), {
+    ASSETS: {
+      fetch: async () => new Response(source, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      }),
+    },
+    RELEASES: {
+      get: async () => ({ json: async () => validManifest }),
+      head: async () => { throw new Error("R2 unavailable"); },
+    },
+  });
+  assert.equal(homepage.status, 200);
+  assert.match(await homepage.text(), /Release unavailable/);
+
+  const archive = await worker.fetch(
+    new Request("https://writeshakespeare.com/downloads/Shakespeare-latest.zip"),
+    {
+      ASSETS: { fetch: async () => new Response(source) },
+      RELEASES: {
+        get: async (key) => {
+          if (key === "releases/current.json") return { json: async () => validManifest };
+          throw new Error("R2 unavailable");
+        },
+      },
+    },
+  );
+  assert.equal(archive.status, 503);
 });

@@ -7,7 +7,9 @@ struct ChatSource: Identifiable, Equatable {
     var id: String { url }
 
     var destination: URL? {
-        URL(string: url)
+        guard let candidate = URL(string: url),
+              AssistantLinkPolicy.isAllowed(candidate) else { return nil }
+        return candidate
     }
 
     var host: String {

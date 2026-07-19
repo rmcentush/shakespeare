@@ -236,43 +236,58 @@ struct VersionHistoryView: View {
         let filePath = url.path
         let documentID = document.documentID
         refreshTask = Task {
-            let loaded = await VersionStore.shared.versionSummaries(
-                forFile: filePath,
-                documentID: documentID
-            )
-            guard !Task.isCancelled, document.fileURL?.path == filePath else { return }
-            versions = loaded
+            do {
+                let loaded = try await VersionStore.shared.versionSummaries(
+                    forFile: filePath,
+                    documentID: documentID
+                )
+                guard !Task.isCancelled, document.fileURL?.path == filePath else { return }
+                versions = loaded
+            } catch {
+                guard !Task.isCancelled else { return }
+                editorViewModel.reportPersistenceFailure("Load version history", error: error)
+            }
         }
     }
 
     private func restoreVersion(_ summary: VersionStore.VersionSummary) {
         Task { @MainActor in
-            guard let version = await VersionStore.shared.version(id: summary.id) else { return }
-            guard let currentSnapshot = await editorViewModel.latestSnapshot(for: document) else { return }
+            do {
+                guard let version = try await VersionStore.shared.version(id: summary.id) else { return }
+                guard let currentSnapshot = await editorViewModel.latestSnapshot(for: document) else { return }
 
-            // Save current state as a version first (so nothing is lost)
-            if let url = document.fileURL {
-                let sameJSON = currentSnapshot.canonicalJSON == version.canonicalJSON
-                let sameHTML = currentSnapshot.htmlContent == version.htmlContent
-                if !sameJSON || !sameHTML {
-                    VersionStore.shared.saveVersion(filePath: url.path, snapshot: currentSnapshot)
+                // Save the current content and assets first so restore is always reversible.
+                if let url = document.fileURL {
+                    let sameJSON = currentSnapshot.canonicalJSON == version.canonicalJSON
+                    let sameHTML = currentSnapshot.htmlContent == version.htmlContent
+                    if !sameJSON || !sameHTML {
+                        try await editorViewModel.saveVersionSnapshot(
+                            currentSnapshot,
+                            documentURL: url
+                        )
+                    }
                 }
-            }
 
-            let snapshot = DocumentFileStore.FileSnapshot(
-                canonicalJSON: version.canonicalJSON,
-                htmlContent: version.htmlContent,
-                plainText: version.plainText,
-                wordCount: version.wordCount,
-                characterCount: version.characterCount,
-                documentID: version.documentID ?? document.documentID,
-                schemaVersion: document.schemaVersion,
-                createdAt: document.createdAt,
-                modifiedAt: version.createdAt
-            )
-            document.restoreVersion(snapshot: snapshot)
-            editorViewModel.loadSnapshot(snapshot)
-            refreshVersions()
+                let snapshot = DocumentFileStore.FileSnapshot(
+                    canonicalJSON: version.canonicalJSON,
+                    htmlContent: version.htmlContent,
+                    plainText: version.plainText,
+                    wordCount: version.wordCount,
+                    characterCount: version.characterCount,
+                    documentID: version.documentID ?? document.documentID,
+                    schemaVersion: document.schemaVersion,
+                    createdAt: document.createdAt,
+                    modifiedAt: version.createdAt
+                )
+                try await editorViewModel.restoreVersionSnapshot(
+                    snapshot,
+                    assets: version.assets,
+                    document: document
+                )
+                refreshVersions()
+            } catch {
+                editorViewModel.reportPersistenceFailure("Restore version", error: error)
+            }
         }
     }
 
@@ -282,9 +297,17 @@ struct VersionHistoryView: View {
         guard !name.isEmpty else { return }
 
         Task {
-            guard let snapshot = await editorViewModel.latestSnapshot(for: document) else { return }
-            VersionStore.shared.saveVersion(filePath: url.path, snapshot: snapshot, name: name)
-            refreshVersions()
+            do {
+                guard let snapshot = await editorViewModel.latestSnapshot(for: document) else { return }
+                try await editorViewModel.saveVersionSnapshot(
+                    snapshot,
+                    documentURL: url,
+                    name: name
+                )
+                refreshVersions()
+            } catch {
+                editorViewModel.reportPersistenceFailure("Save named version", error: error)
+            }
         }
         namedVersionName = ""
     }
@@ -296,21 +319,32 @@ struct VersionHistoryView: View {
 
     private func commitRename(_ version: VersionStore.VersionSummary) {
         let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if name.isEmpty {
-            VersionStore.shared.nameVersion(id: version.id, name: nil)
-        } else {
-            VersionStore.shared.nameVersion(id: version.id, name: name)
-        }
         renamingVersionID = nil
-        refreshVersions()
+        Task {
+            do {
+                try await VersionStore.shared.nameVersion(
+                    id: version.id,
+                    name: name.isEmpty ? nil : name
+                )
+                refreshVersions()
+            } catch {
+                editorViewModel.reportPersistenceFailure("Rename version", error: error)
+            }
+        }
     }
 
     private func confirmDelete() {
         guard let id = deleteTargetID else { return }
-        VersionStore.shared.deleteVersion(id: id)
         if selectedVersionID == id { selectedVersionID = nil }
         deleteTargetID = nil
-        refreshVersions()
+        Task {
+            do {
+                try await VersionStore.shared.deleteVersion(id: id)
+                refreshVersions()
+            } catch {
+                editorViewModel.reportPersistenceFailure("Delete version", error: error)
+            }
+        }
     }
 
     // MARK: - Formatting

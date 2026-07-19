@@ -1,15 +1,30 @@
 const releaseManifestKey = "releases/current.json";
 const archivePath = "/downloads/Shakespeare-latest.zip";
 const checksumPath = `${archivePath}.sha256`;
+const releaseControlPattern =
+  /<!-- release-control:start -->[\s\S]*?<!-- release-control:end -->/;
+
+function unavailableResponse() {
+  return new Response("Release unavailable", {
+    status: 503,
+    headers: {
+      "Cache-Control": "no-store",
+      "Content-Type": "text/plain; charset=utf-8",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
 
 function validManifest(value) {
   return Boolean(
     value &&
       typeof value === "object" &&
       typeof value.version === "string" &&
+      /^\d+\.\d+(?:\.\d+)?$/.test(value.version) &&
       /^releases\/v?[0-9]+(?:\.[0-9]+){1,2}\/Shakespeare\.zip$/.test(
-        value.archiveKey,
+      value.archiveKey,
       ) &&
+      value.archiveKey === `releases/v${value.version}/Shakespeare.zip` &&
       typeof value.sha256 === "string" &&
       /^[0-9a-f]{64}$/.test(value.sha256) &&
       Number.isSafeInteger(value.buildNumber) &&
@@ -35,18 +50,31 @@ async function serveHome(request, env) {
 
   const manifest = await loadReleaseManifest(env);
   if (!manifest) return response;
-  const archive = await env.RELEASES.head(manifest.archiveKey);
+  let archive;
+  try {
+    archive = await env.RELEASES.head(manifest.archiveKey);
+  } catch (error) {
+    console.error("Release archive metadata lookup failed", error);
+    return response;
+  }
   if (!archive || archive.size <= 0) return response;
 
-  const unavailable = `<span class="download" data-release-action aria-disabled="true">
-            <span>Release unavailable</span>
-            <span aria-hidden="true">—</span>
-          </span>`;
-  const available = `<a class="download" data-release-action href="${archivePath}" download>
+  const available = `<!-- release-control:start -->
+          <a class="download" data-release-action href="${archivePath}" download>
             <span>Download for Mac</span>
             <span aria-hidden="true">↓</span>
-          </a>`;
-  const html = (await response.text()).replace(unavailable, available);
+          </a>
+          <!-- release-control:end -->`;
+  const source = await response.text();
+  if (!releaseControlPattern.test(source)) {
+    console.error("Landing page release marker is missing");
+    return new Response(source, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+  const html = source.replace(releaseControlPattern, available);
   const headers = new Headers(response.headers);
   headers.delete("content-encoding");
   headers.delete("content-length");
@@ -57,13 +85,13 @@ async function serveHome(request, env) {
 }
 
 async function loadReleaseManifest(env) {
-  const object = await env.RELEASES.get(releaseManifestKey);
-  if (!object) return null;
-
   try {
+    const object = await env.RELEASES.get(releaseManifestKey);
+    if (!object) return null;
     const value = await object.json();
     return validManifest(value) ? value : null;
-  } catch {
+  } catch (error) {
+    console.error("Release manifest lookup failed", error);
     return null;
   }
 }
@@ -78,13 +106,17 @@ async function serveRelease(request, env, pathname) {
 
   const manifest = await loadReleaseManifest(env);
   if (!manifest) {
-    return new Response("Release unavailable", {
-      status: 503,
-      headers: { "Cache-Control": "no-store" },
-    });
+    return unavailableResponse();
   }
 
   if (pathname === checksumPath) {
+    try {
+      const archive = await env.RELEASES.head(manifest.archiveKey);
+      if (!archive || archive.size <= 0) return unavailableResponse();
+    } catch (error) {
+      console.error("Release checksum archive lookup failed", error);
+      return unavailableResponse();
+    }
     const body = `${manifest.sha256}  Shakespeare-latest.zip\n`;
     const headers = new Headers({
       "Cache-Control": "no-cache",
@@ -97,15 +129,20 @@ async function serveRelease(request, env, pathname) {
     return new Response(request.method === "HEAD" ? null : body, { headers });
   }
 
-  const object =
-    request.method === "HEAD"
+  let object;
+  try {
+    object = request.method === "HEAD"
       ? await env.RELEASES.head(manifest.archiveKey)
       : await env.RELEASES.get(manifest.archiveKey);
+  } catch (error) {
+    console.error("Release archive lookup failed", error);
+    return unavailableResponse();
+  }
   if (!object) {
-    return new Response("Release unavailable", {
-      status: 503,
-      headers: { "Cache-Control": "no-store" },
-    });
+    return unavailableResponse();
+  }
+  if (!Number.isSafeInteger(object.size) || object.size <= 0) {
+    return unavailableResponse();
   }
 
   const headers = new Headers();

@@ -218,6 +218,7 @@ struct ContentView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .editorCommentActivated, object: editorViewModel)) { _ in
                 withAnimation(Layout.sidebarAnimation) {
+                    showVersionHistory = false
                     activeSidebar = .comments
                 }
             }
@@ -863,8 +864,16 @@ extension ContentView {
         let name = namedVersionName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
         Task {
-            guard let snapshot = await editorViewModel.latestSnapshot(for: document) else { return }
-            VersionStore.shared.saveVersion(filePath: url.path, snapshot: snapshot, name: name)
+            do {
+                guard let snapshot = await editorViewModel.latestSnapshot(for: document) else { return }
+                try await editorViewModel.saveVersionSnapshot(
+                    snapshot,
+                    documentURL: url,
+                    name: name
+                )
+            } catch {
+                editorViewModel.reportPersistenceFailure("Save named version", error: error)
+            }
         }
         namedVersionName = ""
     }

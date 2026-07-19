@@ -1,7 +1,7 @@
 # Development and releasing
 
-GitHub `main` is the source of truth. Make focused commits directly on `main`
-after running `make check`, then push `main`. Cloudflare deploys the website;
+GitHub `main` is the source of truth. Merge focused pull requests only after
+the independent macOS `make check` workflow passes. Cloudflare deploys the website;
 signed macOS releases run explicitly from a trusted Mac.
 
 ## Cloudflare
@@ -12,7 +12,7 @@ Connect the `shakespeare-download` Worker with:
 - Production branch: `main`
 - Root directory: `Website`
 - Build command: `npm ci && npm run ci`
-- Deploy command: `npx wrangler deploy --config wrangler.jsonc`
+- Deploy command: `npm exec --offline wrangler -- deploy --config wrangler.jsonc`
 - Non-production builds: disabled
 - Build watch include path: `*`
 - Build cache: enabled
@@ -50,19 +50,23 @@ Then use a clean `main` that exactly matches `origin/main`:
 VERSION=1.2.3 BUILD_NUMBER=123 make release
 ```
 
-The release command runs the complete checks, builds from clean dependencies,
-signs and notarizes the app, uploads an immutable archive, advances the R2
-manifest, verifies the public download, and pushes the version tag. It restores
-the previous manifest if post-publication verification fails.
+The release command installs locked dependencies, runs the complete checks,
+builds, signs, and notarizes the app, then acquires a repository-wide release
+lock. It verifies or uploads an immutable archive, advances version and build
+metadata monotonically, verifies the public download, and pushes the version
+tag. It restores the previous manifest only when the remote manifest still
+matches the value written by that release process. Interrupted uploads can be
+resumed because identical immutable archive bytes are safely reused.
 
 For the first release only, confirm the bucket has no prior manifest and set
-`ALLOW_INITIAL_RELEASE=1`. `make update` also requires the expected Apple Team
+both `ALLOW_INITIAL_RELEASE=1` and `CONFIRM_EMPTY_RELEASE_MANIFEST=1`.
+`make update` also requires the expected Apple Team
 Identifier on the first verified install; later updates pin the installed
 publisher automatically.
 
 ## Repository controls
 
-Allow maintainers to push focused, validated commits directly to `main`. Block
-force pushes and branch deletion, protect `v*` tags, and keep credentials,
-private keys, account details, and purchase records outside Git. Do not enable
-automation that creates routine dependency-update or feature branches.
+Require the `macOS CI / Full repository check` status for pull requests to
+`main`, require at least one approving review, and block force pushes and branch
+deletion. Protect both `v*` release tags and the `shakespeare-release-lock` tag.
+Keep credentials, private keys, account details, and purchase records outside Git.

@@ -3,9 +3,15 @@ set -euo pipefail
 
 repository_root="$(cd "$(dirname "$0")/.." && pwd)"
 account_name="${SHAKESPEARE_CLOUDFLARE_ACCOUNT_NAME:-Shakespeare}"
+wrangler="$repository_root/Website/node_modules/.bin/wrangler"
+
+if [ ! -x "$wrangler" ]; then
+    echo "Pinned Wrangler is not installed. Run 'npm ci' in Website first." >&2
+    exit 1
+fi
 
 if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
-    account_id="$((cd "$repository_root/Website" && npx wrangler whoami --json) | node -e '
+    account_id="$($wrangler whoami --json | node -e '
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", chunk => input += chunk);
@@ -34,4 +40,4 @@ process.stdin.on("end", () => {
 fi
 
 cd "$repository_root/Website"
-exec npx wrangler "$@" --config wrangler.jsonc
+exec "$wrangler" "$@" --config wrangler.jsonc

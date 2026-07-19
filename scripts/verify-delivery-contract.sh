@@ -4,8 +4,15 @@ set -euo pipefail
 repository_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repository_root"
 
-if [ -n "$(git ls-files '.github/workflows/*')" ]; then
-    echo "Delivery contract failed: GitHub-hosted workflows are intentionally disabled." >&2
+if [ ! -f ".github/workflows/macos-ci.yml" ]; then
+    echo "Delivery contract failed: the independent macOS CI workflow is missing." >&2
+    exit 1
+fi
+
+if ! grep -F "run: make check" .github/workflows/macos-ci.yml >/dev/null ||
+   ! grep -F "permissions:" .github/workflows/macos-ci.yml >/dev/null ||
+   ! grep -F "contents: read" .github/workflows/macos-ci.yml >/dev/null; then
+    echo "Delivery contract failed: macOS CI must run make check with read-only repository access." >&2
     exit 1
 fi
 
@@ -46,6 +53,10 @@ requireValue(wrangler.name === "shakespeare-download", "unexpected Worker name")
 requireValue(wrangler.workers_dev === false, "workers.dev must remain disabled");
 requireValue(wrangler.main === "worker/index.js", "unexpected Worker entry point");
 requireValue(wrangler.assets?.directory === "public", "unexpected static asset directory");
+requireValue(
+  wrangler.assets?.run_worker_first?.includes("/"),
+  "the landing page must pass through the Worker",
+);
 requireValue(
   wrangler.assets?.run_worker_first?.includes("/downloads/*"),
   "download routes must pass through the Worker",
