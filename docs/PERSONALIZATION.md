@@ -31,8 +31,12 @@ for relevant style-aware requests.
 
 Shakespeare waits for a successful save and uses only high-confidence outcomes.
 Accepted-unchanged model prose never becomes a sample of the writer's voice.
-Repeated signals can become proposed preferences, but the writer must review
-them before use.
+An accepted suggestion can still contribute its abstract rationale as a weak
+preference signal. A final passage enters the runtime rewrite-example layer
+only when the writer changed it materially; punctuation or one-word tweaks stay
+contrastive edit evidence instead of turning the surrounding model prose into a
+voice sample. Repeated signals can become proposed preferences, but the writer
+must review them before use.
 
 ## Inline writing gaps
 
@@ -59,7 +63,7 @@ Selection feedback never starts a web search; research remains available as a
 separate follow-up when needed.
 
 Selection feedback, inline gap fills, and ambient editorial suggestions all use
-the current **Writing Model** selection (Kimi K3 by default) and the same live
+the current **Writing Model** selection (Gemini Flash by default) and the same live
 style packet. Ordinary research chat uses the separate **Research Model**
 selection (Gemini Flash by default). Grammar and spelling checks stay
 style-neutral so correctness is not bent toward a personal voice.
@@ -78,3 +82,19 @@ documents, recovery drafts, versions, settings, or the OpenRouter key.
 
 The local history and sample library are bounded and compacted automatically.
 The raw ledger is never uploaded as background data.
+
+## Prompt caching
+
+Every model-backed feature uses a private, per-session cache-routing identifier
+and a cacheable instruction prefix. Style-aware requests place the current
+reviewed profile in a separate cacheable block, followed by the live selection,
+nearby prose, and document flow as a dynamic suffix. The complete prompt also
+gets a final cache breakpoint so exact retries can reuse it. In general chat,
+the previous and current user turns are cache breakpoints so a growing
+conversation can reuse its history. Because provider caches are
+content-addressed, changing the style profile, conversation, or document
+produces a new entry instead of reusing stale text. Generated suggestions and
+answers are never cached or replayed by Shakespeare.
+
+OpenRouter usage events expose prompt, cache-read, and cache-write token counts
+so cache behavior can be verified without recording document content.

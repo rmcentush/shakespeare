@@ -2,6 +2,7 @@ import { Editor, Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { sendToSwift } from './bridge';
+import { selectionIsWithinWritingGap } from './gapSuggestions';
 
 const selectionFeedbackPluginKey = new PluginKey<DecorationSet>('selectionFeedback');
 
@@ -32,6 +33,7 @@ function selectionFeedbackWidget(): HTMLElement {
 function buildSelectionFeedbackDecoration(editor: Editor, state: any): DecorationSet {
   const { from, to, empty } = state.selection;
   if (empty || !editor.isEditable) return DecorationSet.empty;
+  if (selectionIsWithinWritingGap(state)) return DecorationSet.empty;
   const selectedText = state.doc.textBetween(from, to, '\n', '\n').trim();
   if (!selectedText) return DecorationSet.empty;
 

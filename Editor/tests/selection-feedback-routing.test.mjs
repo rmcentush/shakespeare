@@ -12,6 +12,10 @@ const feedbackExtension = readFileSync(
   resolve(editorRoot, 'src/selectionFeedback.ts'),
   'utf8'
 );
+const gapSuggestions = readFileSync(
+  resolve(editorRoot, 'src/gapSuggestions.ts'),
+  'utf8'
+);
 const theme = readFileSync(resolve(editorRoot, 'src/theme.css'), 'utf8');
 const contentView = readProjectFile('Sources/WordProcessor/Views/ContentView.swift');
 const chatViewModel = readProjectFile(
@@ -32,6 +36,18 @@ test('places an accessible feedback control beside selected editor text', () => 
   assert.match(theme, /\.selection-feedback-action\s*\{[\s\S]*?position: absolute;/);
   assert.match(contentView, /for: \.selectionFeedbackRequested,[\s\S]*?requestSelectionFeedback\(\)/);
   assert.doesNotMatch(contentView, /Label\("Feedback"/);
+});
+
+test('shows only one sparkle when selection and writing-gap actions overlap', () => {
+  assert.match(feedbackExtension, /if \(selectionIsWithinWritingGap\(state\)\) return DecorationSet\.empty/);
+  assert.match(
+    gapSuggestions,
+    /const active = selectionFrom >= gap\.from && selectionTo <= gap\.to/
+  );
+  assert.doesNotMatch(
+    gapSuggestions,
+    /selectionFrom <= gap\.to && selectionTo >= gap\.from/
+  );
 });
 
 test('routes selection feedback through the writing model without web search', () => {

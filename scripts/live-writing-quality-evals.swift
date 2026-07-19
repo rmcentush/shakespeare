@@ -21,7 +21,7 @@ struct LiveWritingQualityEvals {
 
         let model = ProcessInfo.processInfo.environment["OPENROUTER_EVAL_MODEL"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let selectedModel = (model?.isEmpty == false) ? model! : "moonshotai/kimi-k3"
+        let selectedModel = (model?.isEmpty == false) ? model! : "google/gemini-3.5-flash"
 
         for fixture in fixtures {
             let responseText = try await requestReview(

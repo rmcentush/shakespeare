@@ -14,7 +14,7 @@ enum StyleLearningPolicy {
     ) -> Bool {
         guard trainingEligible == true,
               (confidence ?? 0) >= 0.8,
-              ["accepted_modified", "later_accepted", "rejected_rewritten"]
+              ["accepted_modified", "rejected_rewritten"]
                 .contains(outcome ?? ""),
               let text = finalText?.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty
@@ -22,28 +22,71 @@ enum StyleLearningPolicy {
         return true
     }
 
-    static func isConfirmedUserRewrite(outcome: String?, finalText: String?) -> Bool {
+    static func isConfirmedUserRewrite(
+        outcome: String?,
+        proposedText: String,
+        finalText: String?
+    ) -> Bool {
         guard ["accepted_modified", "rejected_rewritten"].contains(outcome ?? ""),
               let text = finalText?.trimmingCharacters(in: .whitespacesAndNewlines),
-              text.count >= minimumConfirmedRewriteCharacters
+              text.count >= minimumConfirmedRewriteCharacters,
+              isMaterialRewrite(proposedText: proposedText, finalText: text)
         else { return false }
         return true
     }
 
-    /// Accepting an inline gap fill unchanged is a preference signal, but not a
+    /// The runtime example layer quotes the final prose as a positive sample, so
+    /// a punctuation fix or one-word tweak is not enough. Small edits remain
+    /// available to the profile refiner as contrastive edit evidence.
+    private static func isMaterialRewrite(
+        proposedText: String,
+        finalText: String
+    ) -> Bool {
+        let proposedTokens = styleTokens(in: proposedText)
+        let finalTokens = styleTokens(in: finalText)
+        guard !finalTokens.isEmpty else { return false }
+        if proposedTokens.isEmpty { return finalTokens.count >= 8 }
+
+        let differenceCount = finalTokens.difference(from: proposedTokens).count
+        let baseline = max(proposedTokens.count, finalTokens.count)
+        return differenceCount >= 4
+            && Double(differenceCount) / Double(max(baseline, 1)) >= 0.12
+    }
+
+    private static func styleTokens(in text: String) -> [String] {
+        var tokens: [String] = []
+        var word = ""
+
+        func flushWord() {
+            guard !word.isEmpty else { return }
+            tokens.append(word.lowercased())
+            word = ""
+        }
+
+        for character in text {
+            if character.isLetter || character.isNumber {
+                word.append(character)
+            } else {
+                flushWord()
+                if !character.isWhitespace { tokens.append(String(character)) }
+            }
+        }
+        flushWord()
+        return tokens
+    }
+
+    /// Accepting a model suggestion unchanged is a preference signal, but not a
     /// writer-authored prose sample. The evidence packet therefore carries only
-    /// the writer's note and the fill's abstract style rationale.
-    static func isAcceptedGapPreference(
-        groupID: String,
+    /// the instruction and abstract rationale, never the accepted model prose.
+    static func isAcceptedSuggestionPreference(
         decision: String,
         instruction: String,
         rationale: String,
         outcome: String?,
         confidence: Double?
     ) -> Bool {
-        groupID.hasPrefix("edit_gap_")
-            && decision == "accept"
-            && outcome == "accepted_unchanged"
+        ((decision == "accept" && outcome == "accepted_unchanged")
+            || outcome == "later_accepted")
             && (confidence ?? 0) >= 0.8
             && !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !rationale.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

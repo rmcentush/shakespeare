@@ -4,15 +4,18 @@ final class LanguageModelService: Sendable {
     static let maximumTransportRetryCount = 1
     static let maximumFallbackModelsPerRequest = 3
     static let maximumEmptyResponseAttempts = 3
+    static let maximumRequestBodyBytes = 512 * 1_024
 
     private let purpose: InferencePurpose
     private let modelOverride: String?
     private let session: URLSession
     private let apiKeyProvider: @Sendable (String) -> String?
+    private let promptCacheSessionID: String
 
     init(
         purpose: InferencePurpose = .assistant,
         model: String? = nil,
+        promptCacheSessionID: String? = nil,
         session: URLSession = LanguageModelService.makeSession(),
         apiKeyProvider: @escaping @Sendable (String) -> String? = {
             APIKeyStore.shared.getAPIKey(service: $0)
@@ -22,6 +25,13 @@ final class LanguageModelService: Sendable {
         self.modelOverride = model
         self.session = session
         self.apiKeyProvider = apiKeyProvider
+        let requestedCacheSessionID = promptCacheSessionID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        self.promptCacheSessionID = String(
+            ((requestedCacheSessionID?.isEmpty == false ? requestedCacheSessionID : nil)
+                ?? "shakespeare-\(purpose.rawValue)-\(UUID().uuidString.lowercased())")
+                .prefix(256)
+        )
     }
 
     var currentRuntime: InferenceRuntime {
@@ -31,6 +41,13 @@ final class LanguageModelService: Sendable {
     enum StreamChunk: Sendable {
         case text(String)
         case citation(title: String, url: String)
+        case cacheUsage(PromptCacheUsage)
+    }
+
+    struct PromptCacheUsage: Equatable, Sendable {
+        let promptTokens: Int
+        let cachedTokens: Int
+        let cacheWriteTokens: Int
     }
 
     struct ProviderTextCandidate: Equatable {
@@ -39,6 +56,14 @@ final class LanguageModelService: Sendable {
     }
 
     static let ephemeralPromptCacheControl: [String: Any] = ["type": "ephemeral"]
+
+    static func cacheableTextBlock(_ text: String) -> [String: Any] {
+        [
+            "type": "text",
+            "text": text,
+            "cache_control": ephemeralPromptCacheControl,
+        ]
+    }
 
     func streamMessage(
         messages: [[String: Any]],
@@ -50,7 +75,8 @@ final class LanguageModelService: Sendable {
     ) -> AsyncThrowingStream<StreamChunk, Error> {
         let runtime = currentRuntime
         return AsyncThrowingStream { continuation in
-            let task = Task.detached(priority: .userInitiated) { [runtime, session, apiKeyProvider] in
+            let task = Task.detached(priority: .userInitiated) {
+                [runtime, session, apiKeyProvider, promptCacheSessionID] in
                 guard let apiKey = apiKeyProvider(runtime.apiKeyService) else {
                     continuation.finish(throwing: APIError.noAPIKey)
                     return
@@ -70,7 +96,8 @@ final class LanguageModelService: Sendable {
                         outputFormat: outputFormat,
                         temperature: temperature,
                         maxTokens: maxTokens,
-                        webSearchEnabled: webSearchEnabled
+                        webSearchEnabled: webSearchEnabled,
+                        promptCacheSessionID: promptCacheSessionID
                     )
                     var hasYieldedChunk = false
                     do {
@@ -80,7 +107,12 @@ final class LanguageModelService: Sendable {
                         request.setValue("application/json", forHTTPHeaderField: "content-type")
                         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "authorization")
                         request.setValue("Shakespeare", forHTTPHeaderField: "x-title")
-                        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+                        let requestBody = try JSONSerialization.data(withJSONObject: body)
+                        guard requestBody.count <= Self.maximumRequestBodyBytes else {
+                            continuation.finish(throwing: APIError.requestTooLarge)
+                            return
+                        }
+                        request.httpBody = requestBody
 
                         let (bytes, response) = try await session.bytes(for: request)
                         guard let httpResponse = response as? HTTPURLResponse else {
@@ -90,7 +122,11 @@ final class LanguageModelService: Sendable {
 
                         guard httpResponse.statusCode == 200 else {
                             var errorBody = ""
-                            for try await line in bytes.lines { errorBody += line }
+                            for try await line in bytes.lines {
+                                let remaining = 16_000 - errorBody.count
+                                guard remaining > 0 else { break }
+                                errorBody += String(line.prefix(remaining))
+                            }
                             if Self.canAdvanceModelBatch(
                                 after: modelBatchIndex,
                                 batchCount: modelBatches.count,
@@ -170,6 +206,13 @@ final class LanguageModelService: Sendable {
                                     fragment = candidate.text
                                 }
                                 if let fragment, !fragment.isEmpty {
+                                    let responseCharacterLimit = max(8_000, maxTokens * 8)
+                                    guard attemptText.count + fragment.count
+                                            <= responseCharacterLimit
+                                    else {
+                                        streamFailure = "OpenRouter exceeded the bounded response size."
+                                        return true
+                                    }
                                     attemptText += fragment
                                     emitPendingContentIfUseful()
                                 }
@@ -179,6 +222,10 @@ final class LanguageModelService: Sendable {
                             if !citations.isEmpty {
                                 pendingCitations.append(contentsOf: citations)
                                 emitPendingContentIfUseful()
+                            }
+
+                            if let usage = Self.openRouterPromptCacheUsage(from: event) {
+                                continuation.yield(.cacheUsage(usage))
                             }
 
                             if let choice = (event["choices"] as? [[String: Any]])?.first,
@@ -241,11 +288,9 @@ final class LanguageModelService: Sendable {
                                 continue
                             }
                             if completedEmptyResponses < Self.maximumEmptyResponseAttempts,
-                               let fallbackRuntime = Self.emptyResponseFallbackRuntime(
-                                   after: attemptRuntime.model,
-                                   in: runtime
-                               ) {
-                                attemptRuntime = fallbackRuntime
+                               modelBatchIndex + 1 < modelBatches.count {
+                                modelBatchIndex += 1
+                                attemptRuntime = modelBatches[modelBatchIndex]
                                 continue
                             }
 
@@ -310,6 +355,24 @@ final class LanguageModelService: Sendable {
         return nil
     }
 
+    static func openRouterPromptCacheUsage(
+        from event: [String: Any]
+    ) -> PromptCacheUsage? {
+        guard let usage = event["usage"] as? [String: Any] else { return nil }
+        let details = usage["prompt_tokens_details"] as? [String: Any] ?? [:]
+        return PromptCacheUsage(
+            promptTokens: integerValue(usage["prompt_tokens"]),
+            cachedTokens: integerValue(details["cached_tokens"]),
+            cacheWriteTokens: integerValue(details["cache_write_tokens"])
+        )
+    }
+
+    private static func integerValue(_ value: Any?) -> Int {
+        if let value = value as? Int { return value }
+        if let value = value as? NSNumber { return value.intValue }
+        return 0
+    }
+
     private static func contentText(from value: Any?) -> String? {
         if let text = value as? String { return text }
         if let block = value as? [String: Any] {
@@ -324,46 +387,31 @@ final class LanguageModelService: Sendable {
         return nil
     }
 
-    private static func emptyResponseFallbackRuntime(
-        after model: String,
-        in runtime: InferenceRuntime
-    ) -> InferenceRuntime? {
-        let orderedModelIDs = [runtime.model] + runtime.fallbackModels
-        guard let currentIndex = orderedModelIDs.firstIndex(of: model),
-              currentIndex + 1 < orderedModelIDs.count
-        else { return nil }
-
-        let fallbackIndex = currentIndex + 1
-        let fallbackModel = orderedModelIDs[fallbackIndex]
-        let remainingFallbacks = Array(
-            orderedModelIDs.dropFirst(fallbackIndex + 1).prefix(maximumFallbackModelsPerRequest)
-        )
-        return InferenceRuntime(
-            providerID: runtime.providerID,
-            providerName: runtime.providerName,
-            messagesURL: runtime.messagesURL,
-            apiKeyService: runtime.apiKeyService,
-            model: fallbackModel,
-            fallbackModels: remainingFallbacks,
-            webSearchEnabled: runtime.webSearchEnabled,
-            supportsTemperature: InferenceSettings.modelOption(for: fallbackModel)?.supportsTemperature
-                ?? runtime.supportsTemperature
-        )
-    }
-
-    /// OpenRouter caps the `models` fallback array at three entries. Preserve the
-    /// user's complete ordered waterfall by splitting larger catalogs into
-    /// non-overlapping batches, each with one primary and up to three fallbacks.
+    /// OpenRouter caps the `models` fallback array at three entries. Keep each
+    /// server-side batch parameter-compatible: a model that needs a different
+    /// reasoning or temperature request gets its own later client-side batch.
     static func modelBatches(for runtime: InferenceRuntime) -> [InferenceRuntime] {
-        let orderedModelIDs = [runtime.model] + runtime.fallbackModels
-        let batchSize = maximumFallbackModelsPerRequest + 1
+        var remainingModelIDs = [runtime.model] + runtime.fallbackModels
+        var batches: [InferenceRuntime] = []
 
-        return stride(from: 0, to: orderedModelIDs.count, by: batchSize).map { start in
-            let end = min(start + batchSize, orderedModelIDs.count)
-            let modelIDs = Array(orderedModelIDs[start..<end])
-            let primaryModel = modelIDs[0]
+        while let primaryModel = remainingModelIDs.first {
+            let primaryCompatibility = requestCompatibility(
+                for: primaryModel,
+                in: runtime
+            )
+            var modelIDs = [primaryModel]
+            var deferredModelIDs: [String] = []
 
-            return InferenceRuntime(
+            for modelID in remainingModelIDs.dropFirst() {
+                if modelIDs.count <= maximumFallbackModelsPerRequest,
+                   requestCompatibility(for: modelID, in: runtime) == primaryCompatibility {
+                    modelIDs.append(modelID)
+                } else {
+                    deferredModelIDs.append(modelID)
+                }
+            }
+            remainingModelIDs = deferredModelIDs
+            batches.append(InferenceRuntime(
                 providerID: runtime.providerID,
                 providerName: runtime.providerName,
                 messagesURL: runtime.messagesURL,
@@ -373,8 +421,25 @@ final class LanguageModelService: Sendable {
                 webSearchEnabled: runtime.webSearchEnabled,
                 supportsTemperature: InferenceSettings.modelOption(for: primaryModel)?.supportsTemperature
                     ?? runtime.supportsTemperature
-            )
+            ))
         }
+        return batches
+    }
+
+    private struct RequestCompatibility: Equatable {
+        let reasoningEffort: String?
+        let supportsTemperature: Bool
+    }
+
+    private static func requestCompatibility(
+        for modelID: String,
+        in runtime: InferenceRuntime
+    ) -> RequestCompatibility {
+        RequestCompatibility(
+            reasoningEffort: InferenceSettings.preferredReasoningEffort(for: modelID),
+            supportsTemperature: InferenceSettings.modelOption(for: modelID)?.supportsTemperature
+                ?? (modelID == runtime.model ? runtime.supportsTemperature : true)
+        )
     }
 
     static func requestBody(
@@ -384,7 +449,8 @@ final class LanguageModelService: Sendable {
         outputFormat: [String: Any]?,
         temperature: Double?,
         maxTokens: Int,
-        webSearchEnabled: Bool? = nil
+        webSearchEnabled: Bool? = nil,
+        promptCacheSessionID: String? = nil
     ) -> [String: Any] {
         var requestMessages = messages.map { message -> [String: Any] in
             var result = message
@@ -395,10 +461,11 @@ final class LanguageModelService: Sendable {
         }
         if let systemPrompt, !promptText(from: systemPrompt).isEmpty {
             requestMessages.insert(
-                ["role": "system", "content": openRouterContent(from: systemPrompt)],
+                ["role": "system", "content": cacheablePromptContent(from: systemPrompt)],
                 at: 0
             )
         }
+        markRecentUserPrefixesCacheable(in: &requestMessages)
 
         var provider: [String: Any] = [
             "data_collection": "deny",
@@ -410,6 +477,12 @@ final class LanguageModelService: Sendable {
             "stream": true,
             "messages": requestMessages,
         ]
+        if let promptCacheSessionID {
+            let normalized = promptCacheSessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalized.isEmpty {
+                body["session_id"] = String(normalized.prefix(256))
+            }
+        }
         let fallbackModels = Array(
             runtime.fallbackModels.prefix(maximumFallbackModelsPerRequest)
         )
@@ -417,12 +490,18 @@ final class LanguageModelService: Sendable {
             body["models"] = fallbackModels
         }
         if runtime.supportsTemperature, let temperature { body["temperature"] = temperature }
-        if webSearchEnabled ?? runtime.webSearchEnabled {
-            provider["sort"] = "throughput"
+        let preferredReasoningEffort = InferenceSettings.preferredReasoningEffort(
+            for: runtime.model
+        )
+        if let reasoningEffort = preferredReasoningEffort
+            ?? ((webSearchEnabled ?? runtime.webSearchEnabled) ? "minimal" : nil) {
             body["reasoning"] = [
-                "effort": "minimal",
+                "effort": reasoningEffort,
                 "exclude": true,
             ]
+        }
+        if webSearchEnabled ?? runtime.webSearchEnabled {
+            provider["sort"] = "throughput"
             body["verbosity"] = "low"
             body["tools"] = [[
                 "type": "openrouter:web_search",
@@ -450,6 +529,48 @@ final class LanguageModelService: Sendable {
         }
         body["provider"] = provider
         return body
+    }
+
+    /// Keep one completed chat turn reusable and write a breakpoint for the
+    /// newest turn. Single-turn features simply cache their only user prompt.
+    /// Combined with the system/style breakpoints this stays within the four
+    /// explicit cache points accepted by supported OpenRouter providers.
+    private static func markRecentUserPrefixesCacheable(
+        in messages: inout [[String: Any]]
+    ) {
+        var remainingBreakpoints = 2
+        for index in messages.indices.reversed() where remainingBreakpoints > 0 {
+            guard messages[index]["role"] as? String == "user",
+                  let content = messages[index]["content"]
+            else { continue }
+            messages[index]["content"] = cacheablePromptContent(from: content)
+            remainingBreakpoints -= 1
+        }
+    }
+
+    private static func cacheablePromptContent(from value: Any) -> Any {
+        let converted = openRouterContent(from: value)
+        if let text = converted as? String {
+            return [cacheableTextBlock(text)]
+        }
+        if var block = converted as? [String: Any] {
+            if block["cache_control"] == nil {
+                block["cache_control"] = ephemeralPromptCacheControl
+            }
+            return [block]
+        }
+        guard var blocks = converted as? [Any] else { return converted }
+        for index in blocks.indices.reversed() {
+            guard var block = blocks[index] as? [String: Any],
+                  block["type"] as? String == "text"
+            else { continue }
+            if block["cache_control"] == nil {
+                block["cache_control"] = ephemeralPromptCacheControl
+                blocks[index] = block
+            }
+            break
+        }
+        return blocks
     }
 
     private static func openRouterContent(from value: Any) -> Any {
@@ -602,6 +723,7 @@ final class LanguageModelService: Sendable {
         case streamError(String)
         case incompleteStream
         case emptyResponse
+        case requestTooLarge
 
         var errorDescription: String? {
             switch self {
@@ -629,6 +751,8 @@ final class LanguageModelService: Sendable {
                 return "OpenRouter ended the response before confirming completion. Partial text was not accepted as complete."
             case .emptyResponse:
                 return "OpenRouter completed the request without returning answer text."
+            case .requestTooLarge:
+                return "This model request is too large. Shorten the active passage and try again."
             }
         }
 

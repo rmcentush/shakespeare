@@ -35,7 +35,7 @@ enum InferenceSettings {
     static let geminiFlashModel = "google/gemini-3.5-flash"
     static let haikuModel = "anthropic/claude-haiku-4.5"
     static let grokModel = "x-ai/grok-4.5"
-    static let defaultWritingModel = kimiModel
+    static let defaultWritingModel = geminiFlashModel
     static let defaultResearchModel = geminiFlashModel
     static let availableModels: [InferenceModelOption] = [
         .init(
@@ -115,9 +115,30 @@ enum InferenceSettings {
                 ![geminiFlashModel, haikuModel, grokModel, kimiModel].contains($0)
             }
         } else {
-            orderedModelIDs = availableModels.map(\.id)
+            // Keep the fast, low-reasoning models at the front of the writing
+            // recovery path. Slower deep-reasoning models remain available as
+            // later fallbacks and as explicit user choices.
+            orderedModelIDs = [
+                geminiFlashModel,
+                haikuModel,
+                kimiModel,
+                grokModel,
+            ] + availableModels.map(\.id).filter {
+                ![geminiFlashModel, haikuModel, kimiModel, grokModel].contains($0)
+            }
         }
         return orderedModelIDs.filter { $0 != primaryModel }
+    }
+
+    static func preferredReasoningEffort(for modelID: String) -> String? {
+        switch normalizedModelID(modelID) {
+        case geminiFlashModel:
+            return "minimal"
+        case grokModel:
+            return "low"
+        default:
+            return nil
+        }
     }
 
     static func runtime(

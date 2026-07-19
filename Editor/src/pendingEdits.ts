@@ -811,12 +811,10 @@ export function rejectAllPendingEdits(ed: Editor, emitDecisions = true): boolean
   const decisionPayloads = emitDecisions
     ? state.edits.map((edit) => ({ edit, payload: editDecisionPayload(ed, edit, 'reject') }))
     : [];
-  if (emitDecisions) {
-    decisionPayloads.forEach(({ payload }) => sendToSwift('editDecision', payload));
-  }
   const result = dispatchPendingEditAction(ed, { type: 'rejectAll' });
   if (result) {
     decisionPayloads.forEach(({ edit, payload }) => {
+      sendToSwift('editDecision', payload);
       trackPersonalizationDecision(ed, edit, payload);
     });
   }

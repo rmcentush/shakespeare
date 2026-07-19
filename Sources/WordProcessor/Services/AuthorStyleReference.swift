@@ -1,12 +1,15 @@
 import Foundation
 
 enum AuthorStyleReference {
+    private static let cacheLock = NSLock()
     private static var cachedContent: String?
     private static var cachedContentModificationDate: Date?
     private static var cachedLearnedPreferences: String?
     private static var cachedLearnedPreferencesModificationDate: Date?
 
     static var content: String {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
         ensureWritableReferenceExists()
         return cachedString(
             url: writableReferenceURL,
@@ -16,6 +19,8 @@ enum AuthorStyleReference {
     }
 
     static var learnedPreferences: String {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
         ensureStyleDirectoryExists()
         return cachedString(
             url: learnedPreferencesURL,
@@ -38,6 +43,8 @@ enum AuthorStyleReference {
     }
 
     static func reload() {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
         cachedContent = nil
         cachedContentModificationDate = nil
         cachedLearnedPreferences = nil
@@ -45,6 +52,8 @@ enum AuthorStyleReference {
     }
 
     static func writeLearnedPreferences(_ content: String) throws {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
         ensureStyleDirectoryExists()
         try content.write(to: learnedPreferencesURL, atomically: true, encoding: .utf8)
         try protectFile(at: learnedPreferencesURL)

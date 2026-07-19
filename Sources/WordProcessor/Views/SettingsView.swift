@@ -762,6 +762,7 @@ struct SettingsView: View {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
+    @MainActor
     private func importWritingSamples(_ result: Result<[URL], Error>) {
         writingSampleImportFailed = false
         guard case let .success(urls) = result else {
@@ -773,12 +774,17 @@ struct SettingsView: View {
             return
         }
 
-        let importResult = WritingSampleImporter.importFiles(urls)
-        writingSampleImportFailed = importResult.isFailure
-        writingSampleImportMessage = importResult.message
-        refreshStyleContext()
-        if importResult.imported > 0 {
-            Task { await StyleProfileRefinementCoordinator.shared.prepareIfNeeded() }
+        writingSampleImportMessage = "Importing…"
+        Task {
+            let importResult = await Task.detached(priority: .utility) {
+                WritingSampleImporter.importFiles(urls)
+            }.value
+            writingSampleImportFailed = importResult.isFailure
+            writingSampleImportMessage = importResult.message
+            refreshStyleContext()
+            if importResult.imported > 0 {
+                await StyleProfileRefinementCoordinator.shared.prepareIfNeeded()
+            }
         }
     }
 

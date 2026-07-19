@@ -44,6 +44,7 @@ struct StyleProfileEvals {
         require(
             !StyleLearningPolicy.isConfirmedUserRewrite(
                 outcome: "accepted_unchanged",
+                proposedText: substantial,
                 finalText: substantial
             ),
             "accepted-unchanged model prose entered the confirmed rewrite layer"
@@ -51,6 +52,7 @@ struct StyleProfileEvals {
         require(
             StyleLearningPolicy.isConfirmedUserRewrite(
                 outcome: "accepted_modified",
+                proposedText: "The model produced a broad and generic sentence without the writer's cadence.",
                 finalText: substantial
             ),
             "an actively modified rewrite was excluded"
@@ -58,6 +60,7 @@ struct StyleProfileEvals {
         require(
             StyleLearningPolicy.isConfirmedUserRewrite(
                 outcome: "rejected_rewritten",
+                proposedText: "The model produced a broad and generic sentence without the writer's cadence.",
                 finalText: substantial
             ),
             "a writer-authored replacement was excluded"
@@ -65,31 +68,38 @@ struct StyleProfileEvals {
         require(
             !StyleLearningPolicy.isConfirmedUserRewrite(
                 outcome: "accepted_modified",
+                proposedText: "Tiny model change",
                 finalText: "Tiny change"
             ),
             "a tiny edit was treated as representative style evidence"
         )
         require(
-            StyleLearningPolicy.isAcceptedGapPreference(
-                groupID: "edit_gap_123",
+            StyleLearningPolicy.isAcceptedSuggestionPreference(
                 decision: "accept",
                 instruction: "bridge to the consequence",
                 rationale: "Uses a compact declarative transition",
                 outcome: "accepted_unchanged",
                 confidence: 1
             ),
-            "an accepted gap did not become preference-only evidence"
+            "an accepted suggestion did not become preference-only evidence"
         )
         require(
-            !StyleLearningPolicy.isAcceptedGapPreference(
-                groupID: "edit_gap_123",
+            !StyleLearningPolicy.isAcceptedSuggestionPreference(
                 decision: "accept",
                 instruction: "bridge to the consequence",
                 rationale: "Uses a compact declarative transition",
                 outcome: "accepted_modified",
                 confidence: 1
             ),
-            "a writer-modified gap was duplicated as preference-only evidence"
+            "a writer-modified suggestion was duplicated as preference-only evidence"
+        )
+        require(
+            !StyleLearningPolicy.isConfirmedUserRewrite(
+                outcome: "accepted_modified",
+                proposedText: substantial,
+                finalText: String(substantial.dropLast()) + "!"
+            ),
+            "punctuation-only tweaks promoted model prose into the runtime example layer"
         )
     }
 

@@ -385,13 +385,15 @@ final class TrainingEventStore: @unchecked Sendable {
     ) {
         guard PersonalizationSettings.isEnabled,
               !documentID.isEmpty,
-              comment.source == "agent"
+              comment.source == "agent",
+              decision == "reject" || decision == "dismiss"
         else { return }
         let timestamp = Self.nowMilliseconds
         let proposed = comment.suggestedReplacement
-        let event = Event(
+        let actionID = "\(comment.id)_rejected"
+        let action = Event(
             schemaVersion: Self.currentSchemaVersion,
-            id: "\(comment.id)_\(decision)_\(Int(timestamp))",
+            id: actionID,
             eventType: "edit_decision",
             recordedAt: timestamp,
             writerID: PersonalizationSettings.writerID,
@@ -419,7 +421,52 @@ final class TrainingEventStore: @unchecked Sendable {
             confidence: nil,
             trainingEligible: nil
         )
-        append(event)
+        let outcome = Event(
+            schemaVersion: Self.currentSchemaVersion,
+            id: "\(actionID)_outcome",
+            eventType: "edit_outcome",
+            recordedAt: timestamp,
+            writerID: action.writerID,
+            documentID: documentID,
+            provider: runtime.providerID.rawValue,
+            model: runtime.model,
+            source: action.source,
+            operationKind: action.operationKind,
+            learningCategory: action.learningCategory,
+            decision: "reject",
+            instruction: action.instruction,
+            originalText: action.originalText,
+            proposedText: action.proposedText,
+            finalText: action.originalText,
+            surroundingText: action.surroundingText,
+            rationale: action.rationale,
+            groupID: action.groupID,
+            contentHash: Self.hash(
+                [actionID, "rejected_unchanged", action.originalText]
+                    .joined(separator: "\u{001f}")
+            ),
+            consent: Self.localConsent,
+            provenance: Self.provenance(capture: "ambient_review_resolution"),
+            parentEventID: actionID,
+            outcome: "rejected_unchanged",
+            confidence: 1,
+            trainingEligible: false
+        )
+
+        lock.lock()
+        defer { lock.unlock() }
+        do {
+            _ = allEventsUnlocked()
+            if cachedEventIDs?.contains(action.id) != true {
+                try appendUnlocked(action)
+            }
+            if cachedEventIDs?.contains(outcome.id) != true {
+                try appendUnlocked(outcome)
+            }
+            try compactIfNeededUnlocked()
+        } catch {
+            print("TrainingEventStore: failed to record resolved comment rejection: \(error)")
+        }
     }
 
     func readiness() -> Readiness {
@@ -440,10 +487,12 @@ final class TrainingEventStore: @unchecked Sendable {
                 && $0.provenance.capture == "writing_sample_import"
                 && $0.trainingEligible == true
         }
-        let styleCount = styleDecisionsUnlocked(events: events).count
-        let confirmedRewriteCount = styleDecisionsUnlocked(events: events).filter {
+        let styleDecisions = styleDecisionsUnlocked(events: events)
+        let styleCount = styleDecisions.count
+        let confirmedRewriteCount = styleDecisions.filter {
             StyleLearningPolicy.isConfirmedUserRewrite(
                 outcome: $0.outcome,
+                proposedText: $0.replacementText,
                 finalText: $0.finalText
             )
         }.count
@@ -520,6 +569,7 @@ final class TrainingEventStore: @unchecked Sendable {
         for decision in decisions {
             guard StyleLearningPolicy.isConfirmedUserRewrite(
                 outcome: decision.outcome,
+                proposedText: decision.replacementText,
                 finalText: decision.finalText
             ),
                   let finalText = decision.finalText?.trimmingCharacters(
@@ -640,8 +690,7 @@ final class TrainingEventStore: @unchecked Sendable {
 
             guard let outcome = outcomes[action.id] else { return nil }
 
-            if StyleLearningPolicy.isAcceptedGapPreference(
-                groupID: action.groupID,
+            if StyleLearningPolicy.isAcceptedSuggestionPreference(
                 decision: action.decision,
                 instruction: action.instruction,
                 rationale: action.rationale,
@@ -824,11 +873,10 @@ final class TrainingEventStore: @unchecked Sendable {
                     trainingEligible: event.trainingEligible,
                     confidence: event.confidence
                 )
-                let gapPreferenceEvidence = event.parentEventID
+                let acceptedPreferenceEvidence = event.parentEventID
                     .flatMap { actionsByID[$0] }
                     .map { action in
-                        StyleLearningPolicy.isAcceptedGapPreference(
-                            groupID: action.groupID,
+                        StyleLearningPolicy.isAcceptedSuggestionPreference(
                             decision: action.decision,
                             instruction: action.instruction,
                             rationale: action.rationale,
@@ -836,7 +884,7 @@ final class TrainingEventStore: @unchecked Sendable {
                             confidence: event.confidence
                         )
                     } ?? false
-                requiresProfileProcessing = durableWriterEvidence || gapPreferenceEvidence
+                requiresProfileProcessing = durableWriterEvidence || acceptedPreferenceEvidence
             } else {
                 // Legacy action-only records cannot prove the writer changed
                 // model prose, so they remain history rather than profile evidence.

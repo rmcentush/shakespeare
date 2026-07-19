@@ -66,6 +66,14 @@ struct StyleContextEvals {
             "reviewed learned preference was omitted"
         )
         require(
+            first.cacheablePrefixText.contains("Prefer concrete openings"),
+            "stable learned preferences were not separated for prompt caching"
+        )
+        require(
+            !first.cacheablePrefixText.contains("A short opening leads"),
+            "live document prose entered the stable style prefix"
+        )
+        require(
             first.selectedReferenceSections.count <= 4
                 && first.selectedGuidanceSections.count <= 2,
             "retrieval selected too many sections"
@@ -200,6 +208,14 @@ struct StyleContextEvals {
         require(packet.selectedSampleCount > 0, "no representative sample was selected")
         require(packet.selectedSampleCount <= 2, "too many writing samples entered context")
         require(packet.text.contains("compiler makes each boundary"), "relevant sample was not retrieved")
+        require(
+            packet.taskRelevantText.contains("compiler makes each boundary"),
+            "retrieved samples were not kept in the task-relevant suffix"
+        )
+        require(
+            !packet.cacheablePrefixText.contains("compiler makes each boundary"),
+            "task-selected samples polluted the stable cache prefix"
+        )
         require(packet.text.contains("Never copy their names, facts"), "sample safety instruction is missing")
         require(packet.characterCount <= StyleContextAssembler.maxPacketCharacters, "samples escaped the packet budget")
     }

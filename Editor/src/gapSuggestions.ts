@@ -98,6 +98,14 @@ function writingGapsInDocument(doc: any): WritingGap[] {
   return gaps.slice(0, 120);
 }
 
+export function selectionIsWithinWritingGap(state: any): boolean {
+  const { from, to, empty } = state.selection;
+  if (empty) return false;
+  return writingGapsInDocument(state.doc).some((gap) => (
+    from >= gap.from && to <= gap.to
+  ));
+}
+
 function pendingEditCoversGap(state: any, gap: WritingGap): boolean {
   return getPendingEditsState(state).edits.some((edit) => (
     edit.from <= gap.from && edit.to >= gap.to
@@ -238,7 +246,9 @@ function buildGapDecorations(editor: Editor, state: any): DecorationSet {
       continue;
     }
 
-    const active = selectionFrom <= gap.to && selectionTo >= gap.from;
+    // A gap owns the action only when the cursor or entire selection is inside
+    // it. A broader selection belongs to the general feedback control instead.
+    const active = selectionFrom >= gap.from && selectionTo <= gap.to;
     decorations.push(Decoration.inline(gap.from, gap.to, {
       class: active ? 'writing-gap writing-gap-active' : 'writing-gap',
       'data-writing-gap': 'true',

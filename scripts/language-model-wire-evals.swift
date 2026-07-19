@@ -7,7 +7,9 @@ struct LanguageModelWireEvals {
         extractsFlatFallbackCitations()
         rejectsUnsafeCitationURLs()
         extractsProviderTextShapes()
+        extractsPromptCacheUsage()
         buildsPrivateStructuredRequest()
+        buildsCacheableStickyRequest()
         enablesBoundedWebSearchWhenRequested()
         defaultsChatToSkipWebSearch()
         validatesCuratedModelCatalog()
@@ -16,7 +18,7 @@ struct LanguageModelWireEvals {
         await acceptsSupportedStreamingShapes()
         await retriesEmptyStreamsBeforeRerouting()
         await rejectsIncompleteMalformedAndRepeatedEmptyStreams()
-        print("Language-model wire evals passed (request privacy, routing, citations, resilient SSE).")
+        print("Language-model wire evals passed (privacy, cache routing, usage, citations, resilient SSE).")
     }
 
     private static func extractsStandardOpenRouterAnnotations() {
@@ -97,6 +99,22 @@ struct LanguageModelWireEvals {
         )
     }
 
+    private static func extractsPromptCacheUsage() {
+        let event: [String: Any] = [
+            "usage": [
+                "prompt_tokens": 4_096,
+                "prompt_tokens_details": [
+                    "cached_tokens": 3_072,
+                    "cache_write_tokens": 512,
+                ],
+            ],
+        ]
+        precondition(
+            LanguageModelService.openRouterPromptCacheUsage(from: event)
+                == .init(promptTokens: 4_096, cachedTokens: 3_072, cacheWriteTokens: 512)
+        )
+    }
+
     private static func buildsPrivateStructuredRequest() {
         let schema: [String: Any] = [
             "type": "object",
@@ -122,8 +140,65 @@ struct LanguageModelWireEvals {
         precondition(messages?.first?["role"] as? String == "system")
         let systemBlocks = messages?.first?["content"] as? [[String: Any]]
         precondition(systemBlocks?.first?["text"] as? String == "Return JSON.")
-        precondition(body["temperature"] == nil)
+        let cacheControl = systemBlocks?.first?["cache_control"] as? [String: Any]
+        precondition(cacheControl?["type"] as? String == "ephemeral")
+        precondition(body["temperature"] as? Double == 0)
         precondition(body["tools"] == nil)
+        let reasoning = body["reasoning"] as? [String: Any]
+        precondition(reasoning?["effort"] as? String == "minimal")
+        precondition(reasoning?["exclude"] as? Bool == true)
+    }
+
+    private static func buildsCacheableStickyRequest() {
+        let body = LanguageModelService.requestBody(
+            runtime: InferenceSettings.runtime(purpose: .assistant),
+            messages: [[
+                "role": "user",
+                "content": [
+                    LanguageModelService.cacheableTextBlock("Stable style profile"),
+                    ["type": "text", "text": "Live document selection"],
+                ],
+            ]],
+            systemPrompt: "Stable writing instructions",
+            outputFormat: nil,
+            temperature: 0.2,
+            maxTokens: 512,
+            promptCacheSessionID: "shakespeare-cache-eval"
+        )
+
+        precondition(body["session_id"] as? String == "shakespeare-cache-eval")
+        let messages = body["messages"] as? [[String: Any]]
+        let systemBlocks = messages?.first?["content"] as? [[String: Any]]
+        let systemCache = systemBlocks?.first?["cache_control"] as? [String: Any]
+        precondition(systemCache?["type"] as? String == "ephemeral")
+
+        let userBlocks = messages?.last?["content"] as? [[String: Any]]
+        let profileCache = userBlocks?.first?["cache_control"] as? [String: Any]
+        let livePromptCache = userBlocks?.last?["cache_control"] as? [String: Any]
+        precondition(profileCache?["type"] as? String == "ephemeral")
+        precondition(livePromptCache?["type"] as? String == "ephemeral")
+        precondition(userBlocks?.last?["text"] as? String == "Live document selection")
+
+        let chatBody = LanguageModelService.requestBody(
+            runtime: InferenceSettings.runtime(purpose: .chat),
+            messages: [
+                ["role": "user", "content": "First question"],
+                ["role": "assistant", "content": "First answer"],
+                ["role": "user", "content": "Follow-up question"],
+            ],
+            systemPrompt: "Stable chat instructions",
+            outputFormat: nil,
+            temperature: 0.2,
+            maxTokens: 512,
+            promptCacheSessionID: "shakespeare-chat-cache-eval"
+        )
+        let chatMessages = chatBody["messages"] as? [[String: Any]]
+        let firstQuestion = chatMessages?[1]["content"] as? [[String: Any]]
+        let firstAnswer = chatMessages?[2]["content"] as? String
+        let followUp = chatMessages?[3]["content"] as? [[String: Any]]
+        precondition((firstQuestion?.last?["cache_control"] as? [String: Any])?["type"] as? String == "ephemeral")
+        precondition(firstAnswer == "First answer")
+        precondition((followUp?.last?["cache_control"] as? [String: Any])?["type"] as? String == "ephemeral")
     }
 
     private static func enablesBoundedWebSearchWhenRequested() {
@@ -162,37 +237,31 @@ struct LanguageModelWireEvals {
         )
         let provider = body["provider"] as? [String: Any]
         precondition(body["tools"] == nil)
-        precondition(body["reasoning"] == nil)
+        let reasoning = body["reasoning"] as? [String: Any]
+        precondition(reasoning?["effort"] as? String == "minimal")
+        precondition(reasoning?["exclude"] as? Bool == true)
         precondition(body["verbosity"] == nil)
         precondition(provider?["sort"] == nil)
     }
 
     private static func configuresBoundedModelWaterfall() {
-        let allModelIDs = InferenceSettings.availableModels.map(\.id)
         for option in InferenceSettings.availableModels {
             let selectedRuntime = InferenceSettings.runtime(
                 purpose: .assistant,
                 modelOverride: option.id
             )
-            let expectedFallbacks = allModelIDs.filter { $0 != option.id }
+            let expectedFallbacks = InferenceSettings.fallbackModels(
+                after: option.id,
+                purpose: .assistant
+            )
             precondition(selectedRuntime.model == option.id)
             precondition(selectedRuntime.fallbackModels == expectedFallbacks)
-            let defensivelyBoundedBody = LanguageModelService.requestBody(
-                runtime: selectedRuntime,
-                messages: [["role": "user", "content": "Revise this paragraph."]],
-                systemPrompt: nil,
-                outputFormat: nil,
-                temperature: 0.2,
-                maxTokens: 512
-            )
-            precondition(
-                defensivelyBoundedBody["models"] as? [String]
-                    == Array(expectedFallbacks.prefix(LanguageModelService.maximumFallbackModelsPerRequest))
-            )
             let batches = LanguageModelService.modelBatches(for: selectedRuntime)
-            precondition(batches.count == 2)
             let routedModelIDs = batches.flatMap { [$0.model] + $0.fallbackModels }
-            precondition(routedModelIDs == [option.id] + expectedFallbacks)
+            let expectedModelIDs = [option.id] + expectedFallbacks
+            precondition(routedModelIDs.first == option.id)
+            precondition(routedModelIDs.count == expectedModelIDs.count)
+            precondition(Set(routedModelIDs) == Set(expectedModelIDs))
             precondition(Set(routedModelIDs).count == routedModelIDs.count)
 
             for batch in batches {
@@ -200,6 +269,18 @@ struct LanguageModelWireEvals {
                     batch.fallbackModels.count
                         <= LanguageModelService.maximumFallbackModelsPerRequest
                 )
+                let expectedEffort = InferenceSettings.preferredReasoningEffort(
+                    for: batch.model
+                )
+                let expectedTemperatureSupport = InferenceSettings.modelOption(
+                    for: batch.model
+                )?.supportsTemperature ?? batch.supportsTemperature
+                precondition(batch.fallbackModels.allSatisfy { modelID in
+                    InferenceSettings.preferredReasoningEffort(for: modelID)
+                        == expectedEffort
+                        && (InferenceSettings.modelOption(for: modelID)?.supportsTemperature
+                            ?? expectedTemperatureSupport) == expectedTemperatureSupport
+                })
                 let selectedBody = LanguageModelService.requestBody(
                     runtime: batch,
                     messages: [["role": "user", "content": "Revise this paragraph."]],
@@ -209,7 +290,11 @@ struct LanguageModelWireEvals {
                     maxTokens: 512
                 )
                 precondition(selectedBody["model"] as? String == batch.model)
-                precondition(selectedBody["models"] as? [String] == batch.fallbackModels)
+                if batch.fallbackModels.isEmpty {
+                    precondition(selectedBody["models"] == nil)
+                } else {
+                    precondition(selectedBody["models"] as? [String] == batch.fallbackModels)
+                }
             }
         }
 
@@ -217,17 +302,20 @@ struct LanguageModelWireEvals {
             purpose: .assistant,
             modelOverride: "example/previous-custom-model"
         )
-        precondition(customRuntime.fallbackModels == allModelIDs)
+        let customFallbacks = InferenceSettings.fallbackModels(
+            after: customRuntime.model,
+            purpose: .assistant
+        )
+        precondition(customRuntime.fallbackModels == customFallbacks)
         let customBatches = LanguageModelService.modelBatches(for: customRuntime)
         let customRoutedIDs = customBatches.flatMap { [$0.model] + $0.fallbackModels }
-        precondition(customRoutedIDs == [customRuntime.model] + allModelIDs)
-        let maximumModelsPerBatch = LanguageModelService.maximumFallbackModelsPerRequest + 1
-        let expectedBatchCount = ([customRuntime.model] + allModelIDs).count
-            .quotientAndRemainder(dividingBy: maximumModelsPerBatch)
-        precondition(
-            customBatches.count
-                == expectedBatchCount.quotient + (expectedBatchCount.remainder == 0 ? 0 : 1)
-        )
+        let expectedCustomIDs = [customRuntime.model] + customFallbacks
+        precondition(customRoutedIDs.first == customRuntime.model)
+        precondition(customRoutedIDs.count == expectedCustomIDs.count)
+        precondition(Set(customRoutedIDs) == Set(expectedCustomIDs))
+        precondition(customBatches.allSatisfy {
+            $0.fallbackModels.count <= LanguageModelService.maximumFallbackModelsPerRequest
+        })
     }
 
     private static func validatesCuratedModelCatalog() {
@@ -254,8 +342,10 @@ struct LanguageModelWireEvals {
             "Claude Opus 4.8",
         ])
         precondition(Set(options.map(\.id)).count == options.count)
-        precondition(InferenceSettings.defaultWritingModel == InferenceSettings.kimiModel)
+        precondition(InferenceSettings.defaultWritingModel == InferenceSettings.geminiFlashModel)
         precondition(InferenceSettings.defaultResearchModel == InferenceSettings.geminiFlashModel)
+        precondition(InferenceSettings.preferredReasoningEffort(for: InferenceSettings.geminiFlashModel) == "minimal")
+        precondition(InferenceSettings.preferredReasoningEffort(for: InferenceSettings.grokModel) == "low")
         let chatRuntime = InferenceSettings.runtime(
             purpose: .chat,
             modelOverride: InferenceSettings.defaultResearchModel
@@ -281,10 +371,13 @@ struct LanguageModelWireEvals {
     private static func boundsClientRetriesAroundProviderWaterfall() {
         precondition(LanguageModelService.maximumTransportRetryCount == 1)
         precondition(LanguageModelService.maximumEmptyResponseAttempts == 3)
+        precondition(LanguageModelService.maximumRequestBodyBytes == 512 * 1_024)
+        let runtime = InferenceSettings.runtime(purpose: .assistant)
+        let batches = LanguageModelService.modelBatches(for: runtime)
+        precondition(batches.count >= 2)
         precondition(
-            LanguageModelService.modelBatches(
-                for: InferenceSettings.runtime(purpose: .assistant)
-            ).count == 2
+            batches.flatMap { [$0.model] + $0.fallbackModels }.count
+                == 1 + runtime.fallbackModels.count
         )
     }
 

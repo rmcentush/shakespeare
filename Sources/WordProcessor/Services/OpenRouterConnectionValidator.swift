@@ -73,8 +73,8 @@ struct OpenRouterConnectionValidator: Sendable {
                 throw ValidationError.invalidResponse
             }
             // The key endpoint normally returns HTTP 200 even when a key's
-            // spending allowance is exhausted. Kimi K3 is a paid model, so
-            // catch that state during setup instead of failing on the first edit.
+            // spending allowance is exhausted. Catch that state during setup
+            // instead of failing on the first model request.
             if let remaining = Self.number(keyData["limit_remaining"]), remaining <= 0 {
                 throw ValidationError.billingRequired
             }
