@@ -18,11 +18,13 @@ actor DocumentFileStore {
     static let maximumManifestBytes = 64 * 1024
     static let maximumDocumentContentBytes = 32 * 1024 * 1024
     static let maximumPlainTextPreviewBytes = 16 * 1024 * 1024
+    static let maximumDocumentNotesBytes = 4 * 1024 * 1024
 
     struct FileSnapshot: Sendable {
         var canonicalJSON: String?
         var htmlContent: String
         var plainText: String
+        var notes: String
         var wordCount: Int
         var characterCount: Int
         var documentID: String
@@ -35,6 +37,7 @@ actor DocumentFileStore {
             canonicalJSON: String? = nil,
             htmlContent: String = "",
             plainText: String? = nil,
+            notes: String = "",
             wordCount: Int? = nil,
             characterCount: Int? = nil,
             documentID: String = UUID().uuidString,
@@ -46,6 +49,7 @@ actor DocumentFileStore {
             let trimmedJSON = canonicalJSON?.trimmingCharacters(in: .whitespacesAndNewlines)
             self.canonicalJSON = trimmedJSON?.isEmpty == false ? trimmedJSON : nil
             self.htmlContent = htmlContent
+            self.notes = notes
 
             let resolvedPlainText = plainText ?? Self.plainText(fromHTML: htmlContent)
             self.plainText = resolvedPlainText
@@ -134,6 +138,7 @@ actor DocumentFileStore {
         let contentFormat: ContentFormat
         let contentFileName: String
         let plainTextFileName: String?
+        let notesFileName: String?
         let wordCount: Int
         let characterCount: Int
     }
@@ -512,6 +517,23 @@ actor DocumentFileStore {
             plainText = ""
         }
 
+        let notes: String
+        if let notesFileName = manifest.notesFileName {
+            guard let notesURL = DocumentAssetReference.containedFileURL(
+                named: notesFileName,
+                in: url
+            ) else {
+                throw FileStoreError.invalidPackagePath(notesFileName)
+            }
+            notes = try PackageFileSafety.readUTF8String(
+                from: notesURL,
+                maximumBytes: Self.maximumDocumentNotesBytes,
+                displayName: notesFileName
+            )
+        } else {
+            notes = ""
+        }
+
         guard let contentURL = DocumentAssetReference.containedFileURL(
             named: manifest.contentFileName,
             in: url
@@ -535,6 +557,7 @@ actor DocumentFileStore {
                 canonicalJSON: canonicalJSON,
                 htmlContent: "",
                 plainText: plainText,
+                notes: notes,
                 wordCount: manifest.wordCount,
                 characterCount: manifest.characterCount,
                 documentID: manifest.documentID,
@@ -553,6 +576,7 @@ actor DocumentFileStore {
                 canonicalJSON: nil,
                 htmlContent: html,
                 plainText: plainText.isEmpty ? nil : plainText,
+                notes: notes,
                 wordCount: manifest.wordCount,
                 characterCount: manifest.characterCount,
                 documentID: manifest.documentID,
@@ -591,10 +615,12 @@ actor DocumentFileStore {
         let contentFormat: ContentFormat = hasCanonicalJSON ? .prosemirrorJSON : .html
         let contentFileName = hasCanonicalJSON ? "content.json" : "content.html"
         let plainTextFileName = "preview.txt"
+        let notesFileName = snapshot.notes.isEmpty ? nil : "notes.txt"
         let contentData = Data(
             (hasCanonicalJSON ? snapshot.canonicalJSON! : snapshot.htmlContent).utf8
         )
         let plainTextData = Data(snapshot.plainText.utf8)
+        let notesData = Data(snapshot.notes.utf8)
         guard contentData.count <= Self.maximumDocumentContentBytes else {
             throw PackageFileSafetyError.fileTooLarge(
                 filename: contentFileName,
@@ -607,6 +633,12 @@ actor DocumentFileStore {
                 maximumBytes: Self.maximumPlainTextPreviewBytes
             )
         }
+        guard notesData.count <= Self.maximumDocumentNotesBytes else {
+            throw PackageFileSafetyError.fileTooLarge(
+                filename: notesFileName ?? "notes.txt",
+                maximumBytes: Self.maximumDocumentNotesBytes
+            )
+        }
 
         let manifest = PackageManifest(
             schemaVersion: snapshot.schemaVersion,
@@ -616,6 +648,7 @@ actor DocumentFileStore {
             contentFormat: contentFormat,
             contentFileName: contentFileName,
             plainTextFileName: plainTextFileName,
+            notesFileName: notesFileName,
             wordCount: snapshot.wordCount,
             characterCount: snapshot.characterCount
         )
@@ -637,6 +670,12 @@ actor DocumentFileStore {
             named: plainTextFileName,
             contents: plainTextData
         )
+        if let notesFileName {
+            fileWrappers[notesFileName] = regularFileWrapper(
+                named: notesFileName,
+                contents: notesData
+            )
+        }
 
         let assetWrappers = preparedPackage.assets.reduce(into: [String: FileWrapper]()) { result, entry in
             result[entry.key] = regularFileWrapper(named: entry.key, contents: entry.value)
@@ -650,12 +689,20 @@ actor DocumentFileStore {
 
         let originalContentsURL = FileManager.default.fileExists(atPath: url.path) ? url : nil
         try rootWrapper.write(to: url, options: [.atomic, .withNameUpdating], originalContentsURL: originalContentsURL)
-        try validateWrittenPackage(at: url, contentFileName: contentFileName)
+        try validateWrittenPackage(
+            at: url,
+            contentFileName: contentFileName,
+            notesFileName: notesFileName
+        )
     }
 
     /// Verifies the package on disk is complete after a write, so a partial or
     /// corrupted write surfaces as a save error instead of silent data loss.
-    private func validateWrittenPackage(at url: URL, contentFileName: String) throws {
+    private func validateWrittenPackage(
+        at url: URL,
+        contentFileName: String,
+        notesFileName: String?
+    ) throws {
         let manifestURL = url.appendingPathComponent("manifest.json")
         guard let manifestData = try? PackageFileSafety.readData(
             from: manifestURL,
@@ -671,6 +718,12 @@ actor DocumentFileStore {
         let contentURL = url.appendingPathComponent(contentFileName)
         guard FileManager.default.fileExists(atPath: contentURL.path) else {
             throw FileStoreError.incompletePackageWrite("\(contentFileName) missing")
+        }
+        if let notesFileName {
+            let notesURL = url.appendingPathComponent(notesFileName)
+            guard FileManager.default.fileExists(atPath: notesURL.path) else {
+                throw FileStoreError.incompletePackageWrite("\(notesFileName) missing")
+            }
         }
     }
 

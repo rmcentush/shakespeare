@@ -21,6 +21,7 @@ private enum RecoveryDraftPresentationCoordinator {
 struct ContentView: View {
     private enum SidebarPanel {
         case chat
+        case notes
         case suggestions
         case comments
     }
@@ -145,6 +146,18 @@ struct ContentView: View {
                     }
                     .help("Toggle Research Chat (Cmd+\\)")
                     .accessibilityLabel(activeSidebar == .chat ? "Hide Research Chat" : "Show Research Chat")
+                    .opacity(isDistractionFree ? 0 : 1)
+                    .disabled(isDistractionFree)
+                }
+                ToolbarItem(placement: .automatic) {
+                    Button {
+                        toggleSidebar(.notes)
+                    } label: {
+                        Image(systemName: "note.text")
+                            .frame(width: 22, height: 22)
+                    }
+                    .help("Toggle Notes (Cmd+Option+N)")
+                    .accessibilityLabel(activeSidebar == .notes ? "Hide Notes" : "Show Notes")
                     .opacity(isDistractionFree ? 0 : 1)
                     .disabled(isDistractionFree)
                 }
@@ -533,6 +546,8 @@ struct ContentView: View {
         switch panel {
         case .chat:
             AssistantChatView()
+        case .notes:
+            NotesSidebarView()
         case .suggestions:
             PendingEditsSidebarView()
         case .comments:
@@ -614,6 +629,13 @@ struct ContentView: View {
             toggleSidebar(.chat)
         }
         .keyboardShortcut("\\", modifiers: .command)
+        .hidden()
+
+        // Cmd+Option+N to toggle document notes
+        Button("") {
+            toggleSidebar(.notes)
+        }
+        .keyboardShortcut("n", modifiers: [.command, .option])
         .hidden()
 
         // Cmd+Shift+F for focus mode

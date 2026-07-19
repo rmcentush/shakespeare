@@ -46,6 +46,7 @@ final class VersionStore: @unchecked Sendable {
         let canonicalJSON: String?
         let htmlContent: String
         let plainText: String
+        let notes: String
         let wordCount: Int
         let characterCount: Int
         let createdAt: Date
@@ -160,6 +161,7 @@ final class VersionStore: @unchecked Sendable {
                 canonicalJSON: version.canonicalJSON,
                 htmlContent: version.htmlContent,
                 plainText: version.plainText,
+                notes: version.notes,
                 wordCount: version.wordCount,
                 characterCount: version.characterCount,
                 createdAt: version.createdAt,
@@ -222,6 +224,7 @@ final class VersionStore: @unchecked Sendable {
             json_content TEXT,
             html_content TEXT NOT NULL DEFAULT '',
             plain_text TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
             word_count INTEGER DEFAULT 0,
             character_count INTEGER DEFAULT 0,
             created_at REAL NOT NULL,
@@ -250,6 +253,7 @@ final class VersionStore: @unchecked Sendable {
         try addColumnIfNeeded(name: "document_id", definition: "TEXT")
         try addColumnIfNeeded(name: "json_content", definition: "TEXT")
         try addColumnIfNeeded(name: "plain_text", definition: "TEXT NOT NULL DEFAULT ''")
+        try addColumnIfNeeded(name: "notes", definition: "TEXT NOT NULL DEFAULT ''")
         try addColumnIfNeeded(name: "character_count", definition: "INTEGER DEFAULT 0")
     }
 
@@ -288,8 +292,8 @@ final class VersionStore: @unchecked Sendable {
             let statement = try prepare("""
             INSERT INTO versions (
                 file_path, document_id, version_name, json_content, html_content,
-                plain_text, word_count, character_count, created_at, is_named
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                plain_text, notes, word_count, character_count, created_at, is_named
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """)
             defer { sqlite3_finalize(statement) }
 
@@ -301,10 +305,11 @@ final class VersionStore: @unchecked Sendable {
             // populated only for legacy HTML documents.
             try bind(snapshot.canonicalJSON == nil ? snapshot.htmlContent : "", to: statement, at: 5)
             try bind(snapshot.plainText, to: statement, at: 6)
-            try check(sqlite3_bind_int64(statement, 7, Int64(snapshot.wordCount)))
-            try check(sqlite3_bind_int64(statement, 8, Int64(snapshot.characterCount)))
-            try check(sqlite3_bind_double(statement, 9, Date().timeIntervalSince1970))
-            try check(sqlite3_bind_int(statement, 10, name == nil ? 0 : 1))
+            try bind(snapshot.notes, to: statement, at: 7)
+            try check(sqlite3_bind_int64(statement, 8, Int64(snapshot.wordCount)))
+            try check(sqlite3_bind_int64(statement, 9, Int64(snapshot.characterCount)))
+            try check(sqlite3_bind_double(statement, 10, Date().timeIntervalSince1970))
+            try check(sqlite3_bind_int(statement, 11, name == nil ? 0 : 1))
             try stepDone(statement)
 
             let versionID = sqlite3_last_insert_rowid(try requireDatabase())
@@ -353,6 +358,7 @@ final class VersionStore: @unchecked Sendable {
         latest: Version,
         snapshot: DocumentFileStore.FileSnapshot
     ) -> Bool {
+        guard latest.notes == snapshot.notes else { return false }
         if let latestJSON = latest.canonicalJSON,
            let snapshotJSON = snapshot.canonicalJSON {
             return latestJSON == snapshotJSON
@@ -404,7 +410,7 @@ final class VersionStore: @unchecked Sendable {
             : "WHERE file_path = ?"
         let statement = try prepare("""
         SELECT id, file_path, document_id, version_name, json_content,
-               html_content, plain_text, word_count, character_count,
+               html_content, plain_text, notes, word_count, character_count,
                created_at, is_named
         FROM versions
         \(whereClause)
@@ -427,7 +433,7 @@ final class VersionStore: @unchecked Sendable {
     private func versionRow(id: Int64) throws -> Version? {
         let statement = try prepare("""
         SELECT id, file_path, document_id, version_name, json_content,
-               html_content, plain_text, word_count, character_count,
+               html_content, plain_text, notes, word_count, character_count,
                created_at, is_named
         FROM versions WHERE id = ?
         """)
@@ -594,7 +600,7 @@ final class VersionStore: @unchecked Sendable {
             COALESCE((SELECT SUM(
                 LENGTH(file_path) + LENGTH(COALESCE(document_id, '')) +
                 LENGTH(COALESCE(version_name, '')) + LENGTH(COALESCE(json_content, '')) +
-                LENGTH(html_content) + LENGTH(plain_text)
+                LENGTH(html_content) + LENGTH(plain_text) + LENGTH(notes)
             ) FROM versions), 0) +
             COALESCE((SELECT SUM(byte_count) FROM version_assets), 0)
         """)
@@ -728,10 +734,11 @@ final class VersionStore: @unchecked Sendable {
             canonicalJSON: stringValue(statement, column: 4),
             htmlContent: stringValue(statement, column: 5) ?? "",
             plainText: stringValue(statement, column: 6) ?? "",
-            wordCount: Int(sqlite3_column_int64(statement, 7)),
-            characterCount: Int(sqlite3_column_int64(statement, 8)),
-            createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 9)),
-            isNamed: sqlite3_column_int(statement, 10) != 0,
+            notes: stringValue(statement, column: 7) ?? "",
+            wordCount: Int(sqlite3_column_int64(statement, 8)),
+            characterCount: Int(sqlite3_column_int64(statement, 9)),
+            createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 10)),
+            isNamed: sqlite3_column_int(statement, 11) != 0,
             assets: assets
         )
     }

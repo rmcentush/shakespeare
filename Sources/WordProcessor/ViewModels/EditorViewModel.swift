@@ -2564,6 +2564,7 @@ final class EditorViewModel {
                         canonicalJSON: snapshot.canonicalJSON,
                         htmlContent: snapshot.htmlContent,
                         plainText: snapshot.plainText,
+                        notes: currentSnapshot.notes,
                         wordCount: snapshot.wordCount,
                         characterCount: snapshot.characterCount,
                         documentID: currentSnapshot.documentID,

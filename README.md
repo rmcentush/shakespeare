@@ -12,6 +12,7 @@ remain available without a model connection.
 - Native long-form editor with `.shkdoc` documents and HTML export
 - Reviewable writing and proofreading suggestions
 - Read-only research chat with linked sources
+- Document-wide notes saved with native documents
 - Optional learning from writing samples and confirmed rewrites
 - Local recovery drafts and named versions
 
@@ -47,7 +48,8 @@ asset-complete version history, and **Shakespeare → Run Thorough Proofread**
 (Command-Option-P) for an on-demand review. Selected images expose an
 accessibility control for alt text or an explicit decorative designation.
 Suggestions are never applied automatically. Open Research Chat with
-the speech-bubble button or `Command-\`.
+the magnifying-glass button or `Command-\`. Open document Notes with the
+note button or `Command-Option-N`.
 
 OpenRouter bills model and web-search usage directly to the key owner;
 Shakespeare adds no usage markup.
@@ -57,7 +59,9 @@ Shakespeare adds no usage markup.
 OpenRouter is Shakespeare's only remote model connection. Requests deny
 provider data collection and send only the context needed for the selected
 feature. Research does not receive writing samples, learned preferences, or the
-learning ledger. Grammar checks remain scoped to changed text.
+learning ledger. Document Notes remain local, are not included in model
+requests, and are omitted from HTML exports. Grammar checks remain scoped to
+changed text.
 
 Style learning is local, optional, reviewable, and deletable. Shakespeare uses
 bounded excerpts rather than remote fine-tuning, and accepted-unchanged model

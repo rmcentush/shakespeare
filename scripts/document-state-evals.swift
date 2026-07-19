@@ -41,6 +41,23 @@ private struct DocumentStateEvals {
         precondition(document.currentSnapshot().personalizationOutcomes == [outcome])
         precondition(!document.hasUnsyncedEditorChanges)
 
+        let notesDocument = DocumentModel()
+        notesDocument.updateNotes("Track the scene turn before revising.")
+        precondition(notesDocument.isDirty)
+        precondition(notesDocument.currentSnapshot().notes == "Track the scene turn before revising.")
+        precondition(!notesDocument.syncFromEditor(snapshot: notesDocument.currentSnapshot()))
+        precondition(notesDocument.isDirty, "capturing unchanged editor content cleared a notes edit")
+        precondition(!notesDocument.hasUnsyncedEditorChanges)
+
+        let staleNotesRequest = notesDocument.makePersistenceRequest()
+        notesDocument.updateNotes("Keep the newer note.")
+        notesDocument.markSaved(
+            url: URL(fileURLWithPath: "/tmp/Notes.shkdoc"),
+            request: staleNotesRequest
+        )
+        precondition(notesDocument.notes == "Keep the newer note.", "a stale save replaced newer notes")
+        precondition(notesDocument.isDirty, "a stale save cleared the newer notes mutation")
+
         document.markEditorMutation()
         precondition(document.hasUnsyncedEditorChanges)
         _ = document.syncFromEditor(
@@ -98,6 +115,7 @@ private struct DocumentStateEvals {
             """,
             htmlContent: "",
             plainText: "",
+            notes: "Confirm the image credit before publishing.",
             wordCount: 0,
             characterCount: 0,
             documentID: imageDocumentID
@@ -108,6 +126,19 @@ private struct DocumentStateEvals {
         )
         let loadedImageSnapshot = try await DocumentFileStore.shared.load(from: imagePackageURL)
         precondition(loadedImageSnapshot.canonicalJSON == persistedImageSnapshot.canonicalJSON)
+        precondition(loadedImageSnapshot.notes == imageSnapshot.notes, "document notes did not round-trip")
+        precondition(FileManager.default.fileExists(
+            atPath: imagePackageURL.appendingPathComponent("notes.txt").path
+        ))
+
+        let htmlExportURL = scratchURL.appendingPathComponent("Export.html")
+        let htmlExportSnapshot = DocumentFileStore.FileSnapshot(
+            htmlContent: "<p>Public draft</p>",
+            notes: "Private planning note"
+        )
+        _ = try await DocumentFileStore.shared.save(htmlExportSnapshot, to: htmlExportURL)
+        let exportedHTML = try String(contentsOf: htmlExportURL, encoding: .utf8)
+        precondition(!exportedHTML.contains(htmlExportSnapshot.notes), "notes leaked into HTML export")
 
         let versionAssets = try await DocumentFileStore.shared.versionAssets(
             for: persistedImageSnapshot,
@@ -123,6 +154,24 @@ private struct DocumentStateEvals {
         ))
         try await DocumentFileStore.shared.deleteWorkingAssets(documentID: imageDocumentID)
 
+        var clearedNotesSnapshot = persistedImageSnapshot
+        clearedNotesSnapshot.notes = ""
+        _ = try await DocumentFileStore.shared.save(
+            clearedNotesSnapshot,
+            to: imagePackageURL,
+            sourceDocumentURL: imagePackageURL
+        )
+        let clearedNotesLoad = try await DocumentFileStore.shared.load(from: imagePackageURL)
+        precondition(clearedNotesLoad.notes.isEmpty)
+        precondition(!FileManager.default.fileExists(
+            atPath: imagePackageURL.appendingPathComponent("notes.txt").path
+        ), "cleared notes left stale package data")
+        let clearedManifest = try String(
+            contentsOf: imagePackageURL.appendingPathComponent("manifest.json"),
+            encoding: .utf8
+        )
+        precondition(!clearedManifest.contains("notesFileName"), "empty notes broke legacy manifest compatibility")
+
         let assetDirectory = imagePackageURL.appendingPathComponent("assets", isDirectory: true)
         let assetURL = try FileManager.default.contentsOfDirectory(
             at: assetDirectory,
@@ -136,6 +185,6 @@ private struct DocumentStateEvals {
             // Expected: package reads verify image bytes, dimensions, and digest.
         }
 
-        print("Document-state evals passed (fresh snapshots, safe renames, asset-complete versions, tamper detection, learning outcomes).")
+        print("Document-state evals passed (fresh snapshots, notes, safe renames, asset-complete versions, tamper detection, learning outcomes).")
     }
 }
