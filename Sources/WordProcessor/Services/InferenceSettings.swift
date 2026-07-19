@@ -32,15 +32,21 @@ enum InferenceSettings {
     static let writingModelDefaultsKey = "openRouterWritingModel"
     static let researchModelDefaultsKey = "openRouterChatModel"
     static let kimiModel = "moonshotai/kimi-k3"
+    static let geminiFlashModel = "google/gemini-3.5-flash"
     static let haikuModel = "anthropic/claude-haiku-4.5"
     static let grokModel = "x-ai/grok-4.5"
     static let defaultWritingModel = kimiModel
-    static let defaultResearchModel = haikuModel
+    static let defaultResearchModel = geminiFlashModel
     static let availableModels: [InferenceModelOption] = [
         .init(
             id: kimiModel,
             name: "Kimi K3",
             supportsTemperature: false
+        ),
+        .init(
+            id: geminiFlashModel,
+            name: "Gemini 3.5 Flash",
+            supportsTemperature: true
         ),
         .init(
             id: haikuModel,

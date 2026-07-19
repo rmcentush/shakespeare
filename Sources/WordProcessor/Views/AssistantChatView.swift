@@ -27,10 +27,7 @@ struct AssistantChatView: View {
                         ForEach(chatViewModel.messages) { message in
                             MessageBubble(
                                 message: message,
-                                isStreaming: chatViewModel.streamingMessageID == message.id,
-                                canInsertIntoDocument: editorViewModel.isEditorReady,
-                                onQuoteAssistant: appendQuotedAssistantMessage,
-                                onInsertAssistant: insertAssistantMessageIntoDocument
+                                isStreaming: chatViewModel.streamingMessageID == message.id
                             )
                                 .equatable()
                                 .id(message.id)
@@ -275,34 +272,6 @@ struct AssistantChatView: View {
         }
     }
 
-    private func appendQuotedAssistantMessage(_ text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-
-        let quoted = trimmed
-            .components(separatedBy: "\n")
-            .map { line in
-                line.isEmpty ? ">" : "> \(line)"
-            }
-            .joined(separator: "\n")
-
-        if inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            inputText = SmartQuotes.smarten(quoted + "\n\n")
-        } else {
-            inputText = SmartQuotes.smarten(inputText + "\n\n" + quoted)
-        }
-        isInputFocused = true
-    }
-
-    private func insertAssistantMessageIntoDocument(_ text: String) {
-        guard editorViewModel.isEditorReady else { return }
-
-        let html = AssistantMessageBlock.htmlFragment(from: text)
-        guard !html.isEmpty else { return }
-
-        editorViewModel.insertHTMLAtCursor(html)
-        editorViewModel.focusEditor()
-    }
 }
 
 private struct AssistantEmptyState: View {
@@ -556,9 +525,6 @@ private struct ChatScrollObserver: NSViewRepresentable {
 struct MessageBubble: View, Equatable {
     let message: ChatMessage
     let isStreaming: Bool
-    let canInsertIntoDocument: Bool
-    let onQuoteAssistant: (String) -> Void
-    let onInsertAssistant: (String) -> Void
 
     private let maxUserBubbleWidth: CGFloat = 360
 
@@ -569,7 +535,6 @@ struct MessageBubble: View, Equatable {
             && lhs.message.deliveryState == rhs.message.deliveryState
             && lhs.message.quotedSelection == rhs.message.quotedSelection
             && lhs.isStreaming == rhs.isStreaming
-            && lhs.canInsertIntoDocument == rhs.canInsertIntoDocument
     }
 
     var body: some View {
@@ -619,18 +584,6 @@ struct MessageBubble: View, Equatable {
                 if message.deliveryState != .normal {
                     AssistantDeliveryStatusView(state: message.deliveryState)
                 }
-
-                if showsAssistantToolbar {
-                    Divider()
-                        .overlay(Color.primary.opacity(0.06))
-
-                    AssistantBubbleToolbar(
-                        canInsertIntoDocument: canInsertIntoDocument,
-                        onCopy: { copyMessageToPasteboard(message.combinedText) },
-                        onQuote: { onQuoteAssistant(message.content) },
-                        onInsert: { onInsertAssistant(message.content) }
-                    )
-                }
             }
         } else {
             VStack(alignment: .leading, spacing: 8) {
@@ -673,13 +626,6 @@ struct MessageBubble: View, Equatable {
 
     private var hasAssistantContent: Bool {
         !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var showsAssistantToolbar: Bool {
-        message.role == .assistant
-            && !isStreaming
-            && hasAssistantContent
-            && message.deliveryState == .normal
     }
 
     private func copyMessageToPasteboard(_ text: String) {
@@ -771,62 +717,6 @@ private struct SystemMessageRow: View {
             Spacer()
         }
         .textSelection(.enabled)
-    }
-}
-
-private struct AssistantBubbleToolbar: View {
-    let canInsertIntoDocument: Bool
-    let onCopy: () -> Void
-    let onQuote: () -> Void
-    let onInsert: () -> Void
-    @State private var didCopy = false
-
-    var body: some View {
-        HStack(spacing: 2) {
-            toolbarButton(
-                title: didCopy ? "Copied" : "Copy",
-                systemImage: didCopy ? "checkmark" : "doc.on.doc",
-                action: copy
-            )
-            toolbarButton(title: "Quote", systemImage: "text.quote", action: onQuote)
-            toolbarButton(
-                title: "Insert",
-                systemImage: "arrow.down.doc",
-                action: onInsert,
-                disabled: !canInsertIntoDocument
-            )
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func toolbarButton(
-        title: String,
-        systemImage: String,
-        action: @escaping () -> Void,
-        disabled: Bool = false
-    ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .labelStyle(.titleAndIcon)
-        }
-            .buttonStyle(.plain)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(disabled ? Color.secondary : Color.primary.opacity(0.78))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 5)
-            .background(Color.primary.opacity(disabled ? 0 : 0.045), in: RoundedRectangle(cornerRadius: 6))
-            .contentShape(RoundedRectangle(cornerRadius: 6))
-            .disabled(disabled)
-    }
-
-    private func copy() {
-        onCopy()
-        didCopy = true
-
-        Task {
-            try? await Task.sleep(nanoseconds: 1_250_000_000)
-            didCopy = false
-        }
     }
 }
 

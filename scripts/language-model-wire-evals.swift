@@ -190,12 +190,19 @@ struct LanguageModelWireEvals {
         let customBatches = LanguageModelService.modelBatches(for: customRuntime)
         let customRoutedIDs = customBatches.flatMap { [$0.model] + $0.fallbackModels }
         precondition(customRoutedIDs == [customRuntime.model] + allModelIDs)
-        precondition(customBatches.count == 2)
+        let maximumModelsPerBatch = LanguageModelService.maximumFallbackModelsPerRequest + 1
+        let expectedBatchCount = ([customRuntime.model] + allModelIDs).count
+            .quotientAndRemainder(dividingBy: maximumModelsPerBatch)
+        precondition(
+            customBatches.count
+                == expectedBatchCount.quotient + (expectedBatchCount.remainder == 0 ? 0 : 1)
+        )
     }
 
     private static func validatesCuratedModelCatalog() {
         let expectedIDs = [
             "moonshotai/kimi-k3",
+            "google/gemini-3.5-flash",
             "anthropic/claude-haiku-4.5",
             "x-ai/grok-4.5",
             "openai/gpt-5.6-sol",
@@ -207,6 +214,7 @@ struct LanguageModelWireEvals {
         precondition(options.map(\.id) == expectedIDs)
         precondition(options.map(\.name) == [
             "Kimi K3",
+            "Gemini 3.5 Flash",
             "Claude Haiku 4.5",
             "Grok 4.5",
             "GPT-5.6 Sol",
@@ -216,12 +224,12 @@ struct LanguageModelWireEvals {
         ])
         precondition(Set(options.map(\.id)).count == options.count)
         precondition(InferenceSettings.defaultWritingModel == InferenceSettings.kimiModel)
-        precondition(InferenceSettings.defaultResearchModel == InferenceSettings.haikuModel)
+        precondition(InferenceSettings.defaultResearchModel == InferenceSettings.geminiFlashModel)
         let chatRuntime = InferenceSettings.runtime(
             purpose: .chat,
             modelOverride: InferenceSettings.defaultResearchModel
         )
-        precondition(chatRuntime.model == InferenceSettings.haikuModel)
+        precondition(chatRuntime.model == InferenceSettings.geminiFlashModel)
         precondition(chatRuntime.fallbackModels.first == InferenceSettings.kimiModel)
         precondition(chatRuntime.webSearchEnabled)
         precondition(InferenceSettings.normalizedModelID("~x-ai/grok-latest") == "x-ai/grok-4.5")
