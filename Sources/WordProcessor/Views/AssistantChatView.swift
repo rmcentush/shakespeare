@@ -6,7 +6,6 @@ struct AssistantChatView: View {
     @Environment(EditorViewModel.self) private var editorViewModel
     @Environment(DocumentModel.self) private var document
     @State private var inputText = ""
-    @State private var pendingSelection: String?
     @State private var shouldFollowLatestMessage = true
     @State private var hasResearchConnection = false
     @FocusState private var isInputFocused: Bool
@@ -61,40 +60,9 @@ struct AssistantChatView: View {
 
             // Input area
             VStack(alignment: .leading, spacing: 8) {
-                if let pendingSelection {
-                    SelectionContextChip(text: pendingSelection) {
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            self.pendingSelection = nil
-                        }
-                    }
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-
                 if hasResearchConnection {
                     HStack(alignment: .bottom, spacing: 8) {
-                        // Attach selected text as context
-                        Button {
-                            attachSelection()
-                        } label: {
-                            Image(systemName: "text.quote")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(
-                                    pendingSelection == nil
-                                        ? AnyShapeStyle(.secondary)
-                                        : AnyShapeStyle(Color.accentColor)
-                                )
-                                .frame(width: 28, height: 28)
-                                .background(
-                                    pendingSelection == nil
-                                        ? Color.primary.opacity(0.045)
-                                        : Color.accentColor.opacity(0.12),
-                                    in: Circle()
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .help("Attach selected text")
-
-                        TextField("Ask about the draft or research the web…", text: smartQuotedInputText, axis: .vertical)
+                        TextField("Ask anything…", text: smartQuotedInputText, axis: .vertical)
                             .textFieldStyle(.plain)
                             .font(AssistantChatFont.input)
                             .lineLimit(1...5)
@@ -196,17 +164,6 @@ struct AssistantChatView: View {
         )
     }
 
-    private func attachSelection() {
-        editorViewModel.getSelectedText { text in
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return }
-            withAnimation(.easeOut(duration: 0.15)) {
-                pendingSelection = SmartQuotes.smarten(trimmed)
-            }
-            isInputFocused = true
-        }
-    }
-
     private func chooseStarterPrompt(_ prompt: String) {
         inputText = prompt
         isInputFocused = true
@@ -219,9 +176,7 @@ struct AssistantChatView: View {
     private func sendMessage() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        let selection = pendingSelection
         inputText = ""
-        pendingSelection = nil
         shouldFollowLatestMessage = true
         let editor = editorViewModel
 
@@ -230,7 +185,6 @@ struct AssistantChatView: View {
                 if let context {
                     chatViewModel.sendMessage(
                         text,
-                        quotedSelection: selection,
                         documentContent: context.plainText
                     )
                     return
@@ -239,7 +193,6 @@ struct AssistantChatView: View {
                 editor.getPlainText { content in
                     chatViewModel.sendMessage(
                         text,
-                        quotedSelection: selection,
                         documentContent: content
                     )
                 }
@@ -249,7 +202,6 @@ struct AssistantChatView: View {
 
         chatViewModel.sendMessage(
             text,
-            quotedSelection: selection,
             documentContent: document.plainTextContent
         )
     }
@@ -348,50 +300,6 @@ private struct AssistantEmptyState: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 6)
-    }
-}
-
-private struct SelectionContextChip: View {
-    let text: String
-    let onRemove: () -> Void
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Rectangle()
-                .fill(Color.accentColor.opacity(0.45))
-                .frame(width: 3)
-                .clipShape(Capsule())
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("SELECTION")
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .kerning(0.6)
-                    .foregroundStyle(.tertiary)
-
-                Text(verbatim: text)
-                    .font(AssistantChatFont.text(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 4)
-
-            Button(action: onRemove) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.tertiary)
-            }
-            .buttonStyle(.plain)
-            .help("Remove attached selection")
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
     }
 }
 
@@ -533,7 +441,6 @@ struct MessageBubble: View, Equatable {
             && lhs.message.content == rhs.message.content
             && lhs.message.detail == rhs.message.detail
             && lhs.message.deliveryState == rhs.message.deliveryState
-            && lhs.message.quotedSelection == rhs.message.quotedSelection
             && lhs.isStreaming == rhs.isStreaming
     }
 
@@ -586,28 +493,11 @@ struct MessageBubble: View, Equatable {
                 }
             }
         } else {
-            VStack(alignment: .leading, spacing: 8) {
-                if let quote = message.quotedSelection, !quote.isEmpty {
-                    HStack(alignment: .top, spacing: 8) {
-                        Rectangle()
-                            .fill(Color.accentColor.opacity(0.4))
-                            .frame(width: 3)
-                            .clipShape(Capsule())
-
-                        Text(verbatim: SmartQuotes.smarten(quote))
-                            .font(AssistantChatFont.text(size: 12))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(5)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-
-                Text(verbatim: SmartQuotes.smarten(message.content))
-                    .font(AssistantChatFont.message)
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .textSelection(.enabled)
+            Text(verbatim: SmartQuotes.smarten(message.content))
+                .font(AssistantChatFont.message)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
     }
 
@@ -830,66 +720,64 @@ private struct MarkdownText: View {
         SidebarMarkdownBlock.parse(content)
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { entry in
-                blockView(entry.element)
+    private var attributedContent: AttributedString {
+        var result = AttributedString()
+
+        for (index, block) in blocks.enumerated() {
+            if index > 0 {
+                result.append(AttributedString("\n\n"))
             }
+            append(block, to: &result)
         }
-        .foregroundStyle(.primary)
-        .fixedSize(horizontal: false, vertical: true)
-        .font(AssistantChatFont.message)
-        .lineSpacing(3)
+
+        return result
     }
 
-    @ViewBuilder
-    private func blockView(_ block: SidebarMarkdownBlock) -> some View {
+    var body: some View {
+        Text(attributedContent)
+            .foregroundStyle(.primary)
+            .fixedSize(horizontal: false, vertical: true)
+            .font(AssistantChatFont.message)
+            .lineSpacing(3)
+            .textSelection(.enabled)
+    }
+
+    private func append(_ block: SidebarMarkdownBlock, to result: inout AttributedString) {
         switch block {
         case .heading(let level, let text):
-            InlineMarkdownText(content: text)
-                .font(headingFont(for: level))
+            var heading = inlineMarkdown(text)
+            heading.font = headingFont(for: level)
+            result.append(heading)
         case .paragraph(let lines):
-            VStack(alignment: .leading, spacing: 3) {
-                ForEach(Array(lines.enumerated()), id: \.offset) { entry in
-                    InlineMarkdownText(content: entry.element)
-                }
-            }
+            append(lines, to: &result)
         case .unorderedList(let items):
-            VStack(alignment: .leading, spacing: 5) {
-                ForEach(Array(items.enumerated()), id: \.offset) { entry in
-                    HStack(alignment: .firstTextBaseline, spacing: 7) {
-                        Text("•")
-                            .font(AssistantChatFont.text(size: 13.5, weight: .semibold))
-                        InlineMarkdownText(content: entry.element)
-                    }
-                }
-            }
-            .padding(.leading, 2)
+            append(items.map { "• \($0)" }, to: &result)
         case .orderedList(let items):
-            VStack(alignment: .leading, spacing: 5) {
-                ForEach(Array(items.enumerated()), id: \.offset) { entry in
-                    HStack(alignment: .firstTextBaseline, spacing: 7) {
-                        Text("\(entry.offset + 1).")
-                            .font(AssistantChatFont.text(size: 13.5, weight: .medium))
-                            .foregroundStyle(.secondary)
-                        InlineMarkdownText(content: entry.element)
-                    }
-                }
-            }
+            append(items.enumerated().map { "\($0.offset + 1). \($0.element)" }, to: &result)
         case .quote(let lines):
-            HStack(alignment: .top, spacing: 8) {
-                Rectangle()
-                    .fill(Color.primary.opacity(0.18))
-                    .frame(width: 3)
-                    .clipShape(Capsule())
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(lines.enumerated()), id: \.offset) { entry in
-                        InlineMarkdownText(content: entry.element)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
+            var quote = AttributedString()
+            append(lines.map { "│ \($0)" }, to: &quote)
+            quote.foregroundColor = Color(nsColor: .secondaryLabelColor)
+            result.append(quote)
         }
+    }
+
+    private func append(_ lines: [String], to result: inout AttributedString) {
+        for (index, line) in lines.enumerated() {
+            if index > 0 {
+                result.append(AttributedString("\n"))
+            }
+            result.append(inlineMarkdown(line))
+        }
+    }
+
+    private func inlineMarkdown(_ text: String) -> AttributedString {
+        let displayText = SmartQuotes.smarten(text)
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        )
+        return (try? AttributedString(markdown: displayText, options: options))
+            ?? AttributedString(displayText)
     }
 
     private func headingFont(for level: Int) -> Font {
@@ -901,23 +789,6 @@ private struct MarkdownText: View {
         default:
             return AssistantChatFont.text(size: 13.5, weight: .semibold)
         }
-    }
-}
-
-private struct InlineMarkdownText: View {
-    let content: String
-
-    var body: some View {
-        let displayContent = SmartQuotes.smarten(content)
-
-        Group {
-            if let attributed = try? AttributedString(markdown: displayContent) {
-                Text(attributed)
-            } else {
-                Text(verbatim: displayContent)
-            }
-        }
-        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

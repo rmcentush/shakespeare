@@ -37,7 +37,6 @@ final class AssistantChatViewModel {
 
     func sendMessage(
         _ text: String,
-        quotedSelection: String? = nil,
         documentContent: String = ""
     ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -46,12 +45,10 @@ final class AssistantChatViewModel {
         cancelStreaming(markCancelledMessage: false)
         requestGeneration &+= 1
         let generation = requestGeneration
-        let selection = quotedSelection?.trimmingCharacters(in: .whitespacesAndNewlines)
 
         requestTask = Task { [weak self] in
             await self?.runSendMessage(
                 trimmed,
-                quotedSelection: (selection?.isEmpty ?? true) ? nil : selection,
                 documentContent: documentContent,
                 generation: generation
             )
@@ -78,24 +75,13 @@ final class AssistantChatViewModel {
 
     private func runSendMessage(
         _ text: String,
-        quotedSelection: String?,
         documentContent: String,
         generation: UInt64
     ) async {
         guard generation == requestGeneration else { return }
-        messages.append(ChatMessage(role: .user, content: text, quotedSelection: quotedSelection))
+        messages.append(ChatMessage(role: .user, content: text))
 
-        var apiText = text
-        if let quotedSelection {
-            apiText = """
-            <selected_text>
-            \(quotedSelection)
-            </selected_text>
-
-            \(text)
-            """
-        }
-        apiText = Self.boundedAPIContent(apiText)
+        let apiText = Self.boundedAPIContent(text)
         var requestMessages = apiMessages
         requestMessages.append(["role": "user", "content": apiText])
         Self.trimAPIHistory(&requestMessages)
@@ -115,8 +101,7 @@ final class AssistantChatViewModel {
 
         let systemPrompt = await buildSystemPrompt(
             documentContent: documentContent,
-            query: text,
-            quotedSelection: quotedSelection
+            query: text
         )
         guard !Task.isCancelled, generation == requestGeneration else {
             updateAssistantMessage(
@@ -199,8 +184,7 @@ final class AssistantChatViewModel {
 
     private func buildSystemPrompt(
         documentContent: String,
-        query: String,
-        quotedSelection: String?
+        query: String
     ) async -> [[String: Any]] {
         let preparedDocument: String
         if documentContent.isEmpty {
@@ -210,7 +194,7 @@ final class AssistantChatViewModel {
                 ChatDocumentContextAssembler.assemble(
                     document: documentContent,
                     query: query,
-                    selection: quotedSelection
+                    selection: nil
                 )
             }.value
         }

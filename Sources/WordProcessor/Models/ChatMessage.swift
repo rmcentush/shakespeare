@@ -6,8 +6,6 @@ struct ChatMessage: Identifiable {
     var content: String
     var detail: String?
     var deliveryState: DeliveryState
-    /// Document text the user attached as context, rendered as a quote block.
-    var quotedSelection: String?
     let timestamp: Date
 
     enum Role {
@@ -26,22 +24,17 @@ struct ChatMessage: Identifiable {
         role: Role,
         content: String,
         detail: String? = nil,
-        deliveryState: DeliveryState = .normal,
-        quotedSelection: String? = nil
+        deliveryState: DeliveryState = .normal
     ) {
         self.role = role
         self.content = content
         self.detail = detail
         self.deliveryState = deliveryState
-        self.quotedSelection = quotedSelection
         self.timestamp = Date()
     }
 
     var combinedText: String {
         var parts: [String] = []
-        if let quotedSelection, !quotedSelection.isEmpty {
-            parts.append(quotedSelection)
-        }
         parts.append(content)
         if let detail, !detail.isEmpty {
             parts.append(detail)
