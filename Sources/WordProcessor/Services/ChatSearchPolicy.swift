@@ -74,7 +74,6 @@ enum ChatSearchPolicy {
         "tonight",
         "tomorrow",
         "verify",
-        "version",
         "weather",
     ]
 

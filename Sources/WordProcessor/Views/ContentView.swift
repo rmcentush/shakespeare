@@ -133,7 +133,7 @@ struct ContentView: View {
                     Button {
                         toggleSidebar(.chat)
                     } label: {
-                        Image(systemName: "bubble.right")
+                        Image(systemName: "magnifyingglass")
                             .frame(width: 22, height: 22)
                             .featureTourHighlight(featureTourTarget == .research)
                     }

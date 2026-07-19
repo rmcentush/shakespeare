@@ -47,6 +47,9 @@ const inferenceSettings = readProjectFile(
 const stringEscaping = readProjectFile(
   'Sources/WordProcessor/Services/StringEscaping.swift'
 );
+const styleProfileCompiler = readProjectFile(
+  'Sources/WordProcessor/Services/StyleProfileCompiler.swift'
+);
 
 test('every model service uses sticky prompt-cache routing and cacheable instructions', () => {
   assert.match(modelService, /promptCacheSessionID/);
@@ -137,12 +140,18 @@ test('untrusted prompt data cannot forge framework-owned tags', () => {
 });
 
 test('machine-consumed outputs use strict, described, bounded schemas', () => {
-  for (const contract of [ambientContract, gapContract, grammarContract]) {
+  for (const contract of [
+    ambientContract,
+    gapContract,
+    grammarContract,
+    styleProfileCompiler,
+  ]) {
     assert.match(contract, /"description":/);
     assert.match(contract, /"additionalProperties": false/);
   }
   assert.match(grammarContract, /detectorOutputSchema\(mode:/);
   assert.match(grammarContract, /verifierOutputSchema\(candidateCount:/);
+  assert.match(styleProfileCompiler, /outputSchema\(limits:/);
   assert.match(editorViewModel, /Set\(decisionIDs\) == candidateIDs/);
   assert.match(modelService, /"strict": true/);
   assert.match(modelService, /provider\["require_parameters"\] = true/);
