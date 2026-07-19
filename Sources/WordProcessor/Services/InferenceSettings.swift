@@ -98,8 +98,26 @@ enum InferenceSettings {
         }
     }
 
-    static func fallbackModels(after primaryModel: String) -> [String] {
-        availableModels.map(\.id).filter { $0 != primaryModel }
+    static func fallbackModels(
+        after primaryModel: String,
+        purpose: InferencePurpose = .assistant
+    ) -> [String] {
+        let orderedModelIDs: [String]
+        if purpose == .chat {
+            // Keep Flash primary for speed. If research needs rerouting, prefer
+            // models with strong native web-search support before general models.
+            orderedModelIDs = [
+                geminiFlashModel,
+                haikuModel,
+                grokModel,
+                kimiModel,
+            ] + availableModels.map(\.id).filter {
+                ![geminiFlashModel, haikuModel, grokModel, kimiModel].contains($0)
+            }
+        } else {
+            orderedModelIDs = availableModels.map(\.id)
+        }
+        return orderedModelIDs.filter { $0 != primaryModel }
     }
 
     static func runtime(
@@ -118,8 +136,10 @@ enum InferenceSettings {
             messagesURL: URL(string: "https://openrouter.ai/api/v1/chat/completions")!,
             apiKeyService: "openrouter",
             model: model,
-            fallbackModels: fallbackModels(after: model),
-            webSearchEnabled: purpose == .chat,
+            fallbackModels: fallbackModels(after: model, purpose: purpose),
+            // Search is opt-in per request. AssistantChatViewModel applies the
+            // query policy explicitly, so ordinary draft conversation stays fast.
+            webSearchEnabled: false,
             supportsTemperature: modelOption(for: model)?.supportsTemperature ?? true
         )
     }

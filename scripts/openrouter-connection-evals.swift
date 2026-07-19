@@ -51,7 +51,8 @@ private struct OpenRouterConnectionEvals {
             precondition(runtime.model == (purpose == .chat
                 ? InferenceSettings.defaultResearchModel
                 : InferenceSettings.defaultWritingModel))
-            precondition(runtime.webSearchEnabled == (purpose == .chat))
+            // Web search is opt-in per chat request after query classification.
+            precondition(!runtime.webSearchEnabled)
             precondition(runtime.supportsTemperature == (purpose == .chat))
         }
     }

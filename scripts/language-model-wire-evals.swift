@@ -6,14 +6,17 @@ struct LanguageModelWireEvals {
         extractsStandardOpenRouterAnnotations()
         extractsFlatFallbackCitations()
         rejectsUnsafeCitationURLs()
+        extractsProviderTextShapes()
         buildsPrivateStructuredRequest()
-        enablesBoundedWebSearchForChatOnly()
-        allowsChatToSkipWebSearch()
+        enablesBoundedWebSearchWhenRequested()
+        defaultsChatToSkipWebSearch()
         validatesCuratedModelCatalog()
         configuresBoundedModelWaterfall()
         boundsClientRetriesAroundProviderWaterfall()
-        await rejectsIncompleteAndMalformedStreams()
-        print("Language-model wire evals passed (request privacy, routing, citations, terminal SSE).")
+        await acceptsSupportedStreamingShapes()
+        await retriesEmptyStreamsBeforeRerouting()
+        await rejectsIncompleteMalformedAndRepeatedEmptyStreams()
+        print("Language-model wire evals passed (request privacy, routing, citations, resilient SSE).")
     }
 
     private static func extractsStandardOpenRouterAnnotations() {
@@ -66,6 +69,34 @@ struct LanguageModelWireEvals {
         precondition(LanguageModelService.openRouterCitations(from: event).isEmpty)
     }
 
+    private static func extractsProviderTextShapes() {
+        let blockDelta: [String: Any] = [
+            "choices": [[
+                "delta": [
+                    "content": [
+                        ["type": "text", "text": "Hello "],
+                        ["type": "text", "text": "world"],
+                    ],
+                ],
+            ]],
+        ]
+        precondition(
+            LanguageModelService.openRouterTextCandidate(from: blockDelta)
+                == .init(text: "Hello world", isCumulative: false)
+        )
+
+        let finalMessage: [String: Any] = [
+            "choices": [[
+                "message": ["content": "Complete answer"],
+                "finish_reason": "stop",
+            ]],
+        ]
+        precondition(
+            LanguageModelService.openRouterTextCandidate(from: finalMessage)
+                == .init(text: "Complete answer", isCumulative: true)
+        )
+    }
+
     private static func buildsPrivateStructuredRequest() {
         let schema: [String: Any] = [
             "type": "object",
@@ -95,14 +126,15 @@ struct LanguageModelWireEvals {
         precondition(body["tools"] == nil)
     }
 
-    private static func enablesBoundedWebSearchForChatOnly() {
+    private static func enablesBoundedWebSearchWhenRequested() {
         let body = LanguageModelService.requestBody(
             runtime: InferenceSettings.runtime(purpose: .chat),
             messages: [["role": "user", "content": "What happened today?"]],
             systemPrompt: nil,
             outputFormat: nil,
             temperature: 0.2,
-            maxTokens: 512
+            maxTokens: 512,
+            webSearchEnabled: true
         )
         let tools = body["tools"] as? [[String: Any]]
         let parameters = tools?.first?["parameters"] as? [String: Any]
@@ -119,15 +151,14 @@ struct LanguageModelWireEvals {
         precondition(body["verbosity"] as? String == "low")
     }
 
-    private static func allowsChatToSkipWebSearch() {
+    private static func defaultsChatToSkipWebSearch() {
         let body = LanguageModelService.requestBody(
             runtime: InferenceSettings.runtime(purpose: .chat),
             messages: [["role": "user", "content": "Tighten this paragraph."]],
             systemPrompt: nil,
             outputFormat: nil,
             temperature: 0.2,
-            maxTokens: 512,
-            webSearchEnabled: false
+            maxTokens: 512
         )
         let provider = body["provider"] as? [String: Any]
         precondition(body["tools"] == nil)
@@ -230,8 +261,8 @@ struct LanguageModelWireEvals {
             modelOverride: InferenceSettings.defaultResearchModel
         )
         precondition(chatRuntime.model == InferenceSettings.geminiFlashModel)
-        precondition(chatRuntime.fallbackModels.first == InferenceSettings.kimiModel)
-        precondition(chatRuntime.webSearchEnabled)
+        precondition(chatRuntime.fallbackModels.first == InferenceSettings.haikuModel)
+        precondition(!chatRuntime.webSearchEnabled)
         precondition(InferenceSettings.normalizedModelID("~x-ai/grok-latest") == "x-ai/grok-4.5")
         precondition(
             InferenceSettings.normalizedModelID("~anthropic/claude-fable-latest")
@@ -249,6 +280,7 @@ struct LanguageModelWireEvals {
 
     private static func boundsClientRetriesAroundProviderWaterfall() {
         precondition(LanguageModelService.maximumTransportRetryCount == 1)
+        precondition(LanguageModelService.maximumEmptyResponseAttempts == 3)
         precondition(
             LanguageModelService.modelBatches(
                 for: InferenceSettings.runtime(purpose: .assistant)
@@ -256,7 +288,7 @@ struct LanguageModelWireEvals {
         )
     }
 
-    private static func rejectsIncompleteAndMalformedStreams() async {
+    private static func acceptsSupportedStreamingShapes() async {
         let completed = """
         data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}
 
@@ -266,18 +298,81 @@ struct LanguageModelWireEvals {
 
         """
         do {
-            let chunks = try await streamedText(from: completed)
+            let chunks = try await streamedText(from: [completed])
             precondition(chunks == "Hello")
         } catch {
             preconditionFailure("Complete SSE stream failed: \(error)")
         }
+
+        let finalMessage = """
+        data: {"choices":[{"message":{"content":[{"type":"text","text":"Final message"}]},"finish_reason":"stop"}]}
+
+        data: [DONE]
+
+        """
+        do {
+            let chunks = try await streamedText(from: [finalMessage])
+            precondition(chunks == "Final message")
+        } catch {
+            preconditionFailure("Final-message SSE shape failed: \(error)")
+        }
+
+        let multiline = """
+        data: {"choices":[{"delta":
+        data: {"content":"Multi-line"},"finish_reason":"stop"}]}
+
+        data: [DONE]
+
+        """
+        do {
+            let chunks = try await streamedText(from: [multiline])
+            precondition(chunks == "Multi-line")
+        } catch {
+            preconditionFailure("Multi-line SSE event failed: \(error)")
+        }
+    }
+
+    private static func retriesEmptyStreamsBeforeRerouting() async {
+        let empty = """
+        data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+
+        data: [DONE]
+
+        """
+        let recovered = """
+        data: {"choices":[{"delta":{"content":"Recovered answer"},"finish_reason":"stop"}]}
+
+        data: [DONE]
+
+        """
+
+        do {
+            let text = try await streamedText(
+                from: [empty, empty, recovered],
+                purpose: .chat,
+                model: InferenceSettings.geminiFlashModel
+            )
+            precondition(text == "Recovered answer")
+            precondition(WireEvalURLProtocol.requestCount == 3)
+        } catch {
+            preconditionFailure("Empty-stream recovery failed: \(error)")
+        }
+    }
+
+    private static func rejectsIncompleteMalformedAndRepeatedEmptyStreams() async {
+        let empty = """
+        data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+
+        data: [DONE]
+
+        """
 
         let incomplete = """
         data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}
 
         """
         do {
-            _ = try await streamedText(from: incomplete)
+            _ = try await streamedText(from: [incomplete])
             preconditionFailure("Incomplete SSE stream was accepted")
         } catch let error as LanguageModelService.APIError {
             guard case .incompleteStream = error else {
@@ -288,7 +383,7 @@ struct LanguageModelWireEvals {
         }
 
         do {
-            _ = try await streamedText(from: "data: {not-json}\n\n")
+            _ = try await streamedText(from: ["data: {not-json}\n\n"])
             preconditionFailure("Malformed SSE stream was accepted")
         } catch let error as LanguageModelService.APIError {
             guard case .streamError = error else {
@@ -297,15 +392,33 @@ struct LanguageModelWireEvals {
         } catch {
             preconditionFailure("Unexpected malformed-stream error: \(error)")
         }
+
+
+        do {
+            _ = try await streamedText(from: [empty, empty, empty])
+            preconditionFailure("Repeated empty streams were accepted")
+        } catch let error as LanguageModelService.APIError {
+            guard case .emptyResponse = error else {
+                preconditionFailure("Unexpected empty-response error: \(error)")
+            }
+        } catch {
+            preconditionFailure("Unexpected empty-response error: \(error)")
+        }
     }
 
-    private static func streamedText(from eventStream: String) async throws -> String {
-        WireEvalURLProtocol.responseBody = Data(eventStream.utf8)
+    private static func streamedText(
+        from eventStreams: [String],
+        purpose: InferencePurpose = .assistant,
+        model: String? = nil
+    ) async throws -> String {
+        WireEvalURLProtocol.responseBodies = eventStreams.map { Data($0.utf8) }
+        WireEvalURLProtocol.requestCount = 0
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [WireEvalURLProtocol.self]
         let session = URLSession(configuration: configuration)
         let service = LanguageModelService(
-            purpose: .assistant,
+            purpose: purpose,
+            model: model,
             session: session,
             apiKeyProvider: { _ in "test-key" }
         )
@@ -321,12 +434,14 @@ struct LanguageModelWireEvals {
 }
 
 private final class WireEvalURLProtocol: URLProtocol {
-    static var responseBody = Data()
+    static var responseBodies: [Data] = []
+    static var requestCount = 0
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
+        Self.requestCount += 1
         let response = HTTPURLResponse(
             url: request.url!,
             statusCode: 200,
@@ -334,7 +449,13 @@ private final class WireEvalURLProtocol: URLProtocol {
             headerFields: ["Content-Type": "text/event-stream"]
         )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Self.responseBody)
+        let responseBody: Data
+        if Self.responseBodies.count > 1 {
+            responseBody = Self.responseBodies.removeFirst()
+        } else {
+            responseBody = Self.responseBodies.first ?? Data()
+        }
+        client?.urlProtocol(self, didLoad: responseBody)
         client?.urlProtocolDidFinishLoading(self)
     }
 

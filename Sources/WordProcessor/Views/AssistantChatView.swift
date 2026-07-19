@@ -26,7 +26,10 @@ struct AssistantChatView: View {
                         ForEach(chatViewModel.messages) { message in
                             MessageBubble(
                                 message: message,
-                                isStreaming: chatViewModel.streamingMessageID == message.id
+                                isStreaming: chatViewModel.streamingMessageID == message.id,
+                                isSearchingWeb: chatViewModel.isSearchingWeb,
+                                isRetryEnabled: !chatViewModel.isStreaming,
+                                onRetry: { chatViewModel.retryMessage(message.id) }
                             )
                                 .equatable()
                                 .id(message.id)
@@ -436,6 +439,9 @@ private struct ChatScrollObserver: NSViewRepresentable {
 struct MessageBubble: View, Equatable {
     let message: ChatMessage
     let isStreaming: Bool
+    let isSearchingWeb: Bool
+    let isRetryEnabled: Bool
+    let onRetry: () -> Void
 
     private let maxUserBubbleWidth: CGFloat = 360
 
@@ -443,8 +449,11 @@ struct MessageBubble: View, Equatable {
         lhs.message.id == rhs.message.id
             && lhs.message.content == rhs.message.content
             && lhs.message.detail == rhs.message.detail
+            && lhs.message.sources == rhs.message.sources
             && lhs.message.deliveryState == rhs.message.deliveryState
             && lhs.isStreaming == rhs.isStreaming
+            && lhs.isSearchingWeb == rhs.isSearchingWeb
+            && lhs.isRetryEnabled == rhs.isRetryEnabled
     }
 
     var body: some View {
@@ -461,7 +470,7 @@ struct MessageBubble: View, Equatable {
                 if message.role == .user { Spacer(minLength: 40) }
 
                 bubbleContent
-                    .padding(12)
+                    .padding(drawsBubbleChrome ? 12 : 0)
                     .frame(
                         maxWidth: message.role == .assistant ? .infinity : maxUserBubbleWidth,
                         alignment: .leading
@@ -488,11 +497,20 @@ struct MessageBubble: View, Equatable {
         if message.role == .assistant {
             VStack(alignment: .leading, spacing: 10) {
                 if isStreaming || hasAssistantContent {
-                    AssistantMessageContent(content: message.content, isStreaming: isStreaming)
+                    AssistantMessageContent(
+                        content: message.content,
+                        sources: message.sources,
+                        isStreaming: isStreaming,
+                        isSearchingWeb: isSearchingWeb
+                    )
                 }
 
                 if message.deliveryState != .normal {
-                    AssistantDeliveryStatusView(state: message.deliveryState)
+                    AssistantDeliveryStatusView(
+                        state: message.deliveryState,
+                        isRetryEnabled: isRetryEnabled,
+                        onRetry: onRetry
+                    )
                 }
             }
         } else {
@@ -505,6 +523,7 @@ struct MessageBubble: View, Equatable {
     }
 
     private var bubbleBackground: Color {
+        guard drawsBubbleChrome else { return .clear }
         if message.role == .user {
             return Color.accentColor.opacity(0.13)
         }
@@ -512,13 +531,20 @@ struct MessageBubble: View, Equatable {
     }
 
     private var bubbleBorderColor: Color {
-        message.role == .user
+        guard drawsBubbleChrome else { return .clear }
+        return message.role == .user
             ? Color.accentColor.opacity(0.12)
             : Color.primary.opacity(0.065)
     }
 
     private var hasAssistantContent: Bool {
         !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var drawsBubbleChrome: Bool {
+        guard message.role == .assistant, !hasAssistantContent else { return true }
+        if case .failed = message.deliveryState { return false }
+        return true
     }
 
     private func copyMessageToPasteboard(_ text: String) {
@@ -530,17 +556,19 @@ struct MessageBubble: View, Equatable {
 
 private struct AssistantDeliveryStatusView: View {
     let state: ChatMessage.DeliveryState
+    let isRetryEnabled: Bool
+    let onRetry: () -> Void
 
     var body: some View {
         switch state {
         case .normal:
             EmptyView()
         case .cancelled:
-            HStack(spacing: 7) {
-                Image(systemName: "xmark.circle")
-                    .font(.system(size: 11, weight: .semibold))
-                Text("Request cancelled")
+            HStack(spacing: 8) {
+                Label("Stopped", systemImage: "stop.circle")
                     .font(.system(size: 11.5, weight: .medium))
+                Spacer(minLength: 0)
+                retryButton
             }
             .foregroundStyle(.secondary)
         case .failed(let title, let detail):
@@ -559,6 +587,9 @@ private struct AssistantDeliveryStatusView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+
+                Spacer(minLength: 4)
+                retryButton
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
@@ -571,6 +602,18 @@ private struct AssistantDeliveryStatusView: View {
                     .stroke(Color.orange.opacity(0.16), lineWidth: 1)
             )
         }
+    }
+
+    private var retryButton: some View {
+        Button(action: onRetry) {
+            Label("Try Again", systemImage: "arrow.clockwise")
+                .font(.system(size: 10.5, weight: .semibold))
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .fixedSize()
+        .disabled(!isRetryEnabled)
+        .accessibilityLabel("Try request again")
     }
 }
 
@@ -614,90 +657,47 @@ private struct SystemMessageRow: View {
 }
 
 private struct AssistantThinkingLabel: View {
-    private static let phrases = [
-        "Setting the scene…",
-        "Consulting the chronicles…",
-        "Following the thread…",
-        "Checking every claim…",
-        "Trimming the soliloquy…",
-        "The play’s the thing…",
-        "Brevity is the soul of wit…",
-    ]
-
-    @State private var phase = 0
-    @State private var isPulsing = false
+    let isSearchingWeb: Bool
 
     var body: some View {
         HStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .fill(Color.accentColor.opacity(isPulsing ? 0.16 : 0.08))
-                    .frame(width: 20, height: 20)
+            ProgressView()
+                .controlSize(.small)
+                .scaleEffect(0.72)
+                .frame(width: 16, height: 16)
 
-                Image(systemName: "sparkles")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .scaleEffect(isPulsing ? 1.08 : 0.9)
-            }
-
-            ZStack(alignment: .leading) {
-                Text(verbatim: Self.phrases[phase])
-                    .id(phase)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .bottom).combined(with: .opacity),
-                        removal: .move(edge: .top).combined(with: .opacity)
-                    ))
-            }
+            Text(isSearchingWeb ? "Searching sources…" : "Thinking…")
             .font(.system(size: 11.5, weight: .medium))
             .foregroundStyle(.secondary)
         }
         .padding(.vertical, 1)
-        .animation(.easeInOut(duration: 0.28), value: phase)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Shakespeare is preparing a response")
-            .task {
-                withAnimation(.easeInOut(duration: 0.72).repeatForever(autoreverses: true)) {
-                    isPulsing = true
-                }
-
-                while !Task.isCancelled {
-                    do {
-                        try await Task.sleep(nanoseconds: 1_450_000_000)
-                    } catch {
-                        return
-                    }
-                    phase = (phase + 1) % Self.phrases.count
-                }
-            }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isSearchingWeb ? "Searching sources" : "Preparing a response")
     }
 }
 
 private struct AssistantMessageContent: View {
     let content: String
+    let sources: [ChatSource]
     let isStreaming: Bool
+    let isSearchingWeb: Bool
 
     private var blocks: [AssistantMessageBlock] {
         AssistantMessageBlock.parse(content)
     }
 
     var body: some View {
-        Group {
-            if isStreaming {
-                if content.isEmpty {
-                    AssistantThinkingLabel()
-                } else {
-                    Text(verbatim: content)
-                        .foregroundStyle(.primary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .font(AssistantChatFont.message)
-                        .lineSpacing(3)
-                }
+        VStack(alignment: .leading, spacing: 10) {
+            if isStreaming && content.isEmpty {
+                AssistantThinkingLabel(isSearchingWeb: isSearchingWeb)
             } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(Array(blocks.enumerated()), id: \.offset) { entry in
-                        blockView(entry.element)
-                    }
+                ForEach(Array(blocks.enumerated()), id: \.offset) { entry in
+                    blockView(entry.element)
                 }
+            }
+
+            if !isStreaming, !sources.isEmpty {
+                AssistantSourcesView(sources: sources)
             }
         }
         .textSelection(.enabled)
@@ -713,6 +713,55 @@ private struct AssistantMessageContent: View {
         case .toolAction(let text):
             ToolActionView(text: text)
         }
+    }
+}
+
+private struct AssistantSourcesView: View {
+    let sources: [ChatSource]
+    @State private var isExpanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(sources) { source in
+                    if let destination = source.destination {
+                        Link(destination: destination) {
+                            HStack(spacing: 7) {
+                                Image(systemName: "arrow.up.right.square")
+                                    .font(.system(size: 9.5, weight: .semibold))
+                                    .foregroundStyle(.tertiary)
+
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(source.displayTitle)
+                                        .font(.system(size: 11.5, weight: .medium))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+                                    Text(source.host)
+                                        .font(.system(size: 9.5))
+                                        .foregroundStyle(.tertiary)
+                                        .lineLimit(1)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 3)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(.top, 6)
+        } label: {
+            Label(sourceCountLabel, systemImage: "link")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.top, 2)
+        .accessibilityLabel(sourceCountLabel)
+    }
+
+    private var sourceCountLabel: String {
+        sources.count == 1 ? "1 source" : "\(sources.count) sources"
     }
 }
 

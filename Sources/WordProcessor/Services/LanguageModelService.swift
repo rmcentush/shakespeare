@@ -3,6 +3,7 @@ import Foundation
 final class LanguageModelService: Sendable {
     static let maximumTransportRetryCount = 1
     static let maximumFallbackModelsPerRequest = 3
+    static let maximumEmptyResponseAttempts = 3
 
     private let purpose: InferencePurpose
     private let modelOverride: String?
@@ -32,6 +33,11 @@ final class LanguageModelService: Sendable {
         case citation(title: String, url: String)
     }
 
+    struct ProviderTextCandidate: Equatable {
+        let text: String
+        let isCumulative: Bool
+    }
+
     static let ephemeralPromptCacheControl: [String: Any] = ["type": "ephemeral"]
 
     func streamMessage(
@@ -53,9 +59,10 @@ final class LanguageModelService: Sendable {
                 let modelBatches = Self.modelBatches(for: runtime)
                 var modelBatchIndex = 0
                 var transportRetryCount = 0
+                var completedEmptyResponses = 0
+                var attemptRuntime = modelBatches[modelBatchIndex]
 
                 while true {
-                    let attemptRuntime = modelBatches[modelBatchIndex]
                     let body = Self.requestBody(
                         runtime: attemptRuntime,
                         messages: messages,
@@ -90,6 +97,7 @@ final class LanguageModelService: Sendable {
                                 statusCode: httpResponse.statusCode
                             ) {
                                 modelBatchIndex += 1
+                                attemptRuntime = modelBatches[modelBatchIndex]
                                 transportRetryCount = 0
                                 continue
                             }
@@ -97,53 +105,120 @@ final class LanguageModelService: Sendable {
                             return
                         }
 
-                        var seenCitationURLs = Set<String>()
+                        var emittedCitationURLs = Set<String>()
+                        var pendingCitations: [ProviderCitation] = []
                         var streamFailure: String?
                         var sawTerminalEvent = false
-                        for try await line in bytes.lines {
-                            try Task.checkCancellation()
-                            guard line.hasPrefix("data:") else { continue }
-                            let jsonString = line.dropFirst(5)
-                                .trimmingCharacters(in: .whitespaces)
+                        var attemptText = ""
+                        var yieldedTextCount = 0
+                        var dataLines: [String] = []
+
+                        func emitPendingContentIfUseful() {
+                            let hasUsefulText = !attemptText
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                                .isEmpty
+                            guard hasUsefulText else { return }
+
+                            if yieldedTextCount < attemptText.count {
+                                let text = String(attemptText.dropFirst(yieldedTextCount))
+                                if !text.isEmpty {
+                                    continuation.yield(.text(text))
+                                    hasYieldedChunk = true
+                                }
+                                yieldedTextCount = attemptText.count
+                            }
+
+                            for citation in pendingCitations
+                            where emittedCitationURLs.insert(citation.url).inserted {
+                                continuation.yield(.citation(title: citation.title, url: citation.url))
+                            }
+                            pendingCitations.removeAll(keepingCapacity: true)
+                        }
+
+                        func consumeEventPayload(_ payload: String) -> Bool {
+                            let jsonString = payload.trimmingCharacters(in: .whitespacesAndNewlines)
                             if jsonString == "[DONE]" {
                                 sawTerminalEvent = true
-                                break
+                                return true
                             }
-                            guard !jsonString.isEmpty else { continue }
+                            guard !jsonString.isEmpty else { return false }
                             guard let data = jsonString.data(using: .utf8),
                                   let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                             else {
                                 streamFailure = "OpenRouter returned a malformed streaming event."
-                                break
+                                return true
                             }
 
                             if let error = event["error"] as? [String: Any] {
                                 streamFailure = error["message"] as? String ?? "Unknown error"
-                                break
+                                return true
                             }
 
-                            if let choice = (event["choices"] as? [[String: Any]])?.first,
-                               let delta = choice["delta"] as? [String: Any],
-                               let text = delta["content"] as? String,
-                               !text.isEmpty {
-                                continuation.yield(.text(text))
-                                hasYieldedChunk = true
+                            if let candidate = Self.openRouterTextCandidate(from: event) {
+                                let fragment: String?
+                                if candidate.isCumulative {
+                                    if attemptText.isEmpty {
+                                        fragment = candidate.text
+                                    } else if candidate.text.hasPrefix(attemptText) {
+                                        fragment = String(candidate.text.dropFirst(attemptText.count))
+                                    } else {
+                                        // A final cumulative message can repeat content already
+                                        // emitted as deltas. Never duplicate it in the UI.
+                                        fragment = nil
+                                    }
+                                } else {
+                                    fragment = candidate.text
+                                }
+                                if let fragment, !fragment.isEmpty {
+                                    attemptText += fragment
+                                    emitPendingContentIfUseful()
+                                }
                             }
+
+                            let citations = Self.openRouterCitations(from: event)
+                            if !citations.isEmpty {
+                                pendingCitations.append(contentsOf: citations)
+                                emitPendingContentIfUseful()
+                            }
+
                             if let choice = (event["choices"] as? [[String: Any]])?.first,
                                choice["finish_reason"] is String {
                                 sawTerminalEvent = true
                             }
+                            return false
+                        }
 
-                            for citation in Self.openRouterCitations(from: event)
-                            where seenCitationURLs.insert(citation.url).inserted {
-                                continuation.yield(.citation(title: citation.title, url: citation.url))
-                                hasYieldedChunk = true
+                        var shouldStopReading = false
+                        for try await line in bytes.lines {
+                            try Task.checkCancellation()
+                            if line.isEmpty {
+                                guard !dataLines.isEmpty else { continue }
+                                shouldStopReading = consumeEventPayload(dataLines.joined(separator: "\n"))
+                                dataLines.removeAll(keepingCapacity: true)
+                                if shouldStopReading { break }
+                                continue
                             }
+                            guard line.hasPrefix("data:") else { continue }
+                            dataLines.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces))
+                            let bufferedPayload = dataLines.joined(separator: "\n")
+                            let bufferedData = bufferedPayload.data(using: .utf8)
+                            let hasCompleteJSON = bufferedData.flatMap {
+                                try? JSONSerialization.jsonObject(with: $0)
+                            } != nil
+                            if bufferedPayload == "[DONE]" || hasCompleteJSON {
+                                shouldStopReading = consumeEventPayload(bufferedPayload)
+                                dataLines.removeAll(keepingCapacity: true)
+                                if shouldStopReading { break }
+                            }
+                        }
+                        if !shouldStopReading, !dataLines.isEmpty {
+                            _ = consumeEventPayload(dataLines.joined(separator: "\n"))
                         }
 
                         if let streamFailure {
                             if !hasYieldedChunk, modelBatchIndex + 1 < modelBatches.count {
                                 modelBatchIndex += 1
+                                attemptRuntime = modelBatches[modelBatchIndex]
                                 transportRetryCount = 0
                                 continue
                             }
@@ -153,6 +228,28 @@ final class LanguageModelService: Sendable {
 
                         guard sawTerminalEvent else {
                             continuation.finish(throwing: APIError.incompleteStream)
+                            return
+                        }
+
+                        guard !attemptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                            completedEmptyResponses += 1
+                            transportRetryCount = 0
+
+                            if completedEmptyResponses == 1 {
+                                // Empty provider completions are often transient. Give
+                                // the selected model one clean retry before rerouting.
+                                continue
+                            }
+                            if completedEmptyResponses < Self.maximumEmptyResponseAttempts,
+                               let fallbackRuntime = Self.emptyResponseFallbackRuntime(
+                                   after: attemptRuntime.model,
+                                   in: runtime
+                               ) {
+                                attemptRuntime = fallbackRuntime
+                                continue
+                            }
+
+                            continuation.finish(throwing: APIError.emptyResponse)
                             return
                         }
 
@@ -182,6 +279,76 @@ final class LanguageModelService: Sendable {
 
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    static func openRouterTextCandidate(from event: [String: Any]) -> ProviderTextCandidate? {
+        guard let choice = (event["choices"] as? [[String: Any]])?.first else {
+            if let message = event["message"] as? [String: Any],
+               let text = contentText(from: message["content"]),
+               !text.isEmpty {
+                return ProviderTextCandidate(text: text, isCumulative: true)
+            }
+            return nil
+        }
+
+        if let delta = choice["delta"] as? [String: Any] {
+            if let text = contentText(from: delta["content"]), !text.isEmpty {
+                return ProviderTextCandidate(text: text, isCumulative: false)
+            }
+            if let text = delta["text"] as? String, !text.isEmpty {
+                return ProviderTextCandidate(text: text, isCumulative: false)
+            }
+        }
+        if let text = choice["text"] as? String, !text.isEmpty {
+            return ProviderTextCandidate(text: text, isCumulative: false)
+        }
+        if let message = choice["message"] as? [String: Any],
+           let text = contentText(from: message["content"]),
+           !text.isEmpty {
+            return ProviderTextCandidate(text: text, isCumulative: true)
+        }
+        return nil
+    }
+
+    private static func contentText(from value: Any?) -> String? {
+        if let text = value as? String { return text }
+        if let block = value as? [String: Any] {
+            if let text = block["text"] as? String { return text }
+            if let content = block["content"] { return contentText(from: content) }
+            return nil
+        }
+        if let blocks = value as? [Any] {
+            let text = blocks.compactMap(contentText(from:)).joined()
+            return text.isEmpty ? nil : text
+        }
+        return nil
+    }
+
+    private static func emptyResponseFallbackRuntime(
+        after model: String,
+        in runtime: InferenceRuntime
+    ) -> InferenceRuntime? {
+        let orderedModelIDs = [runtime.model] + runtime.fallbackModels
+        guard let currentIndex = orderedModelIDs.firstIndex(of: model),
+              currentIndex + 1 < orderedModelIDs.count
+        else { return nil }
+
+        let fallbackIndex = currentIndex + 1
+        let fallbackModel = orderedModelIDs[fallbackIndex]
+        let remainingFallbacks = Array(
+            orderedModelIDs.dropFirst(fallbackIndex + 1).prefix(maximumFallbackModelsPerRequest)
+        )
+        return InferenceRuntime(
+            providerID: runtime.providerID,
+            providerName: runtime.providerName,
+            messagesURL: runtime.messagesURL,
+            apiKeyService: runtime.apiKeyService,
+            model: fallbackModel,
+            fallbackModels: remainingFallbacks,
+            webSearchEnabled: runtime.webSearchEnabled,
+            supportsTemperature: InferenceSettings.modelOption(for: fallbackModel)?.supportsTemperature
+                ?? runtime.supportsTemperature
+        )
     }
 
     /// OpenRouter caps the `models` fallback array at three entries. Preserve the
@@ -434,6 +601,7 @@ final class LanguageModelService: Sendable {
         case httpError(Int, String)
         case streamError(String)
         case incompleteStream
+        case emptyResponse
 
         var errorDescription: String? {
             switch self {
@@ -459,6 +627,8 @@ final class LanguageModelService: Sendable {
                 return "OpenRouter stream error: \(message)"
             case .incompleteStream:
                 return "OpenRouter ended the response before confirming completion. Partial text was not accepted as complete."
+            case .emptyResponse:
+                return "OpenRouter completed the request without returning answer text."
             }
         }
 
