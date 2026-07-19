@@ -18,173 +18,6 @@ private enum RecoveryDraftPresentationCoordinator {
     }
 }
 
-private struct DocumentTitleTextField: NSViewRepresentable {
-    @Binding var text: String
-    let displayText: String
-    let isEditing: Bool
-    let isEnabled: Bool
-    let onBeginEditing: () -> Void
-    let onCommit: () -> Void
-    let onCancel: () -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(
-            text: $text,
-            onBeginEditing: onBeginEditing,
-            onCommit: onCommit,
-            onCancel: onCancel
-        )
-    }
-
-    func makeNSView(context: Context) -> InlineTitleTextField {
-        let textField = InlineTitleTextField(string: displayText)
-        textField.delegate = context.coordinator
-        textField.alignment = .center
-        textField.isBezeled = false
-        textField.isBordered = false
-        textField.drawsBackground = false
-        textField.focusRingType = .none
-        textField.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-        textField.lineBreakMode = .byTruncatingMiddle
-        textField.usesSingleLineMode = true
-        textField.onRequestEditing = { context.coordinator.onBeginEditing() }
-        return textField
-    }
-
-    func updateNSView(_ textField: InlineTitleTextField, context: Context) {
-        context.coordinator.text = $text
-        context.coordinator.onBeginEditing = onBeginEditing
-        context.coordinator.onCommit = onCommit
-        context.coordinator.onCancel = onCancel
-        textField.onRequestEditing = { context.coordinator.onBeginEditing() }
-        textField.isEnabled = isEnabled
-        textField.editingAllowed = isEnabled
-        textField.isEditable = isEditing
-        textField.isSelectable = isEditing
-        textField.setOutsideClickCommitEnabled(isEditing)
-
-        let visibleText = isEditing ? text : displayText
-        if textField.stringValue != visibleText {
-            textField.stringValue = visibleText
-        }
-        textField.window?.invalidateCursorRects(for: textField)
-    }
-
-    final class Coordinator: NSObject, NSTextFieldDelegate {
-        var text: Binding<String>
-        var onBeginEditing: () -> Void
-        var onCommit: () -> Void
-        var onCancel: () -> Void
-        private var isCancelling = false
-
-        init(
-            text: Binding<String>,
-            onBeginEditing: @escaping () -> Void,
-            onCommit: @escaping () -> Void,
-            onCancel: @escaping () -> Void
-        ) {
-            self.text = text
-            self.onBeginEditing = onBeginEditing
-            self.onCommit = onCommit
-            self.onCancel = onCancel
-        }
-
-        func controlTextDidChange(_ notification: Notification) {
-            guard let textField = notification.object as? NSTextField else { return }
-            text.wrappedValue = textField.stringValue
-        }
-
-        func controlTextDidEndEditing(_ notification: Notification) {
-            if isCancelling {
-                isCancelling = false
-            } else {
-                onCommit()
-            }
-        }
-
-        func control(
-            _ control: NSControl,
-            textView: NSTextView,
-            doCommandBy commandSelector: Selector
-        ) -> Bool {
-            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-                isCancelling = true
-                onCancel()
-                control.window?.makeFirstResponder(nil)
-                return true
-            }
-            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-                onCommit()
-                control.window?.makeFirstResponder(nil)
-                return true
-            }
-            return false
-        }
-    }
-
-    final class InlineTitleTextField: NSTextField {
-        var editingAllowed = true
-        var onRequestEditing: (() -> Void)?
-        private var outsideClickMonitor: Any?
-
-        func setOutsideClickCommitEnabled(_ isEnabled: Bool) {
-            if isEnabled {
-                guard outsideClickMonitor == nil else { return }
-                outsideClickMonitor = NSEvent.addLocalMonitorForEvents(
-                    matching: [.leftMouseDown, .rightMouseDown]
-                ) { [weak self] event in
-                    guard let self,
-                          self.isEditable,
-                          event.window === self.window
-                    else {
-                        return event
-                    }
-
-                    let clickLocation = self.convert(event.locationInWindow, from: nil)
-                    if !self.bounds.contains(clickLocation) {
-                        self.window?.makeFirstResponder(nil)
-                    }
-                    return event
-                }
-            } else if let outsideClickMonitor {
-                NSEvent.removeMonitor(outsideClickMonitor)
-                self.outsideClickMonitor = nil
-            }
-        }
-
-        override func mouseDown(with event: NSEvent) {
-            guard editingAllowed else { return }
-
-            if isEditable {
-                super.mouseDown(with: event)
-                return
-            }
-
-            onRequestEditing?()
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.isEditable else { return }
-                window?.makeFirstResponder(self)
-                selectText(nil)
-            }
-        }
-
-        override func viewWillMove(toWindow newWindow: NSWindow?) {
-            if newWindow == nil {
-                setOutsideClickCommitEnabled(false)
-            }
-            super.viewWillMove(toWindow: newWindow)
-        }
-
-        override func resetCursorRects() {
-            super.resetCursorRects()
-            let cursor: NSCursor = editingAllowed
-                ? (isEditable ? .iBeam : .pointingHand)
-                : .arrow
-            addCursorRect(bounds, cursor: cursor)
-        }
-    }
-}
-
 struct ContentView: View {
     private enum SidebarPanel {
         case chat
@@ -239,13 +72,21 @@ struct ContentView: View {
     @State private var recoveryDraftPresentation: RecoveryDraftPresentation?
     @State private var isEditingDocumentTitle = false
     @State private var documentTitleDraft = ""
+    @FocusState private var isDocumentTitleFocused: Bool
 
     var body: some View {
         mainLayout
             .navigationTitle("")
             .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    editableDocumentTitle
+                if #available(macOS 26.0, *) {
+                    ToolbarItem(placement: .principal) {
+                        editableDocumentTitle
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .principal) {
+                        editableDocumentTitle
+                    }
                 }
                 ToolbarItem(placement: .automatic) {
                     Button {
@@ -445,31 +286,62 @@ struct ContentView: View {
     }
 
     private var editableDocumentTitle: some View {
-        DocumentTitleTextField(
-            text: $documentTitleDraft,
-            displayText: document.displayName,
-            isEditing: isEditingDocumentTitle,
-            isEnabled: !editorViewModel.isDocumentTransitioning,
-            onBeginEditing: beginDocumentTitleEdit,
-            onCommit: commitDocumentTitleEdit,
-            onCancel: cancelDocumentTitleEdit
-        )
-        .frame(width: 240, height: 24)
+        TextField("", text: $documentTitleDraft)
+        .textFieldStyle(.plain)
+        .multilineTextAlignment(.center)
+        .font(.system(size: NSFont.systemFontSize, weight: .semibold))
+        .lineLimit(1)
+        .focused($isDocumentTitleFocused)
+        .onSubmit {
+            commitDocumentTitleEdit()
+            isDocumentTitleFocused = false
+            DispatchQueue.main.async {
+                if let webView = editorViewModel.webView {
+                    webView.window?.makeFirstResponder(webView)
+                }
+                editorViewModel.focusEditor()
+            }
+        }
+        .onExitCommand {
+            cancelDocumentTitleEdit()
+            isDocumentTitleFocused = false
+            DispatchQueue.main.async {
+                if let webView = editorViewModel.webView {
+                    webView.window?.makeFirstResponder(webView)
+                }
+                editorViewModel.focusEditor()
+            }
+        }
+        .onChange(of: isDocumentTitleFocused) { wasFocused, isFocused in
+            if isFocused {
+                beginDocumentTitleEdit()
+            } else if wasFocused {
+                commitDocumentTitleEdit()
+            }
+        }
+        .onChange(of: document.displayName) { _, displayName in
+            if !isDocumentTitleFocused {
+                documentTitleDraft = displayName
+            }
+        }
+        .onAppear {
+            documentTitleDraft = document.displayName
+        }
+        .frame(width: 220, height: 26)
         .background {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(isEditingDocumentTitle ? Color.accentColor.opacity(0.06) : .clear)
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(isEditingDocumentTitle ? Color(nsColor: .textBackgroundColor).opacity(0.72) : .clear)
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(
                     isEditingDocumentTitle ? Color.accentColor.opacity(0.55) : .clear,
                     lineWidth: 1
                 )
         }
         .help(isEditingDocumentTitle ? "Edit file name" : "Click to rename")
-        .accessibilityLabel(
-            isEditingDocumentTitle ? "File name" : "Rename \(document.displayName)"
-        )
+        .accessibilityLabel("Document title")
+        .disabled(editorViewModel.isDocumentTransitioning)
     }
 
     private func beginDocumentTitleEdit() {
@@ -1050,37 +922,47 @@ struct StatusBarView: View {
     @Environment(EditorViewModel.self) private var editorViewModel
 
     var body: some View {
-        HStack(spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                if editorViewModel.selectionState.hasSelection {
-                    Text("Selected \(editorViewModel.selectionState.selectedWords) words")
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.primary)
-                    metricSeparator
-                    Text("\(editorViewModel.selectionState.selectedCharacters) characters")
-                    metricSeparator
-                }
-                Text("\(document.wordCount) words")
-                metricSeparator
-                Text("\(document.characterCount) characters")
-            }
-            .font(.caption)
-            .monospacedDigit()
-            .foregroundStyle(.secondary)
+        ZStack {
+            documentMetrics
 
-            Spacer(minLength: 12)
-            proofreadingStatus
-            if !editorViewModel.persistenceStatusText.isEmpty {
-                Text(editorViewModel.persistenceStatusText)
-                    .font(.caption)
-                    .foregroundColor(editorViewModel.persistenceStatusIsError ? .red : .secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+            HStack(spacing: 12) {
+                Spacer(minLength: 0)
+                proofreadingStatus
+                if !editorViewModel.persistenceStatusText.isEmpty {
+                    Text(editorViewModel.persistenceStatusText)
+                        .font(.caption)
+                        .foregroundColor(editorViewModel.persistenceStatusIsError ? .red : .secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
         }
-        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 20)
         .padding(.vertical, 6)
         .background(.bar)
+        .overlay(alignment: .top) {
+            Divider()
+        }
+    }
+
+    private var documentMetrics: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            if editorViewModel.selectionState.hasSelection {
+                Text("Selected \(editorViewModel.selectionState.selectedWords) words")
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.primary)
+                metricSeparator
+                Text("\(editorViewModel.selectionState.selectedCharacters) characters")
+                metricSeparator
+            }
+            Text("\(document.wordCount) words")
+            metricSeparator
+            Text("\(document.characterCount) characters")
+        }
+        .font(.caption)
+        .monospacedDigit()
+        .foregroundStyle(.secondary)
     }
 
     private var metricSeparator: some View {
