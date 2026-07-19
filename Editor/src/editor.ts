@@ -107,6 +107,7 @@ import {
   completeGapFill,
   resetGapSuggestionState,
 } from './gapSuggestions';
+import { SelectionFeedback } from './selectionFeedback';
 
 function resetEditorSyncState() {
   resetDocSyncState();
@@ -220,6 +221,7 @@ const editor = new Editor({
     }),
     CommentMark,
     SearchHighlight,
+    SelectionFeedback,
     PendingEditHighlight,
     WritingGapSuggestions,
     Extension.create({

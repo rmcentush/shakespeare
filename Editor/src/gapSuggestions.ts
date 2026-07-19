@@ -9,6 +9,7 @@ import {
 import {
   createPendingEdit,
   getPendingEditsState,
+  pendingEditPluginKey,
   queuePendingEdits,
 } from './pendingEdits';
 import { findWritingGaps } from './writingGaps';
@@ -170,21 +171,16 @@ function gapActionButton(editor: Editor, gap: WritingGap): HTMLElement {
   button.type = 'button';
   button.className = [
     'writing-gap-action',
-    request?.status === 'loading' ? 'is-loading' : '',
     request?.status === 'error' ? 'is-error' : '',
   ].filter(Boolean).join(' ');
   button.contentEditable = 'false';
   button.setAttribute('aria-label', request?.status === 'error'
     ? 'Try this gap suggestion again'
     : 'Suggest text for this gap');
-  button.title = request?.status === 'loading'
-    ? 'Writing a suggestion…'
-    : request?.status === 'error'
-      ? (request.errorMessage || 'Could not write this gap. Click to try again.')
-      : 'Write this gap (⌘↵)';
-  button.textContent = request?.status === 'loading'
-    ? '…'
-    : request?.status === 'error' ? '!' : '✦';
+  button.title = request?.status === 'error'
+    ? (request.errorMessage || 'Could not write this gap. Click to try again.')
+    : 'Write this gap (⌘↵)';
+  button.textContent = request?.status === 'error' ? '!' : '✦';
   button.addEventListener('mousedown', (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -197,12 +193,51 @@ function gapActionButton(editor: Editor, gap: WritingGap): HTMLElement {
   return button;
 }
 
+function gapLoadingIndicator(): HTMLElement {
+  const indicator = document.createElement('span');
+  indicator.className = 'writing-gap-loading';
+  indicator.contentEditable = 'false';
+  indicator.setAttribute('role', 'status');
+  indicator.setAttribute('aria-label', 'Writing a suggestion');
+
+  const openingBracket = document.createElement('span');
+  openingBracket.className = 'writing-gap-loading-bracket';
+  openingBracket.textContent = '[[';
+  indicator.appendChild(openingBracket);
+
+  for (let index = 0; index < 3; index += 1) {
+    const dot = document.createElement('span');
+    dot.className = 'writing-gap-loading-dot';
+    dot.textContent = '•';
+    indicator.appendChild(dot);
+  }
+
+  const closingBracket = document.createElement('span');
+  closingBracket.className = 'writing-gap-loading-bracket';
+  closingBracket.textContent = ']]';
+  indicator.appendChild(closingBracket);
+  return indicator;
+}
+
 function buildGapDecorations(editor: Editor, state: any): DecorationSet {
   const decorations: Decoration[] = [];
   const { from: selectionFrom, to: selectionTo } = state.selection;
 
   for (const gap of writingGapsInDocument(state.doc)) {
     if (pendingEditCoversGap(state, gap)) continue;
+    const request = requestForGap(gap);
+    if (request?.status === 'loading') {
+      decorations.push(Decoration.inline(gap.from, gap.to, {
+        class: 'writing-gap-loading-source',
+      }));
+      decorations.push(Decoration.widget(gap.from, gapLoadingIndicator, {
+        key: `writing-gap-loading-${request.requestId}`,
+        side: -1,
+        ignoreSelection: true,
+      }));
+      continue;
+    }
+
     const active = selectionFrom <= gap.to && selectionTo >= gap.from;
     decorations.push(Decoration.inline(gap.from, gap.to, {
       class: active ? 'writing-gap writing-gap-active' : 'writing-gap',
@@ -318,7 +353,12 @@ export const WritingGapSuggestions = Extension.create({
             return buildGapDecorations(editor, state);
           },
           apply(tr, previous, _oldState, newState) {
-            if (!tr.docChanged && !tr.selectionSet && !tr.getMeta(gapSuggestionsPluginKey)) {
+            if (
+              !tr.docChanged &&
+              !tr.selectionSet &&
+              !tr.getMeta(gapSuggestionsPluginKey) &&
+              !tr.getMeta(pendingEditPluginKey)
+            ) {
               return previous;
             }
             return buildGapDecorations(editor, newState);

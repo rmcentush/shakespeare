@@ -50,7 +50,7 @@ type PendingEditAction =
   | { type: 'acceptAll' }
   | { type: 'rejectAll' };
 
-const pendingEditPluginKey = new PluginKey<PendingEditsPluginState>('pendingEdits');
+export const pendingEditPluginKey = new PluginKey<PendingEditsPluginState>('pendingEdits');
 
 interface TrackedPersonalizationDecision {
   actionId: string;
@@ -269,9 +269,11 @@ function serializePendingEdit(
 
 function createPendingEditWidget(edit: PendingEdit, isActive: boolean): HTMLElement {
   const isGapSuggestion = edit.groupId.startsWith('edit_gap_');
+  const usesCompactGapReview = isGapSuggestion && edit.status === 'pending';
   const container = document.createElement('span');
   container.className = [
     'pending-edit-widget',
+    usesCompactGapReview ? 'pending-edit-gap' : '',
     isActive ? 'pending-edit-active' : '',
     edit.status === 'conflicted' ? 'pending-edit-conflicted' : '',
   ].filter(Boolean).join(' ');
@@ -312,9 +314,14 @@ function createPendingEditWidget(edit: PendingEdit, isActive: boolean): HTMLElem
   if (edit.status === 'pending') {
     const acceptButton = document.createElement('button');
     acceptButton.type = 'button';
-    acceptButton.className = 'pending-edit-action pending-edit-action-accept';
-    acceptButton.textContent = isGapSuggestion ? 'Use' : 'Accept';
+    acceptButton.className = [
+      'pending-edit-action',
+      'pending-edit-action-accept',
+      usesCompactGapReview ? 'pending-edit-action-icon' : '',
+    ].filter(Boolean).join(' ');
+    acceptButton.textContent = usesCompactGapReview ? '✓' : 'Accept';
     acceptButton.title = isGapSuggestion ? 'Use this text' : 'Accept suggestion';
+    if (usesCompactGapReview) acceptButton.setAttribute('aria-label', 'Use this text');
     acceptButton.addEventListener('mousedown', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -329,13 +336,20 @@ function createPendingEditWidget(edit: PendingEdit, isActive: boolean): HTMLElem
 
   const rejectButton = document.createElement('button');
   rejectButton.type = 'button';
-  rejectButton.className = 'pending-edit-action pending-edit-action-reject';
+  rejectButton.className = [
+    'pending-edit-action',
+    'pending-edit-action-reject',
+    usesCompactGapReview ? 'pending-edit-action-icon' : '',
+  ].filter(Boolean).join(' ');
   rejectButton.textContent = edit.status === 'conflicted'
     ? 'Dismiss'
-    : isGapSuggestion ? 'Keep gap' : 'Reject';
+    : usesCompactGapReview ? '×' : 'Reject';
   rejectButton.title = edit.status === 'conflicted'
     ? 'Dismiss conflicted suggestion'
     : isGapSuggestion ? 'Leave the gap in place' : 'Reject suggestion';
+  if (usesCompactGapReview) {
+    rejectButton.setAttribute('aria-label', 'Leave the gap in place');
+  }
   rejectButton.addEventListener('mousedown', (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -361,8 +375,11 @@ function buildPendingEditDecorations(
   const decorations: Decoration[] = [];
   edits.forEach((edit) => {
     const isActive = edit.id === activeEditId;
+    const isGapSuggestion = edit.groupId.startsWith('edit_gap_');
     if (edit.from < edit.to) {
-      const deleteClass = edit.status === 'conflicted'
+      const deleteClass = isGapSuggestion && edit.status === 'pending'
+        ? 'pending-edit-gap-original'
+        : edit.status === 'conflicted'
         ? (isActive ? 'pending-edit-conflict pending-edit-active' : 'pending-edit-conflict')
         : (isActive ? 'pending-edit-delete pending-edit-active' : 'pending-edit-delete');
       decorations.push(

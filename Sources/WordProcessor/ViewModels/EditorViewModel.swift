@@ -387,6 +387,9 @@ final class EditorViewModel {
         case .proofreadingUserStateChanged(let json):
             TextCheckingSettings.shared.persistProofreadingUserState(json)
 
+        case .selectionFeedbackRequested:
+            NotificationCenter.default.post(name: .selectionFeedbackRequested, object: self)
+
         case .gapFillRequested(let request):
             gapFillTasks[request.requestID]?.cancel()
             gapFillTasks[request.requestID] = Task { [weak self] in
@@ -1389,14 +1392,10 @@ final class EditorViewModel {
                 throw GapFillContract.ContractError.invalidResponse
             }
 
-            let stylePacket = StyleContextAssembler.assemble(
+            let stylePacket = PersonalizedWritingContext.assemble(
                 task: GapFillContract.styleTask,
                 documentExcerpt: gapFillDocumentExcerpt(targetIndex: target.blockIndex, in: context),
-                reference: AuthorStyleReference.content,
-                learnedPreferences: AuthorStyleReference.learnedPreferences,
-                generalGuidance: Self.writingQualityGuidance,
-                writingSamples: trainingEventStore.writingSamples(),
-                confirmedEdits: trainingEventStore.confirmedStyleExamples()
+                generalGuidance: Self.writingQualityGuidance
             )
             let systemPrompt: [[String: Any]] = [[
                 "type": "text",
@@ -1582,14 +1581,10 @@ final class EditorViewModel {
             "cache_control": LanguageModelService.ephemeralPromptCacheControl,
         ]]
 
-        let stylePacket = StyleContextAssembler.assemble(
+        let stylePacket = PersonalizedWritingContext.assemble(
             task: AmbientReviewContract.styleTask,
             documentExcerpt: reviewBlocks.map(\.text).joined(separator: "\n\n"),
-            reference: AuthorStyleReference.content,
-            learnedPreferences: AuthorStyleReference.learnedPreferences,
-            generalGuidance: Self.writingQualityGuidance,
-            writingSamples: trainingEventStore.writingSamples(),
-            confirmedEdits: trainingEventStore.confirmedStyleExamples()
+            generalGuidance: Self.writingQualityGuidance
         )
         let messages: [[String: Any]] = [
             [
@@ -2730,4 +2725,5 @@ extension Notification.Name {
     static let editorBecameReady = Notification.Name("editorBecameReady")
     static let grammarCheckingSettingsChanged = Notification.Name("grammarCheckingSettingsChanged")
     static let showSaveNamedVersion = Notification.Name("showSaveNamedVersion")
+    static let selectionFeedbackRequested = Notification.Name("selectionFeedbackRequested")
 }

@@ -23,6 +23,7 @@ export type BridgeMessageType =
   | 'commentActivated'
   | 'proofreadingUpdate'
   | 'proofreadingUserStateChanged'
+  | 'selectionFeedbackRequested'
   | 'gapFillRequested'
   | 'imageImportRequested'
   | 'openURL';

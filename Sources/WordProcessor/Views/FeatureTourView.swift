@@ -35,7 +35,7 @@ struct FeatureTourStep: Identifiable, Sendable {
         FeatureTourStep(
             target: .writingGaps,
             title: "Fill a gap",
-            message: "Type [[what belongs here]]. Click ✦ to write it in your style."
+            message: "Type [[what belongs here]]. Click ✦, then choose ✓ or ×."
         ),
         FeatureTourStep(
             target: .versionHistory,

@@ -311,6 +311,14 @@ struct ContentView: View {
                 guard editorViewModel.webView?.window === NSApp.mainWindow else { return }
                 beginFeatureTour(replay: true)
             }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: .selectionFeedbackRequested,
+                    object: editorViewModel
+                )
+            ) { _ in
+                requestSelectionFeedback()
+            }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { notification in
                 guard isDistractionFree, notificationBelongsToEditorWindow(notification) else { return }
                 finishFocusModeExit()
@@ -490,27 +498,9 @@ struct ContentView: View {
                     }
                     .transition(.opacity)
                 }
-                if editorViewModel.pendingEditCount > 0 {
-                    VStack {
-                        Spacer()
-                        PendingEditsBar(
-                            count: editorViewModel.pendingEditCount,
-                            currentIndex: editorViewModel.pendingEditCurrentIndex,
-                            activeEdit: editorViewModel.activePendingEdit,
-                            onFocusPrevious: { editorViewModel.focusPreviousPendingEdit() },
-                            onFocusNext: { editorViewModel.focusNextPendingEdit() },
-                            onAcceptCurrent: { editorViewModel.acceptActivePendingEdit() },
-                            onRejectCurrent: { editorViewModel.rejectActivePendingEdit() },
-                            onReview: { toggleSidebar(.suggestions) }
-                        )
-                        .padding(.bottom, 12)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                    .animation(.easeInOut(duration: 0.2), value: editorViewModel.pendingEditCount)
-                }
             }
             if !isDistractionFree {
-                StatusBarView(onRequestFeedback: requestSelectionFeedback)
+                StatusBarView()
             }
         }
     }
@@ -990,172 +980,9 @@ private struct FocusModeExitButton: View {
     }
 }
 
-struct PendingEditsBar: View {
-    let count: Int
-    let currentIndex: Int
-    let activeEdit: EditorViewModel.PendingEdit?
-    let onFocusPrevious: () -> Void
-    let onFocusNext: () -> Void
-    let onAcceptCurrent: () -> Void
-    let onRejectCurrent: () -> Void
-    let onReview: () -> Void
-
-    private var editLabel: String {
-        if count == 1 { return "Edit 1 of 1" }
-        if let activeEdit { return "Edit \(activeEdit.index + 1) of \(count)" }
-        if currentIndex >= 0 { return "Edit \(currentIndex + 1) of \(count)" }
-        return "\(count) edits"
-    }
-
-    private var detailLabel: String {
-        guard let activeEdit else { return "No active suggestion" }
-        return "\(activeEdit.status == .pending ? "Pending" : "Conflict") - \(activeEdit.source)"
-    }
-
-    private var changePreview: String {
-        guard let activeEdit else { return "" }
-        let original = compactPreview(
-            activeEdit.originalText.isEmpty ? "Insert at cursor" : activeEdit.originalText
-        )
-        let replacement = compactPreview(
-            activeEdit.replacementText.isEmpty
-                ? (activeEdit.status == .conflicted ? "Cannot apply safely" : "Delete")
-                : activeEdit.replacementText
-        )
-        return "\(original) -> \(replacement)"
-    }
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "pencil.and.outline")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.orange)
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(editLabel)
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(detailLabel)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
-                }
-
-                if !changePreview.isEmpty {
-                    Text(changePreview)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-            .frame(maxWidth: 360, alignment: .leading)
-            .layoutPriority(1)
-
-            Divider()
-                .frame(height: 14)
-
-            HStack(spacing: 4) {
-                Button(action: onFocusPrevious) {
-                    Text("Prev")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(count <= 1)
-
-                Button(action: onFocusNext) {
-                    Text("Next")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(count <= 1)
-
-                Button(action: onReview) {
-                    Text("Review")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-
-            Divider()
-                .frame(height: 14)
-
-            HStack(spacing: 4) {
-                Button(action: onAcceptCurrent) {
-                    Text("Accept")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
-                .controlSize(.small)
-                .disabled(!(activeEdit?.canAccept ?? false))
-
-                Button(action: onRejectCurrent) {
-                    Text("Reject")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(!(activeEdit?.canReject ?? false))
-            }
-
-            Divider()
-                .frame(height: 14)
-
-            HStack(spacing: 4) {
-                KeyHint("Tab")
-                Text("accept current")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
-            HStack(spacing: 4) {
-                KeyHint("Shift+Tab")
-                Text("reject current")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
-            HStack(spacing: 4) {
-                KeyHint("Esc")
-                Text("reject current")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
-    }
-
-    private func compactPreview(_ text: String) -> String {
-        let normalized = text
-            .replacingOccurrences(of: "\n", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard normalized.count > 80 else { return normalized }
-        let end = normalized.index(normalized.startIndex, offsetBy: 80)
-        return "\(normalized[..<end])..."
-    }
-}
-
-struct KeyHint: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-    var body: some View {
-        Text(text)
-            .font(.system(size: 10, weight: .medium, design: .rounded))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
-            .foregroundColor(.secondary)
-    }
-}
-
 struct StatusBarView: View {
     @Environment(DocumentModel.self) private var document
     @Environment(EditorViewModel.self) private var editorViewModel
-    let onRequestFeedback: () -> Void
 
     var body: some View {
         ZStack {
@@ -1190,21 +1017,6 @@ struct StatusBarView: View {
                     .foregroundStyle(.primary)
                 metricSeparator
                 Text("\(editorViewModel.selectionState.selectedCharacters) characters")
-                metricSeparator
-                Button(action: onRequestFeedback) {
-                    Label("Feedback", systemImage: "sparkles")
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            Color.accentColor.opacity(0.1),
-                            in: Capsule(style: .continuous)
-                        )
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.accentColor)
-                .help("Ask Shakespeare about the selected text")
-                .accessibilityLabel("Ask for feedback on selected text")
                 metricSeparator
             }
             Text("\(document.wordCount) words")

@@ -39,8 +39,8 @@ them before use.
 Type `[[a short note about what belongs here]]`, then hover or place the cursor
 in the gap and use the sparkle button. **Command-Return** works too. Shakespeare
 uses the note, nearby prose, document flow, and the reviewed style profile to
-draft one fill. The fill remains a suggestion until the writer chooses **Use**;
-**Keep gap** leaves the brackets in place.
+draft one fill. Animated dots stay inside the brackets while it writes. The fill
+remains inline with a **✓** to use it or **×** to leave the brackets in place.
 
 If a used fill is saved unchanged, only its abstract style choices become a
 weak preference signal—the generated wording is deliberately omitted from the
@@ -51,11 +51,18 @@ time so the outcome reflects what remains in the document.
 
 ## Feedback on selected text
 
-Select a passage and choose **Feedback** in the status bar. Shakespeare sends
-the selected text, a bounded view of the surrounding draft, and the reviewed
-style context to the writing model. It returns one direct assessment and no
-more than three specific points. Selection feedback never starts a web search;
-research remains available as a separate follow-up when needed.
+Select a passage and use the small sparkle beside the highlight. Shakespeare
+sends the selected text, a bounded view of the surrounding draft, and the
+latest reviewed style context to the writing model. It returns one direct
+assessment and no more than three specific points in the chat sidebar.
+Selection feedback never starts a web search; research remains available as a
+separate follow-up when needed.
+
+Selection feedback, inline gap fills, and ambient editorial suggestions all use
+the current **Writing Model** selection (Kimi K3 by default) and the same live
+style packet. Ordinary research chat uses the separate **Research Model**
+selection (Gemini Flash by default). Grammar and spelling checks stay
+style-neutral so correctness is not bent toward a personal voice.
 
 ## Storage and deletion
 

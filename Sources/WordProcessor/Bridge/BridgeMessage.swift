@@ -11,6 +11,7 @@ enum BridgePayload: Codable {
     case commentActivated(commentId: String)
     case proofreadingUpdate(ProofreadingUpdateData)
     case proofreadingUserStateChanged(json: String)
+    case selectionFeedbackRequested
     case gapFillRequested(GapFillRequestData)
     case imageImportRequested(ImageImportRequestData)
     case openURL(url: String)
@@ -289,6 +290,8 @@ enum BridgePayload: Codable {
                   json.utf8.count <= 256 * 1_024
             else { return .unknown }
             return .proofreadingUserStateChanged(json: json)
+        case "selectionFeedbackRequested":
+            return .selectionFeedbackRequested
         case "gapFillRequested":
             guard let requestID = payload["requestId"] as? String,
                   !requestID.isEmpty,
