@@ -190,6 +190,8 @@ struct VersionHistoryView: View {
                         Image(systemName: "trash")
                     }
                     .controlSize(.small)
+                    .help("Delete Version")
+                    .accessibilityLabel("Delete Version")
                 }
                 .padding(.top, 4)
             }

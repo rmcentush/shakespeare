@@ -5,6 +5,7 @@ struct RecoveryDraftsView: View {
     let onRecover: (RecoveryDraftStore.DraftMetadata) -> Void
     let onDiscard: (RecoveryDraftStore.DraftMetadata) -> Void
     let onClose: () -> Void
+    @State private var discardTarget: RecoveryDraftStore.DraftMetadata?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,6 +31,23 @@ struct RecoveryDraftsView: View {
             .frame(minHeight: 120, maxHeight: 320)
         }
         .frame(width: 480)
+        .confirmationDialog(
+            "Discard this recovery draft?",
+            isPresented: Binding(
+                get: { discardTarget != nil },
+                set: { if !$0 { discardTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Discard Draft", role: .destructive) {
+                guard let discardTarget else { return }
+                self.discardTarget = nil
+                onDiscard(discardTarget)
+            }
+            Button("Cancel", role: .cancel) { discardTarget = nil }
+        } message: {
+            Text("This recovery copy will be permanently removed.")
+        }
     }
 
     private func draftRow(_ draft: RecoveryDraftStore.DraftMetadata) -> some View {
@@ -67,7 +85,7 @@ struct RecoveryDraftsView: View {
                 .buttonStyle(.borderedProminent)
 
                 Button("Discard", role: .destructive) {
-                    onDiscard(draft)
+                    discardTarget = draft
                 }
                 .controlSize(.small)
             }

@@ -88,6 +88,7 @@ struct CommentsSidebarView: View {
                 .toggleStyle(.button)
                 .controlSize(.small)
                 .help("Ambient Review")
+                .accessibilityLabel("Ambient Review")
                 Button {
                     editorViewModel.addComment()
                 } label: {
@@ -96,6 +97,7 @@ struct CommentsSidebarView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Add Comment (Cmd+Shift+M)")
+                .accessibilityLabel("Add Comment")
                 .disabled(!editorViewModel.selectionState.hasSelection)
             }
             if !editorViewModel.ambientReviewStatusText.isEmpty {
@@ -176,6 +178,7 @@ private struct CommentCard: View {
     let onApplySuggestion: () -> Void
 
     @FocusState private var isTextFieldFocused: Bool
+    @State private var showDeleteConfirmation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -276,14 +279,18 @@ private struct CommentCard: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundColor(.secondary)
+                    .help("Edit Comment")
+                    .accessibilityLabel("Edit Comment")
                     Button {
-                        onDelete()
+                        showDeleteConfirmation = true
                     } label: {
                         Image(systemName: "trash")
                             .font(.caption2)
                     }
                     .buttonStyle(.plain)
                     .foregroundColor(.secondary)
+                    .help("Delete Comment")
+                    .accessibilityLabel("Delete Comment")
                 }
             }
         }
@@ -302,6 +309,16 @@ private struct CommentCard: View {
         }
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { onTap() }
+        .confirmationDialog(
+            "Delete this comment?",
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Comment", role: .destructive, action: onDelete)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The selected text will stay in the document, but this comment will be removed.")
+        }
     }
 
     private var metadataBadges: [String] {

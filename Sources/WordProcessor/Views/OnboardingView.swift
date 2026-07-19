@@ -345,7 +345,10 @@ private struct ConnectedCredentialCard: View {
 
     var body: some View {
         HStack(spacing: 13) {
-            Image(systemName: "checkmark.circle.fill").font(.title2).foregroundStyle(.green)
+            Image(systemName: "checkmark.circle.fill")
+                .font(.title2)
+                .foregroundStyle(.green)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.headline)
                 Text(detail).font(.caption).foregroundStyle(.secondary)
@@ -363,7 +366,10 @@ private struct PrivacyNote: View {
     let text: String
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "hand.raised").foregroundStyle(.secondary).frame(width: 18)
+            Image(systemName: "hand.raised")
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+                .accessibilityHidden(true)
             Text(text)
                 .font(.caption)
                 .lineSpacing(2)

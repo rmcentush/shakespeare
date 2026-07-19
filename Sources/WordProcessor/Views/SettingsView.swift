@@ -32,6 +32,7 @@ struct SettingsView: View {
         bootstrapSampleCount: 0
     )
     @State private var showDeleteEventsConfirmation = false
+    @State private var showResetDictionaryConfirmation = false
     @State private var pendingProfileEvidenceCount = 0
     @State private var learnedPreferencesPreview = ""
     @State private var proposedLearnedPreferences = ""
@@ -105,6 +106,18 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes the saved OpenRouter API key from this Mac. Model-powered writing, grammar, and research will pause; the editor and local spelling remain available.")
+        }
+        .confirmationDialog(
+            "Reset learned spelling data?",
+            isPresented: $showResetDictionaryConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Reset Learned Words and Ignored Issues", role: .destructive) {
+                textCheckingSettings.resetDictionary()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Shakespeare will forget words you taught it and issues you chose to ignore.")
         }
         .sheet(isPresented: $showStyleProposal) {
             styleProposalSheet
@@ -373,7 +386,18 @@ struct SettingsView: View {
                     .settingsDescriptionStyle()
 
                 Button("Reset Learned Words and Ignored Issues") {
-                    textCheckingSettings.resetDictionary()
+                    showResetDictionaryConfirmation = true
+                }
+            }
+
+            SettingsCard(title: "Feature Tour") {
+                HStack(alignment: .center, spacing: 16) {
+                    Text("Take another quick look at the main writing tools.")
+                        .settingsDescriptionStyle()
+                    Spacer()
+                    Button("Replay Tour") {
+                        replayFeatureTour()
+                    }
                 }
             }
         }
@@ -420,6 +444,7 @@ struct SettingsView: View {
                         Image(systemName: "doc.on.clipboard")
                     }
                     .help("Paste from Clipboard")
+                    .accessibilityLabel("Paste API Key from Clipboard")
 
                     Button {
                         showOpenRouterKey.toggle()
@@ -427,6 +452,7 @@ struct SettingsView: View {
                         Image(systemName: showOpenRouterKey ? "eye.slash" : "eye")
                     }
                     .help(showOpenRouterKey ? "Hide API Key" : "Show API Key")
+                    .accessibilityLabel(showOpenRouterKey ? "Hide API Key" : "Show API Key")
                 }
                 .disabled(isValidatingOpenRouterKey)
 
@@ -721,6 +747,13 @@ struct SettingsView: View {
         openRouterConnectionError = ""
         openRouterConnectionRequiresBilling = false
         NotificationCenter.default.post(name: .openRouterConnectionChanged, object: nil)
+    }
+
+    private func replayFeatureTour() {
+        NSApp.keyWindow?.close()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            NotificationCenter.default.post(name: .showFeatureTour, object: nil)
+        }
     }
 
     private func revealPersonalizationData() {

@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 struct ToolbarView: View {
     @Environment(EditorViewModel.self) private var viewModel
+    var featureTourTarget: FeatureTourTarget?
     private static let mixedTypographyValue = "__mixed__"
     private static let customTypographyValue = "__custom__"
     private static let defaultTypographyValue = "__default__"
@@ -87,6 +88,8 @@ struct ToolbarView: View {
                 Text("San Francisco").tag("-apple-system")
             }
             .frame(width: 140)
+            .help("Font Family")
+            .accessibilityLabel("Font Family")
 
             Picker("", selection: Binding(
                 get: { selectedFontSize },
@@ -106,6 +109,7 @@ struct ToolbarView: View {
             }
             .frame(width: 78)
             .help("Font Size")
+            .accessibilityLabel("Font Size")
 
             Picker("", selection: Binding(
                 get: { selectedLineHeight },
@@ -130,6 +134,7 @@ struct ToolbarView: View {
             }
             .frame(width: 74)
             .help("Line Spacing")
+            .accessibilityLabel("Line Spacing")
 
             Divider()
                 .frame(height: 20)
@@ -137,16 +142,36 @@ struct ToolbarView: View {
 
             // Text formatting
             Group {
-                FormatButton(icon: "bold", isActive: viewModel.selectionState.isBold) {
+                FormatButton(
+                    icon: "bold",
+                    isActive: viewModel.selectionState.isBold,
+                    label: "Bold",
+                    help: "Bold (Cmd+B)",
+                    isTourHighlighted: featureTourTarget == .formatting
+                ) {
                     viewModel.applyFormat("bold")
                 }
-                FormatButton(icon: "italic", isActive: viewModel.selectionState.isItalic) {
+                FormatButton(
+                    icon: "italic",
+                    isActive: viewModel.selectionState.isItalic,
+                    label: "Italic",
+                    help: "Italic (Cmd+I)"
+                ) {
                     viewModel.applyFormat("italic")
                 }
-                FormatButton(icon: "underline", isActive: viewModel.selectionState.isUnderline) {
+                FormatButton(
+                    icon: "underline",
+                    isActive: viewModel.selectionState.isUnderline,
+                    label: "Underline",
+                    help: "Underline (Cmd+U)"
+                ) {
                     viewModel.applyFormat("underline")
                 }
-                FormatButton(icon: "strikethrough", isActive: viewModel.selectionState.isStrike) {
+                FormatButton(
+                    icon: "strikethrough",
+                    isActive: viewModel.selectionState.isStrike,
+                    label: "Strikethrough"
+                ) {
                     viewModel.applyFormat("strike")
                 }
                 LinkButton()
@@ -172,19 +197,31 @@ struct ToolbarView: View {
 
             // Lists
             Group {
-                FormatButton(icon: "list.bullet", isActive: viewModel.selectionState.isBulletList) {
+                FormatButton(
+                    icon: "list.bullet",
+                    isActive: viewModel.selectionState.isBulletList,
+                    label: "Bulleted List"
+                ) {
                     viewModel.applyFormat("bulletList")
                 }
-                FormatButton(icon: "list.number", isActive: viewModel.selectionState.isOrderedList) {
+                FormatButton(
+                    icon: "list.number",
+                    isActive: viewModel.selectionState.isOrderedList,
+                    label: "Numbered List"
+                ) {
                     viewModel.applyFormat("orderedList")
                 }
-                FormatButton(icon: "text.quote", isActive: viewModel.selectionState.isBlockquote) {
+                FormatButton(
+                    icon: "text.quote",
+                    isActive: viewModel.selectionState.isBlockquote,
+                    label: "Block Quote"
+                ) {
                     viewModel.applyFormat("blockquote")
                 }
             }
 
             // Insert image
-            FormatButton(icon: "photo", isActive: false) {
+            FormatButton(icon: "photo", isActive: false, label: "Insert Image") {
                 insertImage()
             }
 
@@ -227,7 +264,7 @@ struct ToolbarView: View {
                 .padding(.horizontal, 4)
 
             // Focus mode
-            FocusModeButton()
+            FocusModeButton(isTourHighlighted: featureTourTarget == .focus)
 
             Divider()
                 .frame(height: 20)
@@ -400,11 +437,15 @@ struct ZoomControls: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            FormatButton(icon: "minus.magnifyingglass", isActive: false) {
+            FormatButton(
+                icon: "minus.magnifyingglass",
+                isActive: false,
+                label: "Zoom Out",
+                help: "Zoom Out (Cmd+-)"
+            ) {
                 viewModel.zoomOut()
             }
             .disabled(!viewModel.canZoomOut)
-            .help("Zoom Out (Cmd+-)")
 
             Button {
                 viewModel.resetZoom()
@@ -421,22 +462,46 @@ struct ZoomControls: View {
                 isResetHovered = hovering
             }
             .help("Actual Size (Cmd+0)")
+            .accessibilityLabel("Reset Zoom to 100%")
 
-            FormatButton(icon: "plus.magnifyingglass", isActive: false) {
+            FormatButton(
+                icon: "plus.magnifyingglass",
+                isActive: false,
+                label: "Zoom In",
+                help: "Zoom In (Cmd++)"
+            ) {
                 viewModel.zoomIn()
             }
             .disabled(!viewModel.canZoomIn)
-            .help("Zoom In (Cmd++)")
         }
-        .accessibilityLabel("Zoom")
+        .accessibilityElement(children: .contain)
     }
 }
 
 struct FormatButton: View {
     let icon: String
     let isActive: Bool
+    let label: String
+    let helpText: String
+    let isTourHighlighted: Bool
     let action: () -> Void
     @State private var isHovered = false
+
+    init(
+        icon: String,
+        isActive: Bool,
+        label: String,
+        help: String? = nil,
+        isTourHighlighted: Bool = false,
+        action: @escaping () -> Void
+    ) {
+        self.icon = icon
+        self.isActive = isActive
+        self.label = label
+        self.helpText = help ?? label
+        self.isTourHighlighted = isTourHighlighted
+        self.action = action
+    }
 
     var body: some View {
         Button(action: action) {
@@ -447,11 +512,14 @@ struct FormatButton: View {
                     isHovered ? Color.primary.opacity(0.08) : Color.clear
                 )
                 .cornerRadius(4)
+                .featureTourHighlight(isTourHighlighted)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
             isHovered = hovering
         }
+        .help(helpText)
+        .accessibilityLabel(label)
     }
 }
 
@@ -474,6 +542,7 @@ struct DocumentStylePicker: View {
         }
         .frame(width: 132)
         .help("Document Style")
+        .accessibilityLabel("Document Style")
     }
 }
 
@@ -506,6 +575,8 @@ struct AlignButton: View {
         .onHover { hovering in
             isHovered = hovering
         }
+        .help("Align \(alignment.capitalized)")
+        .accessibilityLabel("Align \(alignment.capitalized)")
     }
 }
 
@@ -518,33 +589,45 @@ struct ImageLayoutControls: View {
 
     var body: some View {
         Group {
-            FormatButton(icon: "textformat", isActive: state.imageLayout == "inline") {
+            FormatButton(
+                icon: "textformat",
+                isActive: state.imageLayout == "inline",
+                label: "Inline Image"
+            ) {
                 viewModel.applyFormat("setImageLayout", value: "inline")
             }
-            .help("Inline Image")
 
             FormatButton(
                 icon: "text.aligncenter",
-                isActive: state.imageLayout == "block" && state.imageAlign == "center"
+                isActive: state.imageLayout == "block" && state.imageAlign == "center",
+                label: "Centered Image"
             ) {
                 viewModel.applyFormat("setImageLayout", value: "block-center")
             }
-            .help("Centered Image")
 
-            FormatButton(icon: "text.alignleft", isActive: state.imageLayout == "float-left") {
+            FormatButton(
+                icon: "text.alignleft",
+                isActive: state.imageLayout == "float-left",
+                label: "Float Image Left"
+            ) {
                 viewModel.applyFormat("setImageLayout", value: "float-left")
             }
-            .help("Float Image Left")
 
-            FormatButton(icon: "text.alignright", isActive: state.imageLayout == "float-right") {
+            FormatButton(
+                icon: "text.alignright",
+                isActive: state.imageLayout == "float-right",
+                label: "Float Image Right"
+            ) {
                 viewModel.applyFormat("setImageLayout", value: "float-right")
             }
-            .help("Float Image Right")
 
-            FormatButton(icon: "arrow.counterclockwise", isActive: false) {
+            FormatButton(
+                icon: "arrow.counterclockwise",
+                isActive: false,
+                label: "Reset Image Crop"
+            ) {
                 viewModel.applyFormat("resetImageCrop")
             }
-            .help("Reset Image Crop")
         }
     }
 }
@@ -596,6 +679,7 @@ struct TextColorButton: View {
         .buttonStyle(.plain)
         .onHover { hovering in isHovered = hovering }
         .help("Text Color")
+        .accessibilityLabel("Text Color")
         .popover(isPresented: $showPopover, arrowEdge: .bottom) {
             VStack(spacing: 8) {
                 let columns = Array(repeating: GridItem(.fixed(26), spacing: 4), count: 5)
@@ -659,6 +743,7 @@ struct ColorSwatch: View {
         .buttonStyle(.plain)
         .onHover { hovering in isHovered = hovering }
         .help(name)
+        .accessibilityLabel("\(name) text color\(isSelected ? ", selected" : "")")
     }
 }
 
@@ -690,6 +775,7 @@ struct LinkButton: View {
             isHovered = hovering
         }
         .help("Insert Link (Cmd+K)")
+        .accessibilityLabel(viewModel.selectionState.isLink ? "Remove Link" : "Insert Link")
         .popover(isPresented: $showPopover, arrowEdge: .bottom) {
             VStack(spacing: 8) {
                 Text("Insert Link")
@@ -753,6 +839,7 @@ struct FootnoteButton: View {
             isHovered = hovering
         }
         .help(viewModel.selectionState.isFootnote ? "Edit Footnote" : "Insert Footnote")
+        .accessibilityLabel(viewModel.selectionState.isFootnote ? "Edit Footnote" : "Insert Footnote")
         .popover(isPresented: $showPopover, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 10) {
                 Text(viewModel.selectionState.isFootnote ? "Edit Footnote" : "Insert Footnote")
@@ -803,6 +890,7 @@ struct FootnoteButton: View {
 
 struct FocusModeButton: View {
     @Environment(EditorViewModel.self) private var viewModel
+    let isTourHighlighted: Bool
     @State private var isHovered = false
 
     var body: some View {
@@ -813,11 +901,13 @@ struct FocusModeButton: View {
                 .frame(width: 28, height: 28)
                 .background(isHovered ? Color.primary.opacity(0.08) : Color.clear)
                 .cornerRadius(4)
+                .featureTourHighlight(isTourHighlighted)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
             isHovered = hovering
         }
         .help("Focus Mode (Cmd+Shift+F)")
+        .accessibilityLabel("Focus Mode")
     }
 }

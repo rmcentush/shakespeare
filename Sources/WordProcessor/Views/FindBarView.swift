@@ -27,6 +27,16 @@ struct FindBarView: View {
                 TextField("Find", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
+                    .padding(.horizontal, 8)
+                    .frame(minWidth: 180, idealWidth: 240, maxWidth: 300, minHeight: 26)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color(nsColor: .textBackgroundColor))
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+                    }
                     .focused($focusedField, equals: .search)
                     .onSubmit { findNext() }
                     .onChange(of: searchText) {
@@ -47,16 +57,22 @@ struct FindBarView: View {
                 Button(action: findPrevious) {
                     Image(systemName: "chevron.up")
                         .font(.system(size: 11, weight: .medium))
+                        .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
                 .disabled(matchCount == 0)
+                .help("Previous Match")
+                .accessibilityLabel("Previous Match")
 
                 Button(action: findNext) {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 11, weight: .medium))
+                        .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
                 .disabled(matchCount == 0)
+                .help("Next Match (Return)")
+                .accessibilityLabel("Next Match")
 
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) {
@@ -66,9 +82,11 @@ struct FindBarView: View {
                     Image(systemName: "arrow.2.squarepath")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(showReplace ? .accentColor : .secondary)
+                        .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
                 .help("Toggle Replace")
+                .accessibilityLabel(showReplace ? "Hide Replace" : "Show Replace")
 
                 Button {
                     close()
@@ -76,8 +94,11 @@ struct FindBarView: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
+                        .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
+                .help("Close Find")
+                .accessibilityLabel("Close Find")
             }
 
             // Replace row
@@ -90,24 +111,37 @@ struct FindBarView: View {
                     TextField("Replace", text: $replaceText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
+                        .padding(.horizontal, 8)
+                        .frame(minWidth: 180, idealWidth: 240, maxWidth: 300, minHeight: 26)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Color(nsColor: .textBackgroundColor))
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+                        }
                         .focused($focusedField, equals: .replace)
                         .onSubmit { replaceOne() }
 
                     Button("Replace") { replaceOne() }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                         .font(.system(size: 12))
                         .disabled(matchCount == 0)
 
-                    Button("All") { replaceAll() }
-                        .buttonStyle(.plain)
+                    Button("Replace All") { replaceAll() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                         .font(.system(size: 12))
                         .disabled(matchCount == 0)
                 }
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 7)
         .background(.bar)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
             focusSearchField()
         }

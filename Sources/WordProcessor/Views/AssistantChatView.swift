@@ -66,7 +66,7 @@ struct AssistantChatView: View {
                             .textFieldStyle(.plain)
                             .font(AssistantChatFont.input)
                             .lineLimit(1...5)
-                            .padding(.vertical, 2)
+                            .frame(minHeight: 28, alignment: .center)
                             .focused($isInputFocused)
                             .onSubmit {
                                 if !chatViewModel.isStreaming {
@@ -89,15 +89,18 @@ struct AssistantChatView: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(!chatViewModel.isStreaming && inputText.isEmpty)
+                        .help(chatViewModel.isStreaming ? "Stop Response" : "Send Message")
+                        .accessibilityLabel(chatViewModel.isStreaming ? "Stop Response" : "Send Message")
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 7)
+                    .padding(.leading, 12)
+                    .padding(.trailing, 6)
+                    .padding(.vertical, 6)
                     .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
                             .fill(Color(nsColor: .controlBackgroundColor))
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
                             .stroke(
                                 isInputFocused
                                     ? Color.accentColor.opacity(0.42)

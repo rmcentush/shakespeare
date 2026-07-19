@@ -72,10 +72,34 @@ struct ContentView: View {
     @State private var recoveryDraftPresentation: RecoveryDraftPresentation?
     @State private var isEditingDocumentTitle = false
     @State private var documentTitleDraft = ""
+    @State private var featureTourStepIndex: Int?
+    @State private var pendingInitialFeatureTour = false
     @FocusState private var isDocumentTitleFocused: Bool
 
     var body: some View {
         mainLayout
+            .overlay {
+                if let featureTourStepIndex,
+                   FeatureTourStep.all.indices.contains(featureTourStepIndex) {
+                    FeatureTourCard(
+                        step: FeatureTourStep.all[featureTourStepIndex],
+                        stepIndex: featureTourStepIndex,
+                        stepCount: FeatureTourStep.all.count,
+                        onBack: previousFeatureTourStep,
+                        onNext: nextFeatureTourStep,
+                        onSkip: finishFeatureTour
+                    )
+                    .frame(
+                        maxWidth: .infinity,
+                        maxHeight: .infinity,
+                        alignment: featureTourCardAlignment
+                    )
+                    .padding(.horizontal, 18)
+                    .padding(.top, 54)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(20)
+                }
+            }
             .navigationTitle("")
             .toolbar {
                 if #available(macOS 26.0, *) {
@@ -90,13 +114,14 @@ struct ContentView: View {
                 }
                 ToolbarItem(placement: .automatic) {
                     Button {
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            showVersionHistory.toggle()
-                        }
+                        toggleVersionHistory()
                     } label: {
                         Image(systemName: "clock.arrow.circlepath")
+                            .frame(width: 22, height: 22)
+                            .featureTourHighlight(featureTourTarget == .versionHistory)
                     }
                     .help("Version History (Cmd+Shift+V)")
+                    .accessibilityLabel(showVersionHistory ? "Hide Version History" : "Show Version History")
                     .opacity(isDistractionFree ? 0 : 1)
                     .disabled(isDistractionFree)
                 }
@@ -105,8 +130,11 @@ struct ContentView: View {
                         toggleSidebar(.chat)
                     } label: {
                         Image(systemName: "bubble.right")
+                            .frame(width: 22, height: 22)
+                            .featureTourHighlight(featureTourTarget == .research)
                     }
                     .help("Toggle Research Chat (Cmd+\\)")
+                    .accessibilityLabel(activeSidebar == .chat ? "Hide Research Chat" : "Show Research Chat")
                     .opacity(isDistractionFree ? 0 : 1)
                     .disabled(isDistractionFree)
                 }
@@ -115,6 +143,7 @@ struct ContentView: View {
                         if editorViewModel.selectionState.hasSelection {
                             editorViewModel.addComment()
                             withAnimation(Layout.sidebarAnimation) {
+                                showVersionHistory = false
                                 activeSidebar = .comments
                             }
                         } else {
@@ -122,8 +151,15 @@ struct ContentView: View {
                         }
                     } label: {
                         Image(systemName: activeSidebar == .comments ? "quote.bubble.fill" : "quote.bubble")
+                            .frame(width: 22, height: 22)
+                            .featureTourHighlight(featureTourTarget == .comments)
                     }
                     .help(editorViewModel.selectionState.hasSelection ? "Add Comment (Cmd+Shift+M)" : "Toggle Comments")
+                    .accessibilityLabel(
+                        editorViewModel.selectionState.hasSelection
+                            ? "Add Comment"
+                            : activeSidebar == .comments ? "Hide Comments" : "Show Comments"
+                    )
                     .opacity(isDistractionFree ? 0 : 1)
                     .disabled(isDistractionFree)
                 }
@@ -135,6 +171,9 @@ struct ContentView: View {
                             Image(systemName: activeSidebar == .suggestions ? "list.bullet.rectangle.portrait.fill" : "list.bullet.rectangle.portrait")
                         }
                         .help("Review Suggestions")
+                        .accessibilityLabel(
+                            activeSidebar == .suggestions ? "Hide Suggestions" : "Review Suggestions"
+                        )
                         .opacity(isDistractionFree ? 0 : 1)
                         .disabled(isDistractionFree)
                     }
@@ -201,10 +240,12 @@ struct ContentView: View {
                 editorViewModel.flushPendingChanges(document: document)
                 OnboardingSettings.releasePresentation(for: onboardingWindowID)
                 RecoveryDraftPresentationCoordinator.release(for: onboardingWindowID)
+                FeatureTourPresentationCoordinator.release(for: onboardingWindowID)
             }
             .onAppear {
                 guard !hasCheckedOnboarding else { return }
                 hasCheckedOnboarding = true
+                pendingInitialFeatureTour = FeatureTourSettings.shouldPresent
                 let willPresentOnboarding = OnboardingSettings.shouldPresent
                     && OnboardingSettings.claimPresentation(for: onboardingWindowID)
                 if willPresentOnboarding {
@@ -238,6 +279,7 @@ struct ContentView: View {
             .sheet(item: $recoveryDraftPresentation, onDismiss: {
                 RecoveryDraftPresentationCoordinator.release(for: onboardingWindowID)
                 editorViewModel.focusEditor()
+                presentFeatureTourIfReady()
             }) { presentation in
                 RecoveryDraftsView(
                     drafts: presentation.drafts,
@@ -265,6 +307,10 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode, object: editorViewModel)) { _ in
                 toggleFocusMode()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .showFeatureTour)) { _ in
+                guard editorViewModel.webView?.window === NSApp.mainWindow else { return }
+                beginFeatureTour(replay: true)
+            }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { notification in
                 guard isDistractionFree, notificationBelongsToEditorWindow(notification) else { return }
                 finishFocusModeExit()
@@ -279,10 +325,22 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .showSaveNamedVersion, object: editorViewModel)) { _ in
                 // Open version history panel and trigger the naming alert
                 withAnimation(.easeInOut(duration: 0.15)) {
+                    activeSidebar = nil
                     showVersionHistory = true
                 }
                 showNamedVersionAlert = true
             }
+    }
+
+    private var featureTourTarget: FeatureTourTarget? {
+        guard let featureTourStepIndex,
+              FeatureTourStep.all.indices.contains(featureTourStepIndex)
+        else { return nil }
+        return FeatureTourStep.all[featureTourStepIndex].target
+    }
+
+    private var featureTourCardAlignment: Alignment {
+        featureTourTarget == .formatting ? .topLeading : .topTrailing
     }
 
     private var editableDocumentTitle: some View {
@@ -395,7 +453,7 @@ struct ContentView: View {
     private var editorColumn: some View {
         VStack(spacing: 0) {
             if !isDistractionFree {
-                ToolbarView()
+                ToolbarView(featureTourTarget: featureTourTarget)
             }
             if showFindBar {
                 FindBarView(
@@ -529,7 +587,7 @@ struct ContentView: View {
 
         // Cmd+Shift+V for version history
         Button("") {
-            withAnimation(.easeInOut(duration: 0.15)) { showVersionHistory.toggle() }
+            toggleVersionHistory()
         }
         .keyboardShortcut("v", modifiers: [.command, .shift])
         .hidden()
@@ -578,6 +636,7 @@ struct ContentView: View {
             if editorViewModel.selectionState.hasSelection {
                 editorViewModel.addComment()
                 withAnimation(Layout.sidebarAnimation) {
+                    showVersionHistory = false
                     activeSidebar = .comments
                 }
             }
@@ -588,6 +647,70 @@ struct ContentView: View {
 }
 
 extension ContentView {
+    private func beginFeatureTour(replay: Bool = false) {
+        if isDistractionFree {
+            toggleFocusMode()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                beginFeatureTour(replay: replay)
+            }
+            return
+        }
+
+        if replay {
+            pendingInitialFeatureTour = true
+        }
+        presentFeatureTourIfReady()
+    }
+
+    private func presentFeatureTourIfReady() {
+        guard pendingInitialFeatureTour,
+              !OnboardingSettings.shouldPresent,
+              !showOnboarding,
+              recoveryDraftPresentation == nil,
+              !showNamedVersionAlert,
+              !isDistractionFree,
+              FeatureTourPresentationCoordinator.claim(for: onboardingWindowID)
+        else { return }
+
+        pendingInitialFeatureTour = false
+        withAnimation(.easeInOut(duration: 0.2)) {
+            activeSidebar = nil
+            showVersionHistory = false
+            showFindBar = false
+            showReplace = false
+            featureTourStepIndex = 0
+        }
+        editorViewModel.webView?.window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func previousFeatureTourStep() {
+        guard let featureTourStepIndex, featureTourStepIndex > 0 else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            self.featureTourStepIndex = featureTourStepIndex - 1
+        }
+    }
+
+    private func nextFeatureTourStep() {
+        guard let featureTourStepIndex else { return }
+        if featureTourStepIndex >= FeatureTourStep.all.count - 1 {
+            finishFeatureTour()
+            return
+        }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            self.featureTourStepIndex = featureTourStepIndex + 1
+        }
+    }
+
+    private func finishFeatureTour() {
+        FeatureTourSettings.markCompleted()
+        pendingInitialFeatureTour = false
+        withAnimation(.easeInOut(duration: 0.18)) {
+            featureTourStepIndex = nil
+        }
+        FeatureTourPresentationCoordinator.release(for: onboardingWindowID)
+        editorViewModel.focusEditor()
+    }
+
     private func loadRecoveryDrafts(presentWhenReady: Bool) {
         guard !hasCheckedRecoveryDrafts else {
             if presentWhenReady { presentRecoveryDraftsIfAvailable() }
@@ -602,6 +725,7 @@ extension ContentView {
                 presentRecoveryWhenLoaded = false
                 presentRecoveryDraftsIfAvailable()
             }
+            presentFeatureTourIfReady()
         }
     }
 
@@ -615,7 +739,10 @@ extension ContentView {
               !document.isDirty,
               !showOnboarding,
               RecoveryDraftPresentationCoordinator.claim(for: onboardingWindowID)
-        else { return }
+        else {
+            presentFeatureTourIfReady()
+            return
+        }
         recoveryDraftPresentation = RecoveryDraftPresentation(drafts: recoveryDrafts)
     }
 
@@ -629,7 +756,23 @@ extension ContentView {
 
     private func toggleSidebar(_ panel: SidebarPanel) {
         withAnimation(Layout.sidebarAnimation) {
-            activeSidebar = activeSidebar == panel ? nil : panel
+            if activeSidebar == panel {
+                activeSidebar = nil
+            } else {
+                showVersionHistory = false
+                activeSidebar = panel
+            }
+        }
+    }
+
+    private func toggleVersionHistory() {
+        withAnimation(Layout.sidebarAnimation) {
+            if showVersionHistory {
+                showVersionHistory = false
+            } else {
+                activeSidebar = nil
+                showVersionHistory = true
+            }
         }
     }
 
