@@ -209,7 +209,8 @@ test("fails closed when the R2 release manifest is invalid", async () => {
   assert.equal(response.headers.get("cache-control"), "no-store");
 });
 
-test("degrades safely when R2 operations fail", async () => {
+test("degrades safely when R2 operations fail", async (context) => {
+  const loggedErrors = context.mock.method(console, "error", () => {});
   const { default: worker } = await import("../worker/index.js");
   const source = await readFile(new URL("public/index.html", root), "utf8");
   const validManifest = {
@@ -260,4 +261,5 @@ test("degrades safely when R2 operations fail", async () => {
     },
   );
   assert.equal(archive.status, 503);
+  assert.equal(loggedErrors.mock.callCount(), 3);
 });

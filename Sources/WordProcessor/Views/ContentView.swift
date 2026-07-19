@@ -77,6 +77,10 @@ struct ContentView: View {
     @FocusState private var isDocumentTitleFocused: Bool
 
     var body: some View {
+        appEventView
+    }
+
+    private var chromeView: some View {
         mainLayout
             .overlay {
                 if let featureTourStepIndex,
@@ -185,6 +189,10 @@ struct ContentView: View {
                     toggleFocusMode()
                 }
             }
+    }
+
+    private var documentEventView: some View {
+        chromeView
             .onReceive(NotificationCenter.default.publisher(for: .editorContentUpdated, object: editorViewModel)) { notification in
                 guard let html = notification.userInfo?["html"] as? String,
                       let text = notification.userInfo?["text"] as? String,
@@ -259,6 +267,10 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .showOnboarding, object: editorViewModel)) { _ in
                 showOnboarding = true
             }
+    }
+
+    private var presentationView: some View {
+        documentEventView
             .sheet(isPresented: $showOnboarding, onDismiss: {
                 OnboardingSettings.markCompleted()
                 OnboardingSettings.releasePresentation(for: onboardingWindowID)
@@ -296,6 +308,10 @@ struct ContentView: View {
                     }
                 )
             }
+    }
+
+    private var appEventView: some View {
+        presentationView
             .alert("Save Named Version", isPresented: $showNamedVersionAlert) {
                 TextField("Version name", text: $namedVersionName)
                 Button("Save") {

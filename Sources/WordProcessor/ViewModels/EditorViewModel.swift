@@ -5,6 +5,13 @@ import WebKit
 @Observable
 @MainActor
 final class EditorViewModel {
+    private enum VersionRestoreError: LocalizedError {
+        case editorRejectedSnapshot
+
+        var errorDescription: String? {
+            "The editor rejected the selected version, so the current draft was kept."
+        }
+    }
     var webView: WKWebView? {
         didSet {
             applyCurrentZoomToWebView()
@@ -49,8 +56,10 @@ final class EditorViewModel {
     /// Set when the most recent snapshot capture could not prove current state.
     private var lastSnapshotCaptureFailed = false
     private let autoSaveCheckpointInterval: TimeInterval = 60
-    @ObservationIgnored private let ambientReviewService = LanguageModelService()
-    @ObservationIgnored private let gapFillService = LanguageModelService()
+    @ObservationIgnored private let ambientReviewService = LanguageModelService(
+        purpose: .ambientReview
+    )
+    @ObservationIgnored private let gapFillService = LanguageModelService(purpose: .gapFill)
     @ObservationIgnored private let grammarService = LanguageModelService(purpose: .grammar)
     @ObservationIgnored private let thoroughGrammarService = LanguageModelService(purpose: .proofread)
     /// Incremented each time the editor signals ready (supports detecting web process restarts).
@@ -823,7 +832,7 @@ final class EditorViewModel {
                 severity: severity,
                 suggestedReplacement: suggestedReplacement,
                 agentRunID: agentRunID,
-                allowOverlap: true,
+                allowOverlap: false,
                 expectedText: expectedText,
                 sourceRevision: sourceRevision
             ),
@@ -1060,49 +1069,7 @@ final class EditorViewModel {
 
         let outputFormat: [String: Any] = [
             "type": "json_schema",
-            "schema": [
-                "type": "object",
-                "properties": [
-                    "issues": [
-                        "type": "array",
-                        "items": [
-                            "type": "object",
-                            "properties": [
-                                "id": ["type": "string"],
-                                "block_id": ["type": "string"],
-                                "exact_original": ["type": "string"],
-                                "replacement": ["type": "string"],
-                                "message": ["type": "string"],
-                                "kind": [
-                                    "type": "string",
-                                    "enum": ["Grammar", "Punctuation"]
-                                ],
-                                "rule": [
-                                    "type": "string",
-                                    "enum": [
-                                        "agreement",
-                                        "verb_form_or_tense",
-                                        "article_or_determiner",
-                                        "preposition",
-                                        "pronoun",
-                                        "number_or_possessive",
-                                        "word_order",
-                                        "missing_or_extra_word",
-                                        "conjunction",
-                                        "confused_word",
-                                        "punctuation",
-                                        "capitalization",
-                                    ]
-                                ],
-                            ],
-                            "required": ["id", "block_id", "exact_original", "replacement", "message", "kind", "rule"],
-                            "additionalProperties": false,
-                        ],
-                    ],
-                ],
-                "required": ["issues"],
-                "additionalProperties": false,
-            ] as [String: Any],
+            "schema": GrammarCheckContract.detectorOutputSchema(mode: mode),
         ]
 
         var responseText = ""
@@ -1158,28 +1125,9 @@ final class EditorViewModel {
         ]]
         let outputFormat: [String: Any] = [
             "type": "json_schema",
-            "schema": [
-                "type": "object",
-                "properties": [
-                    "decisions": [
-                        "type": "array",
-                        "items": [
-                            "type": "object",
-                            "properties": [
-                                "id": ["type": "string"],
-                                "verdict": [
-                                    "type": "string",
-                                    "enum": ["actual_error", "style_or_uncertain"],
-                                ],
-                            ],
-                            "required": ["id", "verdict"],
-                            "additionalProperties": false,
-                        ],
-                    ],
-                ],
-                "required": ["decisions"],
-                "additionalProperties": false,
-            ] as [String: Any],
+            "schema": GrammarCheckContract.verifierOutputSchema(
+                candidateCount: candidates.count
+            ),
         ]
 
         var responseText = ""
@@ -1200,6 +1148,14 @@ final class EditorViewModel {
             throw LanguageModelService.APIError.invalidResponse
         }
         let verification = try JSONDecoder().decode(GrammarVerificationResponse.self, from: data)
+        let candidateIDs = Set(candidates.compactMap { $0["id"] })
+        let decisionIDs = verification.decisions.map(\.id)
+        guard decisionIDs.count == candidates.count,
+              Set(decisionIDs).count == decisionIDs.count,
+              Set(decisionIDs) == candidateIDs
+        else {
+            throw LanguageModelService.APIError.invalidResponse
+        }
         let acceptedIDs = Set(
             verification.decisions
                 .filter { $0.verdict == "actual_error" }
@@ -2558,15 +2514,37 @@ final class EditorViewModel {
     func restoreVersionSnapshot(
         _ snapshot: DocumentFileStore.FileSnapshot,
         assets: [String: Data],
+        rollbackSnapshot: DocumentFileStore.FileSnapshot,
         document: DocumentModel
     ) async throws {
+        let previousAssetBaseURL = assetBaseURL ?? document.fileURL
+        let rollbackAssets = try await DocumentFileStore.shared.versionAssets(
+            for: rollbackSnapshot,
+            sourceDocumentURL: previousAssetBaseURL
+        )
         let restoredAssetBaseURL = try await DocumentFileStore.shared.stageVersionAssets(
             assets,
             documentID: snapshot.documentID
         )
         assetBaseURL = restoredAssetBaseURL
+        if isEditorReady {
+            guard await loadSnapshotIntoReadyEditor(snapshot) else {
+                _ = try? await DocumentFileStore.shared.stageVersionAssets(
+                    rollbackAssets,
+                    documentID: rollbackSnapshot.documentID
+                )
+                assetBaseURL = previousAssetBaseURL
+                throw VersionRestoreError.editorRejectedSnapshot
+            }
+            cancelGapFillTasks()
+            activeDocumentID = snapshot.documentID
+            pendingSnapshot = nil
+            ambientReviewedBlockHashes = [:]
+            clearGrammarCheckingState()
+        } else {
+            loadSnapshot(snapshot)
+        }
         document.restoreVersion(snapshot: snapshot)
-        loadSnapshot(snapshot)
     }
 
     func reportPersistenceFailure(_ action: String, error: Error) {

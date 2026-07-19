@@ -68,5 +68,6 @@ publisher automatically.
 
 Require the `macOS CI / Full repository check` status for pull requests to
 `main`, require at least one approving review, and block force pushes and branch
-deletion. Protect both `v*` release tags and the `shakespeare-release-lock` tag.
-Keep credentials, private keys, account details, and purchase records outside Git.
+deletion. Protect `v*` release tags. Permit only trusted release maintainers to
+create and delete the exact `shakespeare-release-lock` coordination tag. Keep
+credentials, private keys, account details, and purchase records outside Git.

@@ -29,6 +29,13 @@ enum GrammarCheckContract {
                 return "Thoroughly proofread these document blocks for objective grammatical errors."
             }
         }
+
+        var maximumIssues: Int {
+            switch self {
+            case .continuous: return 12
+            case .thorough: return 40
+            }
+        }
     }
 
     static func detectorSystemPrompt(dialect: String, mode: Mode) -> String {
@@ -76,5 +83,116 @@ enum GrammarCheckContract {
 
         Return exactly one decision for every supplied candidate, in the same order. Use actual_error only when every acceptance condition is met; otherwise use style_or_uncertain. Do not omit a candidate. Do not repair or replace candidates.
         """
+    }
+
+    static func detectorOutputSchema(mode: Mode) -> [String: Any] {
+        [
+            "type": "object",
+            "properties": [
+                "issues": [
+                    "type": "array",
+                    "description": "Objective grammar or required-punctuation errors found in the supplied blocks.",
+                    "maxItems": mode.maximumIssues,
+                    "items": [
+                        "type": "object",
+                        "properties": [
+                            "id": [
+                                "type": "string",
+                                "description": "A unique short identifier for this candidate.",
+                                "minLength": 1,
+                                "maxLength": 80,
+                            ],
+                            "block_id": [
+                                "type": "string",
+                                "description": "The exact id of the supplied block containing the error.",
+                                "minLength": 1,
+                                "maxLength": 160,
+                            ],
+                            "exact_original": [
+                                "type": "string",
+                                "description": "A nonempty, verbatim, uniquely occurring substring of the block.",
+                                "minLength": 1,
+                                "maxLength": 1_000,
+                            ],
+                            "replacement": [
+                                "type": "string",
+                                "description": "The smallest replacement that fixes only the objective error.",
+                                "maxLength": 1_000,
+                            ],
+                            "message": [
+                                "type": "string",
+                                "description": "A concise explanation naming the violated grammatical rule.",
+                                "minLength": 1,
+                                "maxLength": 240,
+                            ],
+                            "kind": [
+                                "type": "string",
+                                "description": "Grammar unless the only error is required punctuation.",
+                                "enum": ["Grammar", "Punctuation"],
+                            ],
+                            "rule": [
+                                "type": "string",
+                                "description": "The single objective rule violated by the original text.",
+                                "enum": [
+                                    "agreement",
+                                    "verb_form_or_tense",
+                                    "article_or_determiner",
+                                    "preposition",
+                                    "pronoun",
+                                    "number_or_possessive",
+                                    "word_order",
+                                    "missing_or_extra_word",
+                                    "conjunction",
+                                    "confused_word",
+                                    "punctuation",
+                                    "capitalization",
+                                ],
+                            ],
+                        ],
+                        "required": [
+                            "id", "block_id", "exact_original", "replacement",
+                            "message", "kind", "rule",
+                        ],
+                        "additionalProperties": false,
+                    ],
+                ],
+            ],
+            "required": ["issues"],
+            "additionalProperties": false,
+        ]
+    }
+
+    static func verifierOutputSchema(candidateCount: Int) -> [String: Any] {
+        [
+            "type": "object",
+            "properties": [
+                "decisions": [
+                    "type": "array",
+                    "description": "Exactly one conservative verdict for every supplied candidate, in input order.",
+                    "minItems": candidateCount,
+                    "maxItems": candidateCount,
+                    "items": [
+                        "type": "object",
+                        "properties": [
+                            "id": [
+                                "type": "string",
+                                "description": "The candidate id copied exactly from the input.",
+                                "minLength": 1,
+                                "maxLength": 80,
+                            ],
+                            "verdict": [
+                                "type": "string",
+                                "description": "actual_error only when all acceptance conditions are met.",
+                                "enum": ["actual_error", "style_or_uncertain"],
+                            ],
+                        ],
+                        "required": ["id", "verdict"],
+                        "additionalProperties": false,
+                    ],
+                ],
+            ],
+            "required": ["decisions"],
+            "additionalProperties": false,
+        ]
     }
 }

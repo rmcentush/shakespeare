@@ -10,6 +10,9 @@ enum ChatSearchPolicy {
         "check online",
         "cite sources",
         "current evidence",
+        "current law",
+        "current president",
+        "current prime minister",
         "external evidence",
         "fact check",
         "fact-check",
@@ -28,6 +31,11 @@ enum ChatSearchPolicy {
         "this month",
         "this week",
         "this year",
+        "who is the ceo",
+        "who is the governor",
+        "who is the mayor",
+        "who is the president",
+        "who is the prime minister",
     ]
 
     private static let searchTerms: Set<String> = [
@@ -35,7 +43,10 @@ enum ChatSearchPolicy {
         "citation",
         "citations",
         "cite",
+        "current",
         "currently",
+        "election",
+        "elections",
         "forecast",
         "latest",
         "news",
@@ -45,6 +56,10 @@ enum ChatSearchPolicy {
         "polls",
         "price",
         "prices",
+        "regulation",
+        "regulations",
+        "released",
+        "release",
         "recent",
         "research",
         "schedule",
@@ -59,6 +74,7 @@ enum ChatSearchPolicy {
         "tonight",
         "tomorrow",
         "verify",
+        "version",
         "weather",
     ]
 

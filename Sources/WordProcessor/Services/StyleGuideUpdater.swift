@@ -27,7 +27,7 @@ final class StyleGuideUpdater {
         }
     }
 
-    private let apiService = LanguageModelService()
+    private let apiService = LanguageModelService(purpose: .styleProfile)
     private let store: TrainingEventStore
 
     init(store: TrainingEventStore = .shared) {
@@ -97,18 +97,18 @@ final class StyleGuideUpdater {
             "content": [
                 LanguageModelService.cacheableTextBlock("""
                 <current_learned_preferences>
-                \(String(currentPreferences.prefix(4_000)))
+                \(String(currentPreferences.prefix(4_000)).promptTagEscaped)
                 </current_learned_preferences>
                 """),
                 [
                     "type": "text",
                     "text": """
                     <representative_sample_excerpts_json>
-                    \(evidence.samplesJSON)
+                    \(evidence.samplesJSON.promptTagEscaped)
                     </representative_sample_excerpts_json>
 
                     <confirmed_edit_outcomes_json>
-                    \(evidence.editsJSON)
+                    \(evidence.editsJSON.promptTagEscaped)
                     </confirmed_edit_outcomes_json>
                     """,
                 ],
@@ -119,7 +119,10 @@ final class StyleGuideUpdater {
         for try await chunk in apiService.streamMessage(
             messages: messages,
             systemPrompt: systemPrompt,
-            outputFormat: ["type": "json_schema", "schema": StyleProfileCompiler.outputSchema],
+            outputFormat: [
+                "type": "json_schema",
+                "schema": StyleProfileCompiler.outputSchema(limits: evidence.limits),
+            ],
             temperature: 0,
             maxTokens: 1_536,
             webSearchEnabled: false

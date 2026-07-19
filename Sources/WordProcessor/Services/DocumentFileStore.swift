@@ -14,6 +14,7 @@ actor DocumentFileStore {
     static let maximumPackageAssetCount = 2_048
     static let maximumImagePixelCount = 40_000_000
     static let maximumImageDimension = 12_000
+    static let maximumImageFrameCount = 500
     static let maximumManifestBytes = 64 * 1024
     static let maximumDocumentContentBytes = 32 * 1024 * 1024
     static let maximumPlainTextPreviewBytes = 16 * 1024 * 1024
@@ -1070,6 +1071,9 @@ actor DocumentFileStore {
               height > 0
         else {
             throw FileStoreError.invalidDataURL
+        }
+        guard CGImageSourceGetCount(source) <= Self.maximumImageFrameCount else {
+            throw FileStoreError.invalidDocumentContent("an animated image has too many frames")
         }
         guard width <= Self.maximumImageDimension,
               height <= Self.maximumImageDimension,

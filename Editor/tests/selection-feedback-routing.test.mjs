@@ -57,7 +57,10 @@ test('shows only one sparkle when selection and writing-gap actions overlap', ()
 });
 
 test('routes selection feedback through the writing model without web search', () => {
-  assert.match(chatViewModel, /selectionFeedbackService = LanguageModelService\(purpose: \.assistant\)/);
+  assert.match(
+    chatViewModel,
+    /selectionFeedbackService = LanguageModelService\([\s\S]*?purpose: \.selectionFeedback[\s\S]*?\)/
+  );
   assert.match(chatViewModel, /researchService = LanguageModelService\(purpose: \.chat\)/);
   assert.match(chatViewModel, /sendSelectionFeedback[\s\S]*?allowsWebSearch: false,[\s\S]*?route: \.writingFeedback/);
   assert.match(chatViewModel, /route == \.writingFeedback \? selectionFeedbackService : researchService/);

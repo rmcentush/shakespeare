@@ -282,6 +282,7 @@ struct VersionHistoryView: View {
                 try await editorViewModel.restoreVersionSnapshot(
                     snapshot,
                     assets: version.assets,
+                    rollbackSnapshot: currentSnapshot,
                     document: document
                 )
                 refreshVersions()

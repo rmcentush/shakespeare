@@ -3,6 +3,10 @@ import Foundation
 enum InferencePurpose: String, Sendable {
     case assistant
     case chat
+    case selectionFeedback = "selection-feedback"
+    case gapFill = "gap-fill"
+    case ambientReview = "ambient-review"
+    case styleProfile = "style-profile"
     case grammar
     case proofread
 }

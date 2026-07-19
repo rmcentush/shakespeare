@@ -83,7 +83,9 @@ make install  # Build and install in /Applications
 ```
 
 See [Contributing](CONTRIBUTING.md) for repository conventions and
-[Development and releasing](docs/RELEASING.md) for publishing.
+[Development and releasing](docs/RELEASING.md) for publishing. The model-call
+boundaries, prompt contracts, structured outputs, and cache layout are documented
+in [Model prompt architecture](docs/MODEL_PROMPTS.md).
 
 ## Security
 

@@ -174,6 +174,14 @@ rollback() {
                 remote_get "$manifest_key" "$owner_manifest"
                 [ "$?" -eq 2 ] && rollback_ok=true
             fi
+        elif [ "$had_previous_manifest" = true ] &&
+             [ "$owner_status" -eq 0 ] &&
+             cmp -s "$previous_manifest" "$owner_manifest"; then
+            # The failed write left the previous manifest untouched.
+            rollback_ok=true
+        elif [ "$had_previous_manifest" = false ] && [ "$owner_status" -eq 2 ]; then
+            # The failed first-release write did not create a manifest.
+            rollback_ok=true
         else
             echo "CRITICAL: release manifest changed after this process wrote it; refusing to overwrite another publisher." >&2
         fi

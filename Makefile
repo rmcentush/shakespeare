@@ -33,10 +33,10 @@ website-check: Website/node_modules/.package-lock.json
 	cd Website && npm run build
 
 # Portable, zero-credential checks run by Cloudflare for every main-branch push.
-# Swift/AppKit validation remains the local `make check` gate before pushing.
+# The independent macOS workflow runs the complete AppKit gate for pull requests.
 cloud-ci: privacy-check release-script-check typecheck editor-tests website-check
 
-# Full deterministic validation. This replaces automatic GitHub-hosted CI.
+# Full deterministic validation used locally and by independent macOS CI.
 check: privacy-check typecheck evals website-check build
 
 # Copy editor bundles to Swift resources
