@@ -1078,8 +1078,8 @@ struct StatusBarView: View {
                     .truncationMode(.middle)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
         .background(.bar)
     }
 
