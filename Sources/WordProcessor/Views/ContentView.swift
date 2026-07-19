@@ -106,6 +106,7 @@ struct ContentView: View {
             }
             .navigationTitle("")
             .toolbar {
+#if compiler(>=6.2)
                 if #available(macOS 26.0, *) {
                     ToolbarItem(placement: .principal) {
                         editableDocumentTitle
@@ -116,6 +117,11 @@ struct ContentView: View {
                         editableDocumentTitle
                     }
                 }
+#else
+                ToolbarItem(placement: .principal) {
+                    editableDocumentTitle
+                }
+#endif
                 ToolbarItem(placement: .automatic) {
                     Button {
                         toggleVersionHistory()
