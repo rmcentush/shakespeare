@@ -20,7 +20,6 @@ final class FontManager {
     var currentFont = baseFont
     var currentSize = baseSize
     var currentLineHeight = baseLineHeight
-    private(set) var cachedFontFaceCSS: String = ""
 
     private init() {
         let defaults = UserDefaults.standard
@@ -47,14 +46,10 @@ final class FontManager {
         defaults.set(currentLineHeight, forKey: "editorLineHeight")
     }
 
-    func fullThemeCSS() -> String {
-        cachedFontFaceCSS
-    }
-
     func themedCSS(for appearance: String) -> String {
         switch appearance {
         case "light":
-            return fullThemeCSS() + """
+            return """
 
             html, body { background: #ffffff !important; color: #1a1a1a !important; }
             .editor-content { color: #1a1a1a !important; }
@@ -67,7 +62,7 @@ final class FontManager {
             }
             """
         case "dark":
-            return fullThemeCSS() + """
+            return """
 
             html, body { background: #1e1e1e !important; color: #e0e0e0 !important; }
             .editor-content { color: #e0e0e0 !important; }
@@ -83,16 +78,8 @@ final class FontManager {
             }
             """
         default:
-            return fullThemeCSS()
+            return ""
         }
-    }
-
-    /// Retained as the editor bootstrap boundary. Shakespeare now uses compact,
-    /// system-provided fonts and therefore ships no font binaries or @font-face rules.
-    func fontFaceCSS(bundle: Bundle = .shakespeareResources) -> String {
-        _ = bundle
-        cachedFontFaceCSS = ""
-        return ""
     }
 
     private func normalizeFontName(_ fontName: String) -> String {

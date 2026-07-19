@@ -1,4 +1,4 @@
-.PHONY: all build run clean editor editor-tests typecheck privacy-check delivery-contract-check release-script-check website-check cloud-ci check swift install update package deploy-site release-readiness release evals document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals storage-layout-evals style-context-evals chat-context-evals chat-search-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
+.PHONY: all build run clean editor editor-tests typecheck privacy-check delivery-contract-check release-script-check website-check cloud-ci check swift install update package deploy-site release-readiness release evals document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals style-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 all: build
 
@@ -27,15 +27,16 @@ delivery-contract-check:
 
 release-script-check: delivery-contract-check
 	bash -n scripts/verify-release-archive.sh scripts/verify-public-release.sh scripts/install-release-archive.sh scripts/update-from-public-download.sh scripts/verify-release-provenance.sh scripts/run-wrangler.sh scripts/release-readiness.sh scripts/release.sh
+	node --test scripts/release-state.test.mjs
 
 website-check: Website/node_modules/.package-lock.json
 	cd Website && npm run build
 
 # Portable, zero-credential checks run by Cloudflare for every main-branch push.
-# Swift/AppKit validation remains the local `make check` gate before pushing.
+# The independent macOS workflow runs the complete AppKit gate for pull requests.
 cloud-ci: privacy-check release-script-check typecheck editor-tests website-check
 
-# Full deterministic validation. This replaces automatic GitHub-hosted CI.
+# Full deterministic validation used locally and by independent macOS CI.
 check: privacy-check typecheck evals website-check build
 
 # Copy editor bundles to Swift resources
@@ -66,6 +67,10 @@ document-state-evals:
 	swiftc Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/DocumentAssetReference.swift Sources/WordProcessor/Services/PackageFileSafety.swift Sources/WordProcessor/Services/CanonicalDocumentValidator.swift Sources/WordProcessor/Services/DocumentFileStore.swift Sources/WordProcessor/Models/Document.swift scripts/document-state-evals.swift -o /tmp/document-state-evals
 	/tmp/document-state-evals
 
+version-store-evals:
+	swiftc Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/DocumentAssetReference.swift Sources/WordProcessor/Services/PackageFileSafety.swift Sources/WordProcessor/Services/CanonicalDocumentValidator.swift Sources/WordProcessor/Services/DocumentFileStore.swift Sources/WordProcessor/Services/VersionStore.swift scripts/version-store-evals.swift -lsqlite3 -o /tmp/version-store-evals
+	/tmp/version-store-evals
+
 api-key-store-evals:
 	swiftc Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/APIKeyStore.swift scripts/api-key-store-evals.swift -o /tmp/api-key-store-evals
 	/tmp/api-key-store-evals
@@ -85,6 +90,10 @@ chat-context-evals:
 chat-search-policy-evals:
 	swiftc Sources/WordProcessor/Services/ChatSearchPolicy.swift scripts/chat-search-policy-evals.swift -o /tmp/chat-search-policy-evals
 	/tmp/chat-search-policy-evals
+
+assistant-link-policy-evals:
+	swiftc -parse-as-library Sources/WordProcessor/Services/AssistantLinkPolicy.swift scripts/assistant-link-policy-evals.swift -o /tmp/assistant-link-policy-evals
+	/tmp/assistant-link-policy-evals
 
 style-profile-evals:
 	swiftc Sources/WordProcessor/Services/PackageFileSafety.swift Sources/WordProcessor/Services/StyleProfileCompiler.swift Sources/WordProcessor/Services/StyleProfileDraftStore.swift scripts/style-profile-evals.swift -o /tmp/style-profile-evals
@@ -123,7 +132,7 @@ focus-mode-escape-evals:
 	swiftc -parse-as-library Sources/WordProcessor/Views/FocusModeEscapeMonitor.swift scripts/focus-mode-escape-evals.swift -o /tmp/focus-mode-escape-evals
 	/tmp/focus-mode-escape-evals
 
-evals: release-script-check editor-tests document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals storage-layout-evals style-context-evals chat-context-evals chat-search-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
+evals: release-script-check editor-tests document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals style-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 # Build release
 build: copy-assets
@@ -160,7 +169,7 @@ deploy-site: Website/node_modules/.package-lock.json
 	bash scripts/run-wrangler.sh deploy
 
 # Build, sign, notarize, verify, and publish one release from this Mac.
-release-readiness:
+release-readiness: Website/node_modules/.package-lock.json
 	bash scripts/release-readiness.sh
 
 release:

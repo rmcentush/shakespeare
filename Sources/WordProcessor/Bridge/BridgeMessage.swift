@@ -47,6 +47,8 @@ enum BridgePayload: Codable {
         let imageAlign: String
         let imageWidth: String
         let imageHeight: String
+        let imageAlt: String
+        let imageDecorative: Bool
     }
 
     struct ProofreadingUpdateData: Codable {
@@ -192,7 +194,9 @@ enum BridgePayload: Codable {
                 imageLayout: payload["imageLayout"] as? String ?? "inline",
                 imageAlign: payload["imageAlign"] as? String ?? "center",
                 imageWidth: payload["imageWidth"] as? String ?? "",
-                imageHeight: payload["imageHeight"] as? String ?? ""
+                imageHeight: payload["imageHeight"] as? String ?? "",
+                imageAlt: payload["imageAlt"] as? String ?? "",
+                imageDecorative: payload["imageDecorative"] as? Bool ?? false
             )
             return .selectionChanged(state)
         case "pendingEditUpdate":

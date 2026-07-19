@@ -1,0 +1,47 @@
+name: macOS CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Full repository check
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Verify Xcode 26 toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.13.0
+          cache: npm
+          cache-dependency-path: |
+            Editor/package-lock.json
+            Website/package-lock.json
+
+      - name: Install locked dependencies
+        run: |
+          npm ci --prefix Editor
+          npm ci --prefix Website
+
+      - name: Run full deterministic check
+        run: make check

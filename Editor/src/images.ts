@@ -146,6 +146,8 @@ function imageLayoutStyleParts(layout: ImageLayout, align: ImageAlign): string[]
 export function insertedImageAttrs(src: string): Record<string, unknown> {
   return {
     src,
+    alt: null,
+    decorative: false,
     layout: 'block',
     align: 'center',
   };
@@ -207,6 +209,18 @@ export function resetSelectedImageCrop(editor: Editor): boolean {
   });
 }
 
+export function setSelectedImageAlt(editor: Editor, value: string): boolean {
+  const alt = value.trim().slice(0, 1_000);
+  return updateSelectedImageAttrs(editor, { alt: alt || null, decorative: false });
+}
+
+export function setSelectedImageDecorative(editor: Editor, decorative: boolean): boolean {
+  return updateSelectedImageAttrs(editor, {
+    decorative,
+    ...(decorative ? { alt: '' } : {}),
+  });
+}
+
 export const DocumentImage = Image.extend({
   addAttributes() {
     return {
@@ -234,6 +248,13 @@ export const DocumentImage = Image.extend({
         renderHTML: (attributes: Record<string, unknown>) => ({
           'data-image-align': normalizeImageAlign(attributes.align),
         }),
+      },
+      decorative: {
+        default: false,
+        parseHTML: (element: HTMLElement) => element.dataset.imageDecorative === 'true',
+        renderHTML: (attributes: Record<string, unknown>) => (
+          attributes.decorative ? { 'data-image-decorative': 'true' } : {}
+        ),
       },
       cropX: {
         default: 0,
@@ -290,8 +311,12 @@ export const DocumentImage = Image.extend({
     const heightStyle = dimensionStyle(attrs.height);
     const naturalWidth = numericImageAttr(attrs.naturalWidth, 0);
     const naturalHeight = numericImageAttr(attrs.naturalHeight, 0);
+    const decorative = attrs.decorative === true;
+    const suppliedAlt = typeof attrs.alt === 'string' ? attrs.alt.trim() : '';
     const baseAttrs = mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
       class: 'editor-image',
+      alt: decorative ? '' : (suppliedAlt || 'Image without a description'),
+      ...(decorative ? { 'data-image-decorative': 'true' } : {}),
       'data-image-layout': layout,
       'data-image-align': align,
       ...cropDataAttrsFromRect(crop),
@@ -466,7 +491,9 @@ export const DocumentImage = Image.extend({
         container.dataset.align = align;
 
         img.src = attrs.src as string;
-        img.alt = (attrs.alt as string) || '';
+        const decorative = attrs.decorative === true;
+        const suppliedAlt = typeof attrs.alt === 'string' ? attrs.alt.trim() : '';
+        img.alt = decorative ? '' : (suppliedAlt || 'Image without a description');
         img.title = (attrs.title as string) || '';
 
         frame.style.width = draftWidth !== null ? `${Math.round(draftWidth)}px` : (widthStyle || '');

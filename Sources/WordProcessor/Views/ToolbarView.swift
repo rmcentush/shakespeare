@@ -582,6 +582,9 @@ struct AlignButton: View {
 
 struct ImageLayoutControls: View {
     @Environment(EditorViewModel.self) private var viewModel
+    @State private var showAccessibilityPopover = false
+    @State private var altText = ""
+    @State private var isDecorative = false
 
     private var state: EditorViewModel.SelectionState {
         viewModel.selectionState
@@ -627,6 +630,62 @@ struct ImageLayoutControls: View {
                 label: "Reset Image Crop"
             ) {
                 viewModel.applyFormat("resetImageCrop")
+            }
+
+            Button {
+                altText = state.imageAlt
+                isDecorative = state.imageDecorative
+                showAccessibilityPopover = true
+            } label: {
+                Image(systemName: "accessibility")
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 26, height: 26)
+                    .background(
+                        state.imageDecorative || !state.imageAlt.isEmpty
+                            ? Color.accentColor.opacity(0.16)
+                            : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 5)
+                    )
+            }
+            .buttonStyle(.plain)
+            .help("Image Description")
+            .accessibilityLabel("Edit image description")
+            .popover(isPresented: $showAccessibilityPopover, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Image Accessibility")
+                        .font(.headline)
+
+                    TextField("Describe the image", text: $altText, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(2...4)
+                        .disabled(isDecorative)
+
+                    Toggle("Decorative image", isOn: $isDecorative)
+
+                    Text(isDecorative
+                        ? "Assistive technologies will skip this image."
+                        : "A concise description helps people using screen readers.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack {
+                        Spacer()
+                        Button("Cancel") { showAccessibilityPopover = false }
+                        Button("Apply") {
+                            if isDecorative {
+                                viewModel.applyFormat("setImageDecorative", value: "true")
+                            } else {
+                                viewModel.applyFormat("setImageDecorative", value: "false")
+                                viewModel.applyFormat("setImageAlt", value: altText)
+                            }
+                            showAccessibilityPopover = false
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!isDecorative && altText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+                .padding(16)
+                .frame(width: 320)
             }
         }
     }

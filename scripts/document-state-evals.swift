@@ -89,6 +89,53 @@ private struct DocumentStateEvals {
             precondition(FileManager.default.fileExists(atPath: occupiedDestinationURL.path))
         }
 
-        print("Document-state evals passed (fresh snapshots, title changes, safe renames, stale-JSON invalidation, learning outcomes).")
+        let imageDataURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL1WQAAAABJRU5ErkJggg=="
+        let imageDocumentID = "asset-eval-\(UUID().uuidString)"
+        let imagePackageURL = scratchURL.appendingPathComponent("Images.shkdoc", isDirectory: true)
+        let imageSnapshot = DocumentFileStore.FileSnapshot(
+            canonicalJSON: """
+            {"type":"doc","content":[{"type":"paragraph","content":[{"type":"image","attrs":{"src":"\(imageDataURL)"}}]}]}
+            """,
+            htmlContent: "",
+            plainText: "",
+            wordCount: 0,
+            characterCount: 0,
+            documentID: imageDocumentID
+        )
+        let persistedImageSnapshot = try await DocumentFileStore.shared.save(
+            imageSnapshot,
+            to: imagePackageURL
+        )
+        let loadedImageSnapshot = try await DocumentFileStore.shared.load(from: imagePackageURL)
+        precondition(loadedImageSnapshot.canonicalJSON == persistedImageSnapshot.canonicalJSON)
+
+        let versionAssets = try await DocumentFileStore.shared.versionAssets(
+            for: persistedImageSnapshot,
+            sourceDocumentURL: imagePackageURL
+        )
+        precondition(versionAssets.count == 1, "version snapshot omitted its image")
+        let stagedURL = try await DocumentFileStore.shared.stageVersionAssets(
+            versionAssets,
+            documentID: imageDocumentID
+        )
+        precondition(FileManager.default.fileExists(
+            atPath: stagedURL.appendingPathComponent("assets", isDirectory: true).path
+        ))
+        try await DocumentFileStore.shared.deleteWorkingAssets(documentID: imageDocumentID)
+
+        let assetDirectory = imagePackageURL.appendingPathComponent("assets", isDirectory: true)
+        let assetURL = try FileManager.default.contentsOfDirectory(
+            at: assetDirectory,
+            includingPropertiesForKeys: nil
+        ).first!
+        try Data("tampered".utf8).write(to: assetURL, options: .atomic)
+        do {
+            _ = try await DocumentFileStore.shared.load(from: imagePackageURL)
+            preconditionFailure("a tampered content-addressed image was accepted")
+        } catch {
+            // Expected: package reads verify image bytes, dimensions, and digest.
+        }
+
+        print("Document-state evals passed (fresh snapshots, safe renames, asset-complete versions, tamper detection, learning outcomes).")
     }
 }

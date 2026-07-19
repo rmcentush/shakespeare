@@ -7,12 +7,14 @@ private enum WordProcessorWindowID {
 
 private struct WindowCommandContext {
     let canSaveNamedVersion: Bool
+    let canRunThoroughProofread: Bool
     let openDocument: () -> Void
     let openRecentFile: (URL) -> Void
     let saveDocument: () -> Void
     let saveDocumentAs: () -> Void
     let exportHTML: () -> Void
     let showSaveNamedVersion: () -> Void
+    let runThoroughProofread: () -> Void
     let startTutorial: () -> Void
 }
 
@@ -116,30 +118,69 @@ private final class WordProcessorAppDelegate: NSObject, NSApplicationDelegate {
             name: NSMenu.didAddItemNotification,
             object: nil
         )
-        removeUnusedMainMenus()
+        consolidateMainMenu()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        removeUnusedMainMenus()
+        consolidateMainMenu()
     }
 
-    private func removeUnusedMainMenus() {
+    private func consolidateMainMenu() {
         guard !isMainMenuCleanupScheduled else { return }
         isMainMenuCleanupScheduled = true
         DispatchQueue.main.async { [weak self] in
             self?.isMainMenuCleanupScheduled = false
             guard let mainMenu = NSApp.mainMenu else { return }
-            for title in ["Edit", "Format", "View", "Help"] {
-                if let item = mainMenu.items.first(where: { $0.title == title }) {
-                    mainMenu.removeItem(item)
-                }
+
+            // Shakespeare's small command set fits in the application menu. Keep
+            // only that first menu instead of scattering actions across several
+            // mostly empty top-level menus.
+            for item in mainMenu.items.dropFirst() {
+                mainMenu.removeItem(item)
+            }
+
+            if let applicationMenu = mainMenu.items.first?.submenu {
+                self?.removeDuplicateSettingsItems(from: applicationMenu)
+                self?.removeRedundantSeparators(from: applicationMenu)
             }
         }
     }
 
     @objc private func mainMenuDidAddItem(_ notification: Notification) {
-        guard let menu = notification.object as? NSMenu, menu === NSApp.mainMenu else { return }
-        removeUnusedMainMenus()
+        guard let menu = notification.object as? NSMenu,
+              let mainMenu = NSApp.mainMenu,
+              menu === mainMenu || menu === mainMenu.items.first?.submenu
+        else {
+            return
+        }
+        consolidateMainMenu()
+    }
+
+    private func removeDuplicateSettingsItems(from menu: NSMenu) {
+        let settingsItems = menu.items.filter {
+            $0.keyEquivalent == "," && $0.keyEquivalentModifierMask.contains(.command)
+        }
+        for item in settingsItems.dropFirst() {
+            menu.removeItem(item)
+        }
+    }
+
+    private func removeRedundantSeparators(from menu: NSMenu) {
+        var previousWasSeparator = true
+        for item in menu.items {
+            guard item.isSeparatorItem else {
+                previousWasSeparator = false
+                continue
+            }
+            if previousWasSeparator {
+                menu.removeItem(item)
+            } else {
+                previousWasSeparator = true
+            }
+        }
+        if let lastItem = menu.items.last, lastItem.isSeparatorItem {
+            menu.removeItem(lastItem)
+        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -216,7 +257,12 @@ private struct WordProcessorCommands: Commands {
     @FocusedValue(\.windowCommandContext) private var windowCommandContext
 
     var body: some Commands {
-        CommandGroup(replacing: .newItem) {
+        CommandGroup(after: .appInfo) {
+            SettingsLink()
+                .keyboardShortcut(",")
+
+            Divider()
+
             Button("New") {
                 openWindow(id: WordProcessorWindowID.editor)
             }
@@ -276,10 +322,67 @@ private struct WordProcessorCommands: Commands {
             }
             .keyboardShortcut("s", modifiers: [.command, .option])
             .disabled(windowCommandContext?.canSaveNamedVersion != true)
+
+            Divider()
+
+            Button("Run Thorough Proofread") {
+                windowCommandContext?.runThoroughProofread()
+            }
+            .keyboardShortcut("p", modifiers: [.command, .option])
+            .disabled(windowCommandContext?.canRunThoroughProofread != true)
+
+            Divider()
+
+            Button("Start Tutorial") {
+                windowCommandContext?.startTutorial()
+            }
+            .disabled(windowCommandContext == nil)
         }
 
-        // Keep the menu bar focused on actions that are specific to Shakespeare.
-        // Editing and formatting remain available directly in the editor.
+        RemovedApplicationAndFileCommands()
+        RemovedEditingAndWindowCommands()
+    }
+}
+
+// Remove macOS groups that are redundant for this focused, single-menu app.
+// About, Settings, and Quit remain in the Shakespeare menu.
+private struct RemovedApplicationAndFileCommands: Commands {
+    var body: some Commands {
+        CommandGroup(replacing: .systemServices) {
+            EmptyView()
+        }
+
+        CommandGroup(replacing: .appVisibility) {
+            EmptyView()
+        }
+
+        CommandGroup(replacing: .newItem) {
+            EmptyView()
+        }
+
+        CommandGroup(replacing: .saveItem) {
+            EmptyView()
+        }
+
+        CommandGroup(replacing: .importExport) {
+            EmptyView()
+        }
+
+        CommandGroup(replacing: .printItem) {
+            EmptyView()
+        }
+
+        CommandGroup(replacing: .appTermination) {
+            Button("Quit Shakespeare") {
+                NSApp.terminate(nil)
+            }
+            .keyboardShortcut("q")
+        }
+    }
+}
+
+private struct RemovedEditingAndWindowCommands: Commands {
+    var body: some Commands {
         CommandGroup(replacing: .undoRedo) {
             EmptyView()
         }
@@ -304,15 +407,20 @@ private struct WordProcessorCommands: Commands {
             EmptyView()
         }
 
-        CommandGroup(replacing: .help) {
+        CommandGroup(replacing: .windowSize) {
             EmptyView()
         }
 
-        CommandMenu("Tutorial") {
-            Button("Start Tutorial") {
-                windowCommandContext?.startTutorial()
-            }
-            .disabled(windowCommandContext == nil)
+        CommandGroup(replacing: .windowList) {
+            EmptyView()
+        }
+
+        CommandGroup(replacing: .windowArrangement) {
+            EmptyView()
+        }
+
+        CommandGroup(replacing: .help) {
+            EmptyView()
         }
     }
 }
@@ -325,6 +433,7 @@ private struct EditorWindowRootView: View {
 
     var body: some View {
         ContentView()
+            .frame(minWidth: 680, minHeight: 520)
             .environment(document)
             .environment(editorViewModel)
             .focusedSceneValue(\.windowCommandContext, windowCommandContext)
@@ -359,6 +468,9 @@ private struct EditorWindowRootView: View {
     private var windowCommandContext: WindowCommandContext {
         WindowCommandContext(
             canSaveNamedVersion: document.fileURL != nil,
+            canRunThoroughProofread: editorViewModel.isEditorReady
+                && !editorViewModel.isDocumentTransitioning
+                && APIKeyStore.shared.hasAPIKey(service: "openrouter"),
             openDocument: {
                 editorViewModel.openDocument(document: document)
             },
@@ -376,6 +488,9 @@ private struct EditorWindowRootView: View {
             },
             showSaveNamedVersion: {
                 NotificationCenter.default.post(name: .showSaveNamedVersion, object: editorViewModel)
+            },
+            runThoroughProofread: {
+                editorViewModel.runThoroughProofread()
             },
             startTutorial: {
                 NotificationCenter.default.post(name: .showFeatureTour, object: editorViewModel)
@@ -421,6 +536,7 @@ struct WordProcessorApp: App {
         }
         .windowStyle(.titleBar)
         .defaultSize(width: 900, height: 700)
+        .windowResizability(.contentMinSize)
         .commands {
             WordProcessorCommands()
         }

@@ -42,9 +42,11 @@ open /Applications/Shakespeare.app
 Setup can be skipped. Connections and style learning remain available under
 **Settings → Connections** and **Settings → My Style**.
 
-Use **File** to save or export, the clock button for version history, and
-**Edit → Spelling and Grammar → Run Thorough Proofread** for an on-demand
-review. Suggestions are never applied automatically. Open Research Chat with
+Use the **Shakespeare** menu to save or export, the clock button for
+asset-complete version history, and **Shakespeare → Run Thorough Proofread**
+(Command-Option-P) for an on-demand review. Selected images expose an
+accessibility control for alt text or an explicit decorative designation.
+Suggestions are never applied automatically. Open Research Chat with
 the speech-bubble button or `Command-\`.
 
 OpenRouter bills model and web-search usage directly to the key owner;
@@ -81,7 +83,9 @@ make install  # Build and install in /Applications
 ```
 
 See [Contributing](CONTRIBUTING.md) for repository conventions and
-[Development and releasing](docs/RELEASING.md) for publishing.
+[Development and releasing](docs/RELEASING.md) for publishing. The model-call
+boundaries, prompt contracts, structured outputs, and cache layout are documented
+in [Model prompt architecture](docs/MODEL_PROMPTS.md).
 
 ## Security
 

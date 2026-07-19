@@ -41,12 +41,23 @@ enum GapFillContract {
         [
             "type": "object",
             "properties": [
-                "text": ["type": "string", "minLength": 1, "maxLength": 4_000],
+                "text": [
+                    "type": "string",
+                    "description": "Only the missing prose, with no brackets, labels, commentary, or Markdown fence.",
+                    "minLength": 1,
+                    "maxLength": 4_000,
+                ],
                 "style_notes": [
                     "type": "array",
+                    "description": "One to three compact, topic-free notes describing the fill's reusable stylistic choices.",
                     "minItems": 1,
                     "maxItems": 3,
-                    "items": ["type": "string", "minLength": 4, "maxLength": 160],
+                    "items": [
+                        "type": "string",
+                        "description": "An abstract note about voice, syntax, rhythm, diction, transition shape, or paragraph movement.",
+                        "minLength": 4,
+                        "maxLength": 160,
+                    ],
                 ],
             ],
             "required": ["text", "style_notes"],

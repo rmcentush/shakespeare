@@ -34,9 +34,6 @@ struct EditorWebView: NSViewRepresentable {
             webView.loadFileURL(htmlURL, allowingReadAccessTo: bundleRootURL)
         }
 
-        // Prepare the system-font theme CSS for later injection on editorReady.
-        let _ = FontManager.shared.fontFaceCSS(bundle: .shakespeareResources)
-
         viewModel.webView = webView
         return webView
     }

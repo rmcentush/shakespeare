@@ -809,6 +809,11 @@ private struct MarkdownText: View {
             .font(AssistantChatFont.message)
             .lineSpacing(3)
             .textSelection(.enabled)
+            .environment(\.openURL, OpenURLAction { url in
+                guard AssistantLinkPolicy.isAllowed(url) else { return .discarded }
+                NSWorkspace.shared.open(url)
+                return .handled
+            })
     }
 
     private func append(_ block: SidebarMarkdownBlock, to result: inout AttributedString) {
@@ -845,8 +850,9 @@ private struct MarkdownText: View {
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .inlineOnlyPreservingWhitespace
         )
-        return (try? AttributedString(markdown: displayText, options: options))
+        let attributed = (try? AttributedString(markdown: displayText, options: options))
             ?? AttributedString(displayText)
+        return AssistantLinkPolicy.sanitized(attributed)
     }
 
     private func headingFont(for level: Int) -> Font {

@@ -7,6 +7,7 @@ import { COMMENTS_SYNC_DEBOUNCE_MS } from './types';
 import {
   effectiveTextSelection,
   getDocumentRevision,
+  mapRangeFromRevision,
   setPreservedTextSelection,
 } from './docSync';
 
@@ -51,6 +52,8 @@ interface CommentInput {
   suggestedReplacement?: string;
   agentRunId?: string;
   allowOverlap?: boolean;
+  expectedText?: string;
+  sourceRevision?: number;
 }
 
 export const CommentMark = Mark.create({
@@ -524,9 +527,25 @@ function parsedCommentInput(json: string): CommentInput | null {
 }
 
 function addCommentAtRange(editor: Editor, input: CommentInput): boolean {
-  const from = Number(input.from);
-  const to = Number(input.to);
-  if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) return false;
+  let from = Number(input.from);
+  let to = Number(input.to);
+  if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from >= to) return false;
+
+  if (input.sourceRevision !== undefined) {
+    const sourceRevision = Number(input.sourceRevision);
+    if (!Number.isSafeInteger(sourceRevision)) return false;
+    const mapped = mapRangeFromRevision(sourceRevision, from, to);
+    if (!mapped) return false;
+    from = mapped.from;
+    to = mapped.to;
+  }
+
+  if (from < 0 || to > editor.state.doc.content.size) return false;
+  if (input.expectedText !== undefined) {
+    if (typeof input.expectedText !== 'string' || !input.expectedText) return false;
+    const currentText = editor.state.doc.textBetween(from, to, ' ', '');
+    if (currentText !== input.expectedText) return false;
+  }
 
   const commentId = commentString(input.commentId).trim();
   if (!commentId) return false;

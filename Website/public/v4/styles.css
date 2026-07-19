@@ -3,11 +3,11 @@
   --canvas: #ffffff;
   --ink: #1a1a1a;
   --muted: #6f6f74;
-  --faint: #949499;
+  --faint: #626267;
   --line: rgba(28, 28, 30, 0.11);
   --line-strong: rgba(28, 28, 30, 0.18);
-  --blue: #007aff;
-  --blue-dark: #0062cc;
+  --blue: #0062cc;
+  --blue-dark: #004f9e;
   --green: #248a3d;
   --serif: Georgia, "Times New Roman", serif;
   --system: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
@@ -140,7 +140,7 @@ main {
 .eyebrow {
   margin: 0;
   color: var(--blue-dark);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -208,8 +208,8 @@ a.download:hover {
 }
 
 .download[aria-disabled="true"] {
-  border-color: #99999e;
-  background: #a2a2a7;
+  border-color: #66666b;
+  background: #77777c;
   box-shadow: none;
   cursor: not-allowed;
 }
@@ -217,7 +217,7 @@ a.download:hover {
 .hero-actions > p {
   margin: 0;
   color: var(--faint);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1.55;
 }
@@ -233,7 +233,7 @@ a.download:hover {
   align-items: center;
   justify-content: space-between;
   color: var(--faint);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -280,7 +280,7 @@ a.download:hover {
   min-width: 0;
   padding: 0 clamp(20px, 3vw, 36px);
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.02em;
   text-align: center;
@@ -298,7 +298,7 @@ a.download:hover {
   align-items: center;
   justify-content: space-between;
   color: var(--faint);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
 }
 

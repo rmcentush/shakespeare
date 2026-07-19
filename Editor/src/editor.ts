@@ -14,7 +14,6 @@ import {
   SmartQuotes,
   contextCharacterBefore,
   normalizeDocumentSmartQuotes,
-  smartifyHTMLFragment,
   smartifyQuotesWithContext,
 } from './smartQuotes';
 import {
@@ -61,6 +60,8 @@ import {
   DocumentImage,
   insertedImageAttrs,
   resetSelectedImageCrop,
+  setSelectedImageAlt,
+  setSelectedImageDecorative,
   setSelectedImageLayout,
 } from './images';
 import { HoverableLink, attachLinkHoverPreview } from './linkPreview';
@@ -125,7 +126,7 @@ interface PendingImageImport {
 }
 
 const pendingImageImports = new Map<string, PendingImageImport>();
-const MAX_IMAGE_IMPORT_BYTES = 25 * 1024 * 1024;
+const MAX_IMAGE_IMPORT_BYTES = 10 * 1024 * 1024;
 
 function referencedAssetSources(): string[] {
   const sources = new Set<string>();
@@ -139,7 +140,7 @@ function referencedAssetSources(): string[] {
 
 function requestImageImport(file: File, from: number, to: number) {
   if (file.size > MAX_IMAGE_IMPORT_BYTES) {
-    window.alert('Images must be 25 MB or smaller.');
+    window.alert('Images must be 10 MB or smaller.');
     return;
   }
 
@@ -164,7 +165,10 @@ function requestImageImport(file: File, from: number, to: number) {
       referencedSources: referencedAssetSources(),
     });
   };
-  reader.onerror = () => pendingImageImports.delete(requestId);
+  reader.onerror = () => {
+    pendingImageImports.delete(requestId);
+    window.alert('The image could not be read. Try a different file.');
+  };
   reader.readAsDataURL(file);
 }
 
@@ -173,7 +177,10 @@ function completeImageImport(requestId: string, source: string, errorMessage = '
   pendingImageImports.delete(requestId);
   if (!pending) return;
   if (!source || !isSafeDocumentImageSource(source)) {
-    if (errorMessage) console.error('Image import failed:', errorMessage);
+    if (errorMessage) {
+      console.error('Image import failed:', errorMessage);
+      window.alert(`The image could not be added. ${errorMessage}`);
+    }
     return;
   }
 
@@ -465,6 +472,12 @@ registerSwiftCallbacks({
       case 'resetImageCrop':
         resetSelectedImageCrop(editor);
         break;
+      case 'setImageAlt':
+        setSelectedImageAlt(editor, value || '');
+        break;
+      case 'setImageDecorative':
+        setSelectedImageDecorative(editor, value === 'true');
+        break;
       case 'setLink':
         if (value) {
           editor.chain().focus().extendMarkRange('link').setLink({ href: value }).run();
@@ -570,20 +583,6 @@ registerSwiftCallbacks({
   deleteSelection() {
     editor.commands.focus();
     editor.view.dispatch(editor.state.tr.deleteSelection());
-  },
-  replaceSelectionHTML(html: string) {
-    const { from } = editor.state.selection;
-    editor.chain().focus().insertContent(
-      smartifyHTMLFragment(html, contextCharacterBefore(editor.state.doc, from))
-    ).run();
-    normalizeDocumentSmartQuotes(editor);
-  },
-  insertHTMLAtCursor(html: string) {
-    const { from } = editor.state.selection;
-    editor.chain().focus().insertContent(
-      smartifyHTMLFragment(html, contextCharacterBefore(editor.state.doc, from))
-    ).run();
-    normalizeDocumentSmartQuotes(editor);
   },
   acceptAllPendingEdits() { acceptAllPendingEdits(editor); },
   rejectAllPendingEdits() { rejectAllPendingEdits(editor); },

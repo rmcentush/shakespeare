@@ -34,15 +34,15 @@ enum StyleContextAssembler {
 
     static let maxPacketCharacters = 8_000
     static let maxLearnedPreferenceCharacters = 1_800
-    static let maxReferenceCharacters = 1_900
-    static let maxGeneralGuidanceCharacters = 700
-    static let maxWritingSampleCharacters = 1_600
-    static let maxConfirmedEditCharacters = 900
+    static let maxReferenceCharacters = 1_400
+    static let maxGeneralGuidanceCharacters = 1_800
+    static let maxWritingSampleCharacters = 1_100
+    static let maxConfirmedEditCharacters = 600
     static let maxDocumentFlowCharacters = 2_600
 
     private static let maximumQueryCharacters = 16_000
     private static let maximumReferenceSections = 4
-    private static let maximumGuidanceSections = 2
+    private static let maximumGuidanceSections = 3
 
     private struct MarkdownSection {
         let title: String
@@ -75,42 +75,49 @@ enum StyleContextAssembler {
         writingSamples: [String] = [],
         confirmedEdits: [String] = []
     ) -> Packet {
-        let query = String((task + "\n" + documentExcerpt).prefix(maximumQueryCharacters))
+        let boundedTask = String(task.prefix(maximumQueryCharacters))
+        let query = String((boundedTask + "\n" + documentExcerpt).prefix(maximumQueryCharacters))
+        let taskTerms = terms(in: boundedTask)
         let queryTerms = terms(in: query)
 
         let learned = bounded(
-            learnedPreferences.trimmingCharacters(in: .whitespacesAndNewlines),
+            escapedReferenceText(
+                learnedPreferences.trimmingCharacters(in: .whitespacesAndNewlines)
+            ),
             to: maxLearnedPreferenceCharacters
         )
         let referenceSelection = selectSections(
-            from: reference,
+            from: escapedReferenceText(reference),
             queryTerms: queryTerms,
             maximumCharacters: maxReferenceCharacters,
             maximumSections: maximumReferenceSections,
             kind: .authorReference
         )
         let guidanceSelection = selectSections(
-            from: generalGuidance,
-            queryTerms: queryTerms,
+            from: escapedReferenceText(generalGuidance),
+            // Feature guidance must stay stable and cacheable for a given
+            // writing option. Live prose selects examples and reference
+            // excerpts, but never changes the option's baseline sections.
+            queryTerms: taskTerms,
             maximumCharacters: maxGeneralGuidanceCharacters,
             maximumSections: maximumGuidanceSections,
             kind: .generalGuidance
         )
         let sampleSelection = selectWritingSamples(
-            writingSamples,
+            writingSamples.map(escapedReferenceText),
             queryTerms: queryTerms,
             maximumCharacters: maxWritingSampleCharacters,
             maximumExcerpts: 2,
-            maximumExcerptCharacters: 700,
+            maximumExcerptCharacters: 500,
             minimumParagraphCharacters: 120,
             label: "Sample excerpt"
         )
         let confirmedEditSelection = selectWritingSamples(
-            confirmedEdits,
+            confirmedEdits.map(escapedReferenceText),
             queryTerms: queryTerms,
             maximumCharacters: maxConfirmedEditCharacters,
             maximumExcerpts: 2,
-            maximumExcerptCharacters: 400,
+            maximumExcerptCharacters: 250,
             minimumParagraphCharacters: 60,
             label: "Confirmed rewrite"
         )
@@ -120,7 +127,8 @@ enum StyleContextAssembler {
             <personal_style_context>
             <precedence>
             Preserve the writer's requested meaning, facts, quotations, and explicit instructions first.
-            Reviewed learned preferences are the most specific voice rules and override the reference excerpts.
+            Reviewed learned preferences are the most specific voice rules. They are compact, writer-approved style notes and override the writer-maintained reference and general defaults.
+            The writer-maintained reference overrides general guidance. General guidance is a fallback, not an AI detector or a list of banned words; apply it only when a pattern weakens the passage.
             Confirmed saved rewrites are recent positive examples, not general rules; use them only when they agree with the reviewed profile or broader samples.
             Reference excerpts guide this task; they are not facts to copy and examples must not be imitated verbatim.
             Representative samples demonstrate rhythm and voice only. Never copy their names, facts, quotations, or distinctive phrases.
@@ -140,66 +148,35 @@ enum StyleContextAssembler {
             )
         }
 
-        let cacheablePrefixText = stableBlocks.joined(separator: "\n")
-        var taskBlocks: [String] = []
-
-        if !confirmedEditSelection.markdown.isEmpty {
-            taskBlocks.append(
-                """
-                <confirmed_saved_rewrites>
-                \(confirmedEditSelection.markdown)
-                </confirmed_saved_rewrites>
-                """
-            )
-        }
-
-        if !referenceSelection.markdown.isEmpty {
-            taskBlocks.append(
-                """
-                <relevant_author_reference>
-                \(referenceSelection.markdown)
-                </relevant_author_reference>
-                """
-            )
-        }
-
-        if !sampleSelection.markdown.isEmpty {
-            taskBlocks.append(
-                """
-                <representative_writing_samples>
-                \(sampleSelection.markdown)
-                </representative_writing_samples>
-                """
-            )
-        }
-
         if !guidanceSelection.markdown.isEmpty {
-            taskBlocks.append(
+            stableBlocks.append(
                 """
-                <relevant_general_guidance>
+                <writing_option_guidance>
                 \(guidanceSelection.markdown)
-                </relevant_general_guidance>
+                </writing_option_guidance>
                 """
             )
         }
 
-        taskBlocks.append("</personal_style_context>")
-        let unboundedTaskText = taskBlocks.joined(separator: "\n")
+        let cacheablePrefixText = stableBlocks.joined(separator: "\n")
         let remainingTaskCharacters = max(
             0,
             maxPacketCharacters - cacheablePrefixText.count - 1
         )
-        let taskRelevantText = bounded(
-            unboundedTaskText,
-            to: remainingTaskCharacters
+        let taskRelevantText = renderTaskBlocks(
+            [
+                ("relevant_author_reference", referenceSelection.markdown),
+                ("confirmed_saved_rewrites", confirmedEditSelection.markdown),
+                ("representative_writing_samples", sampleSelection.markdown),
+            ],
+            maximumCharacters: remainingTaskCharacters
         )
         let text = [cacheablePrefixText, taskRelevantText]
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
 
-        // The component ceilings intentionally leave room for tags and precedence.
-        // Keep this final guard so future prompt-copy changes cannot create an
-        // unbounded request by accident.
+        // Component ceilings reserve room for the precedence contract. The
+        // renderer performs the final hard bound without ever cutting a tag.
         return Packet(
             text: text,
             cacheablePrefixText: cacheablePrefixText,
@@ -209,6 +186,37 @@ enum StyleContextAssembler {
             selectedSampleCount: sampleSelection.count,
             selectedConfirmedEditCount: confirmedEditSelection.count
         )
+    }
+
+    /// Renders untrusted reference blocks inside framework-owned delimiters.
+    /// Each payload is already escaped, and bounding happens inside its tags so
+    /// a full packet can never end with malformed prompt structure.
+    private static func renderTaskBlocks(
+        _ blocks: [(tag: String, content: String)],
+        maximumCharacters: Int
+    ) -> String {
+        let contextClose = "</personal_style_context>"
+        guard maximumCharacters >= contextClose.count else { return "" }
+
+        var rendered: [String] = []
+        // Reserve the separator before the final context tag as well as the tag.
+        var remaining = max(0, maximumCharacters - contextClose.count - 1)
+        for block in blocks where !block.content.isEmpty {
+            let open = "<\(block.tag)>\n"
+            let close = "\n</\(block.tag)>"
+            let separatorCost = rendered.isEmpty ? 0 : 1
+            let wrapperCost = open.count + close.count
+            guard remaining > separatorCost + wrapperCost else { continue }
+
+            let contentLimit = remaining - separatorCost - wrapperCost
+            let content = bounded(block.content, to: contentLimit)
+            guard !content.isEmpty else { continue }
+
+            rendered.append(open + content + close)
+            remaining -= separatorCost + wrapperCost + content.count
+        }
+        rendered.append(contextClose)
+        return rendered.joined(separator: "\n")
     }
 
     /// Builds a sparse, document-ordered orientation map from headings,
@@ -449,6 +457,14 @@ enum StyleContextAssembler {
             if normalizedTitle.contains("sentence mechanics") { priority += 7 }
             if normalizedTitle == "overview" { priority += 5 }
         case .generalGuidance:
+            if normalizedTitle.contains("core anti-pattern") { priority += 40 }
+            if normalizedTitle.contains("selection feedback") { priority += 20 }
+            if normalizedTitle.contains("gap completion") { priority += 20 }
+            if normalizedTitle.contains("ambient review") { priority += 20 }
+            if normalizedTitle.contains("revision discipline") { priority += 14 }
+            if normalizedTitle.contains("language and rhythm") { priority += 9 }
+            if normalizedTitle.contains("substance and evidence") { priority += 9 }
+            if normalizedTitle.contains("structure and endings") { priority += 8 }
             if normalizedTitle.contains("word choice") { priority += 7 }
             if normalizedTitle.contains("sentence structure") { priority += 7 }
             if normalizedTitle.contains("avoid") { priority += 4 }
@@ -500,6 +516,15 @@ enum StyleContextAssembler {
             normalized.components(separatedBy: CharacterSet.alphanumerics.inverted)
                 .filter { $0.count > 2 && !stopWords.contains($0) }
         )
+    }
+
+    /// Keeps writer-controlled Markdown readable while preventing it from
+    /// closing or opening framework-owned prompt tags.
+    private static func escapedReferenceText(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
     }
 
     private static func compactFlowText(_ text: String, maximumCharacters: Int) -> String {

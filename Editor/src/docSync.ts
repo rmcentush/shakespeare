@@ -395,6 +395,8 @@ function buildSelectionState(editor: Editor): EditorSelectionState {
     imageAlign: normalizeImageAlign(selectedImageAttrs.align),
     imageWidth: (selectedImageAttrs.width as string) || '',
     imageHeight: (selectedImageAttrs.height as string) || '',
+    imageAlt: (selectedImageAttrs.alt as string) || '',
+    imageDecorative: selectedImageAttrs.decorative === true,
   };
 }
 
@@ -432,7 +434,9 @@ function selectionStatesEqual(
     a.imageLayout === b.imageLayout &&
     a.imageAlign === b.imageAlign &&
     a.imageWidth === b.imageWidth &&
-    a.imageHeight === b.imageHeight;
+    a.imageHeight === b.imageHeight &&
+    a.imageAlt === b.imageAlt &&
+    a.imageDecorative === b.imageDecorative;
 }
 
 export function emitContentUpdate(editor: Editor) {

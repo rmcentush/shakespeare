@@ -10,6 +10,9 @@ private struct ChatSearchPolicyEvals {
             "Search the web for the latest polling.",
             "Summarize https://example.com/report",
             "What is Apple's stock price today?",
+            "Who is the current CEO of Acme?",
+            "What version of the standard was released?",
+            "Does the current regulation permit this?",
         ]
         for query in researchQueries {
             precondition(ChatSearchPolicy.requiresWebSearch(for: query), query)

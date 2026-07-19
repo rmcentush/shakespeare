@@ -59,6 +59,8 @@ export interface EditorSelectionState {
   imageAlign: ImageAlign;
   imageWidth: string;
   imageHeight: string;
+  imageAlt: string;
+  imageDecorative: boolean;
 }
 
 export type ImageLayout = 'inline' | 'block' | 'float-left' | 'float-right';

@@ -285,39 +285,71 @@ enum StyleProfileCompiler {
         }
     }
 
-    static let outputSchema: [String: Any] = [
-        "type": "object",
-        "properties": [
-            "summary": ["type": "string"],
-            "rules": [
-                "type": "array",
-                "items": [
-                    "type": "object",
-                    "properties": [
-                        "dimension": [
-                            "type": "string",
-                            "enum": [
-                                "voice", "tone", "diction", "syntax", "rhythm",
-                                "paragraphs", "structure", "clarity", "concision", "avoidance",
+    static func outputSchema(limits: EvidenceLimits) -> [String: Any] {
+        [
+            "type": "object",
+            "properties": [
+                "summary": [
+                    "type": "string",
+                    "description": "A compact, topic-free overview of the supported style profile.",
+                    "maxLength": 300,
+                ],
+                "rules": [
+                    "type": "array",
+                    "description": "Only established or emerging style rules supported by the supplied evidence.",
+                    "maxItems": maximumEstablishedRules + maximumEmergingRules,
+                    "items": [
+                        "type": "object",
+                        "properties": [
+                            "dimension": [
+                                "type": "string",
+                                "description": "The single style dimension best represented by this rule.",
+                                "enum": [
+                                    "voice", "tone", "diction", "syntax", "rhythm",
+                                    "paragraphs", "structure", "clarity", "concision", "avoidance",
+                                ],
+                            ],
+                            "guidance": [
+                                "type": "string",
+                                "description": "One concise, actionable, topic-free editing note with no example prose.",
+                                "minLength": 12,
+                                "maxLength": 180,
+                            ],
+                            "sample_count": [
+                                "type": "integer",
+                                "description": "Number of supplied independent samples that directly support this rule.",
+                                "minimum": 0,
+                                "maximum": limits.sampleCount,
+                            ],
+                            "edit_count": [
+                                "type": "integer",
+                                "description": "Number of supplied edit outcomes that directly support this rule.",
+                                "minimum": 0,
+                                "maximum": limits.editCount,
+                            ],
+                            "edit_group_count": [
+                                "type": "integer",
+                                "description": "Number of supplied independent edit groups represented by the supporting edits.",
+                                "minimum": 0,
+                                "maximum": limits.editGroupCount,
+                            ],
+                            "carried_forward": [
+                                "type": "boolean",
+                                "description": "True only when guidance exactly repeats a non-contradicted rule from the current reviewed profile.",
                             ],
                         ],
-                        "guidance": ["type": "string"],
-                        "sample_count": ["type": "integer", "minimum": 0],
-                        "edit_count": ["type": "integer", "minimum": 0],
-                        "edit_group_count": ["type": "integer", "minimum": 0],
-                        "carried_forward": ["type": "boolean"],
+                        "required": [
+                            "dimension", "guidance", "sample_count", "edit_count",
+                            "edit_group_count", "carried_forward",
+                        ],
+                        "additionalProperties": false,
                     ],
-                    "required": [
-                        "dimension", "guidance", "sample_count", "edit_count",
-                        "edit_group_count", "carried_forward",
-                    ],
-                    "additionalProperties": false,
                 ],
             ],
-        ],
-        "required": ["summary", "rules"],
-        "additionalProperties": false,
-    ]
+            "required": ["summary", "rules"],
+            "additionalProperties": false,
+        ]
+    }
 
     static func compile(
         response: String,

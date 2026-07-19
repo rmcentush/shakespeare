@@ -70,8 +70,6 @@ export function registerSwiftCallbacks(callbacks: {
   replaceAll: (replacement: string) => number;
   clearFind: () => void;
   deleteSelection: () => void;
-  replaceSelectionHTML: (html: string) => void;
-  insertHTMLAtCursor: (html: string) => void;
   acceptAllPendingEdits: () => void;
   rejectAllPendingEdits: () => void;
   acceptPendingEdit: (id: string) => boolean;

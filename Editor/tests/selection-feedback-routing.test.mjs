@@ -27,6 +27,12 @@ const editorViewModel = readProjectFile(
 const personalizedContext = readProjectFile(
   'Sources/WordProcessor/Services/PersonalizedWritingContext.swift'
 );
+const styleUpdater = readProjectFile(
+  'Sources/WordProcessor/Services/StyleGuideUpdater.swift'
+);
+const selectionFeedbackContract = readProjectFile(
+  'Sources/WordProcessor/Services/SelectionFeedbackContract.swift'
+);
 
 test('places an accessible feedback control beside selected editor text', () => {
   assert.match(feedbackExtension, /Decoration\.widget\(to, selectionFeedbackWidget/);
@@ -51,14 +57,20 @@ test('shows only one sparkle when selection and writing-gap actions overlap', ()
 });
 
 test('routes selection feedback through the writing model without web search', () => {
-  assert.match(chatViewModel, /writingService = LanguageModelService\(purpose: \.assistant\)/);
+  assert.match(
+    chatViewModel,
+    /selectionFeedbackService = LanguageModelService\([\s\S]*?purpose: \.selectionFeedback[\s\S]*?\)/
+  );
   assert.match(chatViewModel, /researchService = LanguageModelService\(purpose: \.chat\)/);
   assert.match(chatViewModel, /sendSelectionFeedback[\s\S]*?allowsWebSearch: false,[\s\S]*?route: \.writingFeedback/);
-  assert.match(chatViewModel, /route == \.writingFeedback \? writingService : researchService/);
+  assert.match(chatViewModel, /route == \.writingFeedback \? selectionFeedbackService : researchService/);
   assert.match(chatViewModel, /if route == \.research \{[\s\S]*?apiMessages = requestMessages/);
 });
 
 test('all subjective writing assistance shares the live reviewed style context', () => {
+  assert.match(personalizedContext, /writing_quality_guidance/);
+  assert.match(personalizedContext, /generalGuidance \?\? defaultGeneralGuidance/);
+  assert.match(personalizedContext, /builtInGeneralGuidanceFallback/);
   assert.match(personalizedContext, /AuthorStyleReference\.content/);
   assert.match(personalizedContext, /AuthorStyleReference\.learnedPreferences/);
   assert.match(personalizedContext, /TrainingEventStore\.shared\.writingSamples\(\)/);
@@ -70,4 +82,10 @@ test('all subjective writing assistance shares the live reviewed style context',
     'gap fills and ambient suggestions should both use the shared style context'
   );
   assert.doesNotMatch(editorViewModel, /StyleContextAssembler\.assemble\(/);
+  assert.match(styleUpdater, /Convert the raw evidence into compact style notes/);
+  assert.match(styleUpdater, /A frequent construction is not a preference/);
+  assert.match(chatViewModel, /SelectionFeedbackContract\.systemPrompt/);
+  assert.match(chatViewModel, /SelectionFeedbackContract\.styleTask/);
+  assert.match(selectionFeedbackContract, /writer-invoked selection feedback/);
+  assert.match(selectionFeedbackContract, /at most three short, specific points/);
 });

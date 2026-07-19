@@ -1,14 +1,20 @@
 import AppKit
 import CryptoKit
 import Foundation
+import ImageIO
 import UniformTypeIdentifiers
 
 actor DocumentFileStore {
     static let shared = DocumentFileStore()
     static let documentPackageExtension = "shkdoc"
     static let currentSchemaVersion = 1
-    static let maximumImportedImageBytes = 25 * 1024 * 1024
+    static let maximumImportedImageBytes = 10 * 1024 * 1024
+    static let maximumPackageAssetFileBytes = 25 * 1024 * 1024
     static let maximumPackageAssetBytes = 250 * 1024 * 1024
+    static let maximumPackageAssetCount = 2_048
+    static let maximumImagePixelCount = 40_000_000
+    static let maximumImageDimension = 12_000
+    static let maximumImageFrameCount = 500
     static let maximumManifestBytes = 64 * 1024
     static let maximumDocumentContentBytes = 32 * 1024 * 1024
     static let maximumPlainTextPreviewBytes = 16 * 1024 * 1024
@@ -155,6 +161,7 @@ actor DocumentFileStore {
         case invalidDocumentContent(String)
         case missingReferencedAsset(String)
         case assetTooLarge(maximumMegabytes: Int)
+        case imageDimensionsTooLarge(maximumPixels: Int, maximumDimension: Int)
         case packageAssetsTooLarge(maximumMegabytes: Int)
         case incompletePackageWrite(String)
 
@@ -174,6 +181,8 @@ actor DocumentFileStore {
                 return "The document is missing a referenced image (\(filename))."
             case .assetTooLarge(let maximumMegabytes):
                 return "Images must be \(maximumMegabytes) MB or smaller."
+            case .imageDimensionsTooLarge(let maximumPixels, let maximumDimension):
+                return "Images must be at most \(maximumDimension) pixels on either side and \(maximumPixels / 1_000_000) megapixels."
             case .packageAssetsTooLarge(let maximumMegabytes):
                 return "Document assets must total \(maximumMegabytes) MB or less."
             case .incompletePackageWrite(let detail):
@@ -401,6 +410,63 @@ actor DocumentFileStore {
         }
     }
 
+    /// Returns the exact content-addressed assets needed to reconstruct a snapshot.
+    /// Missing references are errors so version history can never silently save a
+    /// snapshot that cannot later be restored.
+    func versionAssets(
+        for snapshot: FileSnapshot,
+        sourceDocumentURL: URL?
+    ) throws -> [String: Data] {
+        let accessURLs = [sourceDocumentURL].compactMap { $0 }
+        return try withSecurityScopedAccess(to: accessURLs) {
+            try preparePackage(from: snapshot, sourceDocumentURL: sourceDocumentURL).assets
+        }
+    }
+
+    /// Materializes a version's assets into the per-document working package.
+    /// The candidate directory is completely validated before it atomically
+    /// replaces the previous working copy.
+    func stageVersionAssets(
+        _ assets: [String: Data],
+        documentID: String
+    ) throws -> URL {
+        try validateAssetDictionary(assets)
+
+        let destination = try workingDocumentURL(for: documentID)
+        let parent = destination.deletingLastPathComponent()
+        let candidate = parent.appendingPathComponent(
+            ".version-restore-\(UUID().uuidString).\(Self.documentPackageExtension)",
+            isDirectory: true
+        )
+        let candidateAssets = candidate.appendingPathComponent(
+            DocumentAssetReference.assetsDirectoryName,
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: candidateAssets, withIntermediateDirectories: true)
+
+        do {
+            for (filename, data) in assets {
+                guard let fileURL = DocumentAssetReference.containedFileURL(
+                    named: filename,
+                    in: candidateAssets
+                ) else {
+                    throw FileStoreError.invalidPackagePath(filename)
+                }
+                try data.write(to: fileURL, options: [.atomic])
+            }
+
+            if FileManager.default.fileExists(atPath: destination.path) {
+                _ = try FileManager.default.replaceItemAt(destination, withItemAt: candidate)
+            } else {
+                try FileManager.default.moveItem(at: candidate, to: destination)
+            }
+            return destination
+        } catch {
+            try? FileManager.default.removeItem(at: candidate)
+            throw error
+        }
+    }
+
     private func loadPackage(from url: URL) throws -> FileSnapshot {
         guard let manifestURL = DocumentAssetReference.containedFileURL(
             named: "manifest.json",
@@ -452,6 +518,7 @@ actor DocumentFileStore {
         ) else {
             throw FileStoreError.invalidPackagePath(manifest.contentFileName)
         }
+        let snapshot: FileSnapshot
         switch manifest.contentFormat {
         case .prosemirrorJSON:
             let canonicalJSON = try PackageFileSafety.readUTF8String(
@@ -464,7 +531,7 @@ actor DocumentFileStore {
             } catch {
                 throw FileStoreError.invalidDocumentContent(error.localizedDescription)
             }
-            return FileSnapshot(
+            snapshot = FileSnapshot(
                 canonicalJSON: canonicalJSON,
                 htmlContent: "",
                 plainText: plainText,
@@ -482,7 +549,7 @@ actor DocumentFileStore {
                 maximumBytes: Self.maximumDocumentContentBytes,
                 displayName: manifest.contentFileName
             )
-            return FileSnapshot(
+            snapshot = FileSnapshot(
                 canonicalJSON: nil,
                 htmlContent: html,
                 plainText: plainText.isEmpty ? nil : plainText,
@@ -494,6 +561,8 @@ actor DocumentFileStore {
                 modifiedAt: manifest.modifiedAt
             )
         }
+        try validateReferencedAssets(in: snapshot, packageURL: url)
+        return snapshot
     }
 
     private func preparePackage(from snapshot: FileSnapshot, sourceDocumentURL: URL?) throws -> PreparedPackage {
@@ -674,6 +743,9 @@ actor DocumentFileStore {
                let existingData = try existingAssetData(named: filename, from: sourceDocumentURL) {
                 assets[filename] = existingData
             }
+            guard assets[filename] != nil else {
+                throw FileStoreError.missingReferencedAsset(filename)
+            }
             return DocumentAssetReference.urlString(for: filename)
         }
 
@@ -691,16 +763,24 @@ actor DocumentFileStore {
         }
 
         var result: [String: Data] = [:]
-        for filename in DocumentAssetReference.filenames(in: html) {
-            if let data = try existingAssetData(named: filename, from: sourceDocumentURL) {
-                result[filename] = data
+        let filenames = DocumentAssetReference.filenames(in: html)
+        guard filenames.count <= Self.maximumPackageAssetCount else {
+            throw FileStoreError.invalidDocumentContent("too many referenced images")
+        }
+        for filename in filenames {
+            guard let data = try existingAssetData(named: filename, from: sourceDocumentURL) else {
+                throw FileStoreError.missingReferencedAsset(filename)
             }
+            result[filename] = data
         }
         try validatePackageAssetTotal(result)
         return result
     }
 
     private func validatePackageAssetTotal(_ assets: [String: Data]) throws {
+        guard assets.count <= Self.maximumPackageAssetCount else {
+            throw FileStoreError.invalidDocumentContent("too many referenced images")
+        }
         let totalBytes = assets.values.reduce(0) { partialResult, data in
             partialResult + data.count
         }
@@ -738,7 +818,7 @@ actor DocumentFileStore {
         guard let sourceDocumentURL,
               Self.isNativeDocumentURL(sourceDocumentURL),
               sourceDocumentURL.standardizedFileURL != destination.deletingLastPathComponent().standardizedFileURL,
-              referencedAssetFilenames.count <= 2_048
+              referencedAssetFilenames.count <= Self.maximumPackageAssetCount
         else { return }
 
         try withSecurityScopedAccess(to: [sourceDocumentURL]) {
@@ -759,7 +839,7 @@ actor DocumentFileStore {
                 guard !FileManager.default.fileExists(atPath: target.path) else { continue }
                 let data = try PackageFileSafety.readData(
                     from: file,
-                    maximumBytes: Self.maximumImportedImageBytes,
+                    maximumBytes: Self.maximumPackageAssetFileBytes,
                     displayName: filename
                 )
                 copiedBytes += data.count
@@ -796,7 +876,7 @@ actor DocumentFileStore {
                 }
                 let assetData = try PackageFileSafety.readData(
                     from: assetURL,
-                    maximumBytes: Self.maximumImportedImageBytes,
+                    maximumBytes: Self.maximumPackageAssetFileBytes,
                     displayName: filename
                 )
                 if filename == newFilename, assetData != newData {
@@ -836,19 +916,27 @@ actor DocumentFileStore {
         }
 
         guard FileManager.default.fileExists(atPath: assetURL.path) else { return nil }
-        return try imageAssetData(contentsOf: assetURL)
+        return try imageAssetData(
+            contentsOf: assetURL,
+            maximumBytes: Self.maximumPackageAssetFileBytes
+        )
     }
 
-    private func imageAssetData(contentsOf url: URL) throws -> Data {
+    private func imageAssetData(
+        contentsOf url: URL,
+        maximumBytes: Int = DocumentFileStore.maximumImportedImageBytes
+    ) throws -> Data {
         do {
-            return try PackageFileSafety.readData(
+            let data = try PackageFileSafety.readData(
                 from: url,
-                maximumBytes: Self.maximumImportedImageBytes,
+                maximumBytes: maximumBytes,
                 displayName: url.lastPathComponent
             )
+            try validateDecodedImage(data)
+            return data
         } catch PackageFileSafetyError.fileTooLarge {
             throw FileStoreError.assetTooLarge(
-                maximumMegabytes: Self.maximumImportedImageBytes / 1_024 / 1_024
+                maximumMegabytes: maximumBytes / 1_024 / 1_024
             )
         }
     }
@@ -857,8 +945,11 @@ actor DocumentFileStore {
         _ source: String,
         maximumBytes: Int? = nil
     ) throws -> (data: Data, mimeType: String, fileExtension: String) {
-        if let maximumBytes, source.utf8.count > maximumBytes * 2 {
-            throw FileStoreError.assetTooLarge(maximumMegabytes: maximumBytes / 1024 / 1024)
+        if let maximumBytes {
+            let maximumEncodedBytes = ((maximumBytes + 2) / 3) * 4 + 512
+            guard source.utf8.count <= maximumEncodedBytes else {
+                throw FileStoreError.assetTooLarge(maximumMegabytes: maximumBytes / 1024 / 1024)
+            }
         }
 
         guard let commaIndex = source.firstIndex(of: ",") else {
@@ -889,9 +980,111 @@ actor DocumentFileStore {
         if let maximumBytes, data.count > maximumBytes {
             throw FileStoreError.assetTooLarge(maximumMegabytes: maximumBytes / 1024 / 1024)
         }
+        try validateDecodedImage(data)
 
         let fileExtension = UTType(mimeType: mimeType)?.preferredFilenameExtension ?? fileExtension(forMIMEType: mimeType)
         return (data, mimeType, fileExtension)
+    }
+
+    private func validateReferencedAssets(
+        in snapshot: FileSnapshot,
+        packageURL: URL
+    ) throws {
+        var filenames = DocumentAssetReference.filenames(in: snapshot.htmlContent)
+        if let canonicalJSON = snapshot.canonicalJSON {
+            filenames.formUnion(DocumentAssetReference.filenames(inCanonicalJSON: canonicalJSON))
+        }
+        guard filenames.count <= Self.maximumPackageAssetCount else {
+            throw FileStoreError.invalidDocumentContent("too many referenced images")
+        }
+        guard let assetsDirectory = DocumentAssetReference.containedFileURL(
+            named: DocumentAssetReference.assetsDirectoryName,
+            in: packageURL
+        ) else {
+            throw FileStoreError.invalidPackagePath(DocumentAssetReference.assetsDirectoryName)
+        }
+
+        guard FileManager.default.fileExists(atPath: assetsDirectory.path) else {
+            if filenames.isEmpty { return }
+            throw FileStoreError.missingReferencedAsset(filenames.sorted().first ?? "assets")
+        }
+        let entries = try FileManager.default.contentsOfDirectory(
+            at: assetsDirectory,
+            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        )
+        guard entries.count <= Self.maximumPackageAssetCount else {
+            throw FileStoreError.invalidDocumentContent("too many packaged images")
+        }
+        let packagedFilenames = Set(entries.map(\.lastPathComponent))
+        guard packagedFilenames == filenames else {
+            let unexpected = packagedFilenames.subtracting(filenames).sorted().first
+            let missing = filenames.subtracting(packagedFilenames).sorted().first
+            throw FileStoreError.invalidDocumentContent(
+                unexpected.map { "unreferenced packaged image \($0)" }
+                    ?? "missing packaged image \(missing ?? "unknown")"
+            )
+        }
+
+        var assets: [String: Data] = [:]
+        for filename in filenames {
+            guard let assetURL = DocumentAssetReference.containedFileURL(
+                named: filename,
+                in: assetsDirectory
+            ), FileManager.default.fileExists(atPath: assetURL.path) else {
+                throw FileStoreError.missingReferencedAsset(filename)
+            }
+            assets[filename] = try imageAssetData(
+                contentsOf: assetURL,
+                maximumBytes: Self.maximumPackageAssetFileBytes
+            )
+        }
+        try validateAssetDictionary(assets)
+    }
+
+    private func validateAssetDictionary(_ assets: [String: Data]) throws {
+        try validatePackageAssetTotal(assets)
+        for (filename, data) in assets {
+            guard filename == assetFilename(
+                for: data,
+                fileExtension: URL(fileURLWithPath: filename).pathExtension.lowercased()
+            ) else {
+                throw FileStoreError.invalidDocumentContent(
+                    "an image does not match its content-addressed filename"
+                )
+            }
+            guard data.count <= Self.maximumPackageAssetFileBytes else {
+                throw FileStoreError.assetTooLarge(
+                    maximumMegabytes: Self.maximumPackageAssetFileBytes / 1_024 / 1_024
+                )
+            }
+            try validateDecodedImage(data)
+        }
+    }
+
+    private func validateDecodedImage(_ data: Data) throws {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0,
+              height > 0
+        else {
+            throw FileStoreError.invalidDataURL
+        }
+        guard CGImageSourceGetCount(source) <= Self.maximumImageFrameCount else {
+            throw FileStoreError.invalidDocumentContent("an animated image has too many frames")
+        }
+        guard width <= Self.maximumImageDimension,
+              height <= Self.maximumImageDimension,
+              width.multipliedReportingOverflow(by: height).overflow == false,
+              width * height <= Self.maximumImagePixelCount
+        else {
+            throw FileStoreError.imageDimensionsTooLarge(
+                maximumPixels: Self.maximumImagePixelCount,
+                maximumDimension: Self.maximumImageDimension
+            )
+        }
     }
 
     private func assetFilename(for data: Data, fileExtension: String) -> String {

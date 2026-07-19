@@ -313,8 +313,8 @@ enum ShakespeareStorage {
     documents/       Working copies, recovery drafts, and local version history.
     personalization/ Opt-in learning events, writing samples, and reviewed
                      style preferences.
-    credentials/     Owner-only development fallback files. Normal installs keep
-                     API keys in macOS Keychain instead.
+    credentials/     Legacy credential files awaiting one-time migration into
+                     macOS Keychain. New API keys are never stored here.
 
     Documents you explicitly save remain in the folder you chose. App preferences
     use the standard macOS Preferences system. You can reveal this folder from

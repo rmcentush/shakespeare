@@ -10,25 +10,21 @@ make run
 
 ## Workflow
 
-1. Switch to `main` and fast-forward it from `origin/main`.
+1. Create a focused branch from current `main`.
 2. Keep the change focused and update relevant tests or documentation.
 3. Run `make check`.
-4. Commit the validated change directly on `main`, synchronize once more, and
-   push `main`.
+4. Open a pull request and merge only after the independent macOS CI check passes.
 
 ```bash
-git switch main
-git pull --ff-only origin main
+git switch -c feature/describe-the-change origin/main
 # Make one focused change, then run make check.
 git add <files>
 git commit -m "Describe the change"
-git pull --rebase origin main
-git push origin main
+git push -u origin HEAD
 ```
 
-Do not create routine feature, automation, or dependency-update branches.
-Use a temporary branch only when isolation is explicitly required for a risky
-or externally contributed change, and delete it after integration.
+Delete merged branches after integration and keep dependency changes isolated
+so lockfile updates receive an explicit review.
 
 Commit only durable product, build, release, or licensing documentation. Keep
 temporary notes, credentials, local paths, app archives, and unrelated files
@@ -73,7 +69,8 @@ without an explicit product decision. See
 
 ## Delivery
 
-GitHub `main` is the source of truth. Cloudflare deploys the website from
+GitHub `main` is the source of truth. Pull requests must pass the repository's
+macOS CI check before merge. Cloudflare deploys the website from
 `Website/`; signed macOS releases run only through `make release` from a clean,
 current `main` on a trusted Mac. Never publish an ad-hoc package or uncommitted
 source. See [Development and releasing](docs/RELEASING.md).

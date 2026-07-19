@@ -53,6 +53,7 @@ enum AmbientReviewContract {
     Voice comments must be specific and actionable. Prefer a small suggested_replacement when the fix is local. Do not ask the user to rewrite a whole section in the abstract.
     You will receive existing comments. Treat them as already-covered feedback, even if resolved or dismissed.
     Do not repeat, paraphrase, or add a nearby overlapping version of an existing comment. If the only useful feedback is already covered, return {"comments":[]}.
+    Use an empty string for suggested_replacement when a comment does not need a local replacement.
     Schema:
     {"comments":[{"block_id":"...","exact_original":"exact current text span","comment":"short rationale","kind":"clarity|structure|tone|voice|concision|grammar|accuracy","severity":"low|medium|high","suggested_replacement":"optional replacement HTML or plain text"}]}
     If there is nothing worth saying, return {"comments":[]}.
@@ -64,15 +65,32 @@ enum AmbientReviewContract {
             "properties": [
                 "comments": [
                     "type": "array",
+                    "description": "Zero to four non-overlapping, high-value comments anchored to editable blocks.",
                     "maxItems": 4,
                     "items": [
                         "type": "object",
                         "properties": [
-                            "block_id": ["type": "string"],
-                            "exact_original": ["type": "string"],
-                            "comment": ["type": "string"],
+                            "block_id": [
+                                "type": "string",
+                                "description": "The exact id of one supplied editable block.",
+                                "minLength": 1,
+                                "maxLength": 160,
+                            ],
+                            "exact_original": [
+                                "type": "string",
+                                "description": "A verbatim, uniquely occurring substring of that block.",
+                                "minLength": 1,
+                                "maxLength": 2_000,
+                            ],
+                            "comment": [
+                                "type": "string",
+                                "description": "A specific diagnosis and actionable rationale, without generic praise or a whole-section rewrite request.",
+                                "minLength": 1,
+                                "maxLength": 500,
+                            ],
                             "kind": [
                                 "type": "string",
+                                "description": "The single editorial dimension primarily addressed.",
                                 "enum": [
                                     "clarity", "structure", "tone", "voice",
                                     "concision", "grammar", "accuracy",
@@ -80,9 +98,14 @@ enum AmbientReviewContract {
                             ],
                             "severity": [
                                 "type": "string",
+                                "description": "How materially the issue affects the passage, not how easy it is to fix.",
                                 "enum": ["low", "medium", "high"],
                             ],
-                            "suggested_replacement": ["type": "string"],
+                            "suggested_replacement": [
+                                "type": "string",
+                                "description": "A minimal local replacement, or an empty string when none is needed.",
+                                "maxLength": 2_000,
+                            ],
                         ],
                         "required": [
                             "block_id", "exact_original", "comment", "kind",

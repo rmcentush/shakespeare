@@ -77,6 +77,10 @@ struct ContentView: View {
     @FocusState private var isDocumentTitleFocused: Bool
 
     var body: some View {
+        appEventView
+    }
+
+    private var chromeView: some View {
         mainLayout
             .overlay {
                 if let featureTourStepIndex,
@@ -129,7 +133,7 @@ struct ContentView: View {
                     Button {
                         toggleSidebar(.chat)
                     } label: {
-                        Image(systemName: "bubble.right")
+                        Image(systemName: "magnifyingglass")
                             .frame(width: 22, height: 22)
                             .featureTourHighlight(featureTourTarget == .research)
                     }
@@ -185,6 +189,10 @@ struct ContentView: View {
                     toggleFocusMode()
                 }
             }
+    }
+
+    private var documentEventView: some View {
+        chromeView
             .onReceive(NotificationCenter.default.publisher(for: .editorContentUpdated, object: editorViewModel)) { notification in
                 guard let html = notification.userInfo?["html"] as? String,
                       let text = notification.userInfo?["text"] as? String,
@@ -218,6 +226,7 @@ struct ContentView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .editorCommentActivated, object: editorViewModel)) { _ in
                 withAnimation(Layout.sidebarAnimation) {
+                    showVersionHistory = false
                     activeSidebar = .comments
                 }
             }
@@ -258,6 +267,10 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .showOnboarding, object: editorViewModel)) { _ in
                 showOnboarding = true
             }
+    }
+
+    private var presentationView: some View {
+        documentEventView
             .sheet(isPresented: $showOnboarding, onDismiss: {
                 OnboardingSettings.markCompleted()
                 OnboardingSettings.releasePresentation(for: onboardingWindowID)
@@ -295,6 +308,10 @@ struct ContentView: View {
                     }
                 )
             }
+    }
+
+    private var appEventView: some View {
+        presentationView
             .alert("Save Named Version", isPresented: $showNamedVersionAlert) {
                 TextField("Version name", text: $namedVersionName)
                 Button("Save") {
@@ -863,8 +880,16 @@ extension ContentView {
         let name = namedVersionName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
         Task {
-            guard let snapshot = await editorViewModel.latestSnapshot(for: document) else { return }
-            VersionStore.shared.saveVersion(filePath: url.path, snapshot: snapshot, name: name)
+            do {
+                guard let snapshot = await editorViewModel.latestSnapshot(for: document) else { return }
+                try await editorViewModel.saveVersionSnapshot(
+                    snapshot,
+                    documentURL: url,
+                    name: name
+                )
+            } catch {
+                editorViewModel.reportPersistenceFailure("Save named version", error: error)
+            }
         }
         namedVersionName = ""
     }
