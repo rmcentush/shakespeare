@@ -23,6 +23,7 @@ export type BridgeMessageType =
   | 'commentActivated'
   | 'proofreadingUpdate'
   | 'proofreadingUserStateChanged'
+  | 'gapFillRequested'
   | 'imageImportRequested'
   | 'openURL';
 
@@ -55,6 +56,7 @@ export function registerSwiftCallbacks(callbacks: {
   setAIGrammarIssues: (json: string) => void;
   resetProofreadingDictionary: () => void;
   getGrammarContextSnapshot: () => string;
+  completeGapFill: (requestId: string, text: string, rationale?: string, errorMessage?: string) => void;
   completeImageImport: (requestId: string, source: string, errorMessage?: string) => void;
   setZoomScale: (scale: number) => void;
   getSelectedText: () => string;

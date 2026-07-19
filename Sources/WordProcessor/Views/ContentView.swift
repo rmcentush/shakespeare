@@ -466,6 +466,16 @@ struct ContentView: View {
             ZStack {
                 EditorWebView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay {
+                        if featureTourTarget == .writingGaps {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(Color.accentColor, lineWidth: 2)
+                                .shadow(color: Color.accentColor.opacity(0.45), radius: 6)
+                                .padding(10)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                        }
+                    }
                 if isDistractionFree {
                     VStack {
                         HStack {
@@ -500,7 +510,7 @@ struct ContentView: View {
                 }
             }
             if !isDistractionFree {
-                StatusBarView()
+                StatusBarView(onRequestFeedback: requestSelectionFeedback)
             }
         }
     }
@@ -555,6 +565,37 @@ struct ContentView: View {
 
     @ViewBuilder
     private var keyboardShortcuts: some View {
+        // Keep standard editing shortcuts active without exposing a generic Edit menu.
+        Button("") {
+            performHistoryShortcut(command: "undo", fallbackSelectorName: "undo:")
+        }
+        .keyboardShortcut("z", modifiers: .command)
+        .hidden()
+
+        Button("") {
+            performHistoryShortcut(command: "redo", fallbackSelectorName: "redo:")
+        }
+        .keyboardShortcut("z", modifiers: [.command, .shift])
+        .hidden()
+
+        Button("") {
+            performPasteboardShortcut(cutAfterCopy: true)
+        }
+        .keyboardShortcut("x", modifiers: .command)
+        .hidden()
+
+        Button("") {
+            performPasteboardShortcut(cutAfterCopy: false)
+        }
+        .keyboardShortcut("c", modifiers: .command)
+        .hidden()
+
+        Button("") {
+            NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+        }
+        .keyboardShortcut("v", modifiers: .command)
+        .hidden()
+
         // Cmd+\ to toggle sidebar
         Button("") {
             toggleSidebar(.chat)
@@ -647,6 +688,38 @@ struct ContentView: View {
 }
 
 extension ContentView {
+    private func performHistoryShortcut(command: String, fallbackSelectorName: String) {
+        if editorViewModel.isEditorFocused {
+            editorViewModel.applyFormat(command)
+        } else {
+            NSApp.sendAction(Selector(fallbackSelectorName), to: nil, from: nil)
+        }
+    }
+
+    private func performPasteboardShortcut(cutAfterCopy: Bool) {
+        Task { @MainActor in
+            guard editorViewModel.isEditorFocused else {
+                NSApp.sendAction(
+                    Selector(cutAfterCopy ? "cut:" : "copy:"),
+                    to: nil,
+                    from: nil
+                )
+                return
+            }
+
+            let handled = await editorViewModel.copySelectionWithImagesToPasteboard(
+                cutAfterCopy: cutAfterCopy
+            )
+            if !handled {
+                NSApp.sendAction(
+                    Selector(cutAfterCopy ? "cut:" : "copy:"),
+                    to: nil,
+                    from: nil
+                )
+            }
+        }
+    }
+
     private func beginFeatureTour(replay: Bool = false) {
         if isDistractionFree {
             toggleFocusMode()
@@ -762,6 +835,25 @@ extension ContentView {
                 showVersionHistory = false
                 activeSidebar = panel
             }
+        }
+    }
+
+    private func requestSelectionFeedback() {
+        withAnimation(Layout.sidebarAnimation) {
+            showVersionHistory = false
+            activeSidebar = .chat
+        }
+
+        guard APIKeyStore.shared.hasAPIKey(service: "openrouter") else { return }
+        editorViewModel.getEditContextSnapshot { context in
+            guard let context,
+                  let selection = context.selection,
+                  !selection.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { return }
+            editorViewModel.queueSelectionFeedback(
+                selection: selection.text,
+                documentContent: context.plainText
+            )
         }
     }
 
@@ -1063,6 +1155,7 @@ struct KeyHint: View {
 struct StatusBarView: View {
     @Environment(DocumentModel.self) private var document
     @Environment(EditorViewModel.self) private var editorViewModel
+    let onRequestFeedback: () -> Void
 
     var body: some View {
         ZStack {
@@ -1097,6 +1190,21 @@ struct StatusBarView: View {
                     .foregroundStyle(.primary)
                 metricSeparator
                 Text("\(editorViewModel.selectionState.selectedCharacters) characters")
+                metricSeparator
+                Button(action: onRequestFeedback) {
+                    Label("Feedback", systemImage: "sparkles")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Color.accentColor.opacity(0.1),
+                            in: Capsule(style: .continuous)
+                        )
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .help("Ask Shakespeare about the selected text")
+                .accessibilityLabel("Ask for feedback on selected text")
                 metricSeparator
             }
             Text("\(document.wordCount) words")

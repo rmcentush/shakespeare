@@ -392,10 +392,10 @@ struct SettingsView: View {
 
             SettingsCard(title: "Feature Tour") {
                 HStack(alignment: .center, spacing: 16) {
-                    Text("Take another quick look at the main writing tools.")
+                    Text("Review the main writing tools.")
                         .settingsDescriptionStyle()
                     Spacer()
-                    Button("Replay Tour") {
+                    Button("Start Tutorial") {
                         replayFeatureTour()
                     }
                 }

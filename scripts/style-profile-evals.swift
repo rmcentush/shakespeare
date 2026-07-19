@@ -69,6 +69,28 @@ struct StyleProfileEvals {
             ),
             "a tiny edit was treated as representative style evidence"
         )
+        require(
+            StyleLearningPolicy.isAcceptedGapPreference(
+                groupID: "edit_gap_123",
+                decision: "accept",
+                instruction: "bridge to the consequence",
+                rationale: "Uses a compact declarative transition",
+                outcome: "accepted_unchanged",
+                confidence: 1
+            ),
+            "an accepted gap did not become preference-only evidence"
+        )
+        require(
+            !StyleLearningPolicy.isAcceptedGapPreference(
+                groupID: "edit_gap_123",
+                decision: "accept",
+                instruction: "bridge to the consequence",
+                rationale: "Uses a compact declarative transition",
+                outcome: "accepted_modified",
+                confidence: 1
+            ),
+            "a writer-modified gap was duplicated as preference-only evidence"
+        )
     }
 
     private static func boundsAndDiversifiesEvidence() throws {

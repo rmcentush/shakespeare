@@ -13,12 +13,7 @@ private struct WindowCommandContext {
     let saveDocumentAs: () -> Void
     let exportHTML: () -> Void
     let showSaveNamedVersion: () -> Void
-    let thoroughProofread: () -> Void
-    let showOnboarding: () -> Void
-    let cut: () -> Void
-    let copy: () -> Void
-    let paste: () -> Void
-    let applyFormat: (String) -> Void
+    let startTutorial: () -> Void
 }
 
 private struct WindowCommandContextKey: FocusedValueKey {
@@ -112,6 +107,40 @@ private final class DocumentSessionCoordinator {
 @MainActor
 private final class WordProcessorAppDelegate: NSObject, NSApplicationDelegate {
     private var isPreparingForTermination = false
+    private var isMainMenuCleanupScheduled = false
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(mainMenuDidAddItem(_:)),
+            name: NSMenu.didAddItemNotification,
+            object: nil
+        )
+        removeUnusedMainMenus()
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        removeUnusedMainMenus()
+    }
+
+    private func removeUnusedMainMenus() {
+        guard !isMainMenuCleanupScheduled else { return }
+        isMainMenuCleanupScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            self?.isMainMenuCleanupScheduled = false
+            guard let mainMenu = NSApp.mainMenu else { return }
+            for title in ["Edit", "Format", "View", "Help"] {
+                if let item = mainMenu.items.first(where: { $0.title == title }) {
+                    mainMenu.removeItem(item)
+                }
+            }
+        }
+    }
+
+    @objc private func mainMenuDidAddItem(_ notification: Notification) {
+        guard let menu = notification.object as? NSMenu, menu === NSApp.mainMenu else { return }
+        removeUnusedMainMenus()
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !isPreparingForTermination else { return .terminateLater }
@@ -185,7 +214,6 @@ extension FocusedValues {
 private struct WordProcessorCommands: Commands {
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.windowCommandContext) private var windowCommandContext
-    @State private var textCheckingSettings = TextCheckingSettings.shared
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -250,89 +278,41 @@ private struct WordProcessorCommands: Commands {
             .disabled(windowCommandContext?.canSaveNamedVersion != true)
         }
 
+        // Keep the menu bar focused on actions that are specific to Shakespeare.
+        // Editing and formatting remain available directly in the editor.
+        CommandGroup(replacing: .undoRedo) {
+            EmptyView()
+        }
+
         CommandGroup(replacing: .pasteboard) {
-            Button("Cut") {
-                performPasteboardAction(editorAction: { $0.cut() }, fallbackSelectorName: "cut:")
-            }
-            .keyboardShortcut("x")
-
-            Button("Copy") {
-                performPasteboardAction(editorAction: { $0.copy() }, fallbackSelectorName: "copy:")
-            }
-            .keyboardShortcut("c")
-
-            Button("Paste") {
-                performPasteboardAction(editorAction: { $0.paste() }, fallbackSelectorName: "paste:")
-            }
-            .keyboardShortcut("v")
+            EmptyView()
         }
 
-        CommandGroup(after: .textEditing) {
-            Menu("Spelling and Grammar") {
-                Toggle("Check Spelling While Typing", isOn: Binding(
-                    get: { textCheckingSettings.continuousSpellCheckingEnabled },
-                    set: { textCheckingSettings.continuousSpellCheckingEnabled = $0 }
-                ))
-
-                Toggle("Check AI Grammar While Typing", isOn: Binding(
-                    get: { textCheckingSettings.grammarCheckingEnabled },
-                    set: { textCheckingSettings.grammarCheckingEnabled = $0 }
-                ))
-
-                Button("Run Thorough Proofread") {
-                    windowCommandContext?.thoroughProofread()
-                }
-                .disabled(windowCommandContext == nil)
-            }
-
-            Menu("Substitutions") {
-                Toggle("Correct Spelling Automatically", isOn: Binding(
-                    get: { textCheckingSettings.automaticSpellingCorrectionEnabled },
-                    set: { textCheckingSettings.automaticSpellingCorrectionEnabled = $0 }
-                ))
-
-                Toggle("Use Text Replacements", isOn: Binding(
-                    get: { textCheckingSettings.automaticTextReplacementEnabled },
-                    set: { textCheckingSettings.automaticTextReplacementEnabled = $0 }
-                ))
-            }
-
-            Divider()
-            Button("Bold") {
-                windowCommandContext?.applyFormat("bold")
-            }
-            .keyboardShortcut("b")
-            .disabled(windowCommandContext == nil)
-
-            Button("Italic") {
-                windowCommandContext?.applyFormat("italic")
-            }
-            .keyboardShortcut("i")
-            .disabled(windowCommandContext == nil)
-
-            Button("Underline") {
-                windowCommandContext?.applyFormat("underline")
-            }
-            .keyboardShortcut("u")
-            .disabled(windowCommandContext == nil)
+        CommandGroup(replacing: .textEditing) {
+            EmptyView()
         }
 
-        CommandGroup(after: .help) {
-            Button("Show Welcome to Shakespeare") {
-                windowCommandContext?.showOnboarding()
+        CommandGroup(replacing: .textFormatting) {
+            EmptyView()
+        }
+
+        CommandGroup(replacing: .toolbar) {
+            EmptyView()
+        }
+
+        CommandGroup(replacing: .sidebar) {
+            EmptyView()
+        }
+
+        CommandGroup(replacing: .help) {
+            EmptyView()
+        }
+
+        CommandMenu("Tutorial") {
+            Button("Start Tutorial") {
+                windowCommandContext?.startTutorial()
             }
             .disabled(windowCommandContext == nil)
-        }
-    }
-
-    private func performPasteboardAction(
-        editorAction: (WindowCommandContext) -> Void,
-        fallbackSelectorName: String
-    ) {
-        if let windowCommandContext {
-            editorAction(windowCommandContext)
-        } else {
-            NSApp.sendAction(Selector(fallbackSelectorName), to: nil, from: nil)
         }
     }
 }
@@ -397,46 +377,10 @@ private struct EditorWindowRootView: View {
             showSaveNamedVersion: {
                 NotificationCenter.default.post(name: .showSaveNamedVersion, object: editorViewModel)
             },
-            thoroughProofread: {
-                editorViewModel.runThoroughProofread()
-            },
-            showOnboarding: {
-                NotificationCenter.default.post(name: .showOnboarding, object: editorViewModel)
-            },
-            cut: {
-                handlePasteboardCommand(cutAfterCopy: true)
-            },
-            copy: {
-                handlePasteboardCommand(cutAfterCopy: false)
-            },
-            paste: {
-                forwardPasteboardAction("paste:")
-            },
-            applyFormat: { command in
-                editorViewModel.applyFormat(command)
+            startTutorial: {
+                NotificationCenter.default.post(name: .showFeatureTour, object: editorViewModel)
             }
         )
-    }
-
-    private func handlePasteboardCommand(cutAfterCopy: Bool) {
-        Task { @MainActor in
-            guard editorViewModel.isEditorFocused else {
-                forwardPasteboardAction(cutAfterCopy ? "cut:" : "copy:")
-                return
-            }
-
-            let handled = await editorViewModel.copySelectionWithImagesToPasteboard(
-                cutAfterCopy: cutAfterCopy
-            )
-
-            if !handled {
-                forwardPasteboardAction(cutAfterCopy ? "cut:" : "copy:")
-            }
-        }
-    }
-
-    private func forwardPasteboardAction(_ selectorName: String) {
-        NSApp.sendAction(Selector(selectorName), to: nil, from: nil)
     }
 }
 

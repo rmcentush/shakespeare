@@ -29,6 +29,25 @@ enum StyleLearningPolicy {
         else { return false }
         return true
     }
+
+    /// Accepting an inline gap fill unchanged is a preference signal, but not a
+    /// writer-authored prose sample. The evidence packet therefore carries only
+    /// the writer's note and the fill's abstract style rationale.
+    static func isAcceptedGapPreference(
+        groupID: String,
+        decision: String,
+        instruction: String,
+        rationale: String,
+        outcome: String?,
+        confidence: Double?
+    ) -> Bool {
+        groupID.hasPrefix("edit_gap_")
+            && decision == "accept"
+            && outcome == "accepted_unchanged"
+            && (confidence ?? 0) >= 0.8
+            && !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !rationale.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }
 
 struct StyleProfileSampleEvidence: Codable, Equatable, Sendable {

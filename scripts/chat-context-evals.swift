@@ -26,6 +26,20 @@ struct ChatContextEvals {
         require(focused.contains("Zebra evidence"), "query-relevant evidence was omitted")
         require(!focused.contains("Paragraph 31"), "ordinary query resent too much middle context")
 
+        let selectionFocused = ChatDocumentContextAssembler.assemble(
+            document: document,
+            query: "Give feedback on this selection.",
+            selection: "Zebra evidence decisive archival finding consequence"
+        )
+        require(
+            selectionFocused.contains("Zebra evidence"),
+            "the selected passage did not pull in its surrounding draft context"
+        )
+        require(
+            selectionFocused.count <= ChatDocumentContextAssembler.standardMaximumCharacters,
+            "selection-focused context exceeded its budget"
+        )
+
         let whole = ChatDocumentContextAssembler.assemble(
             document: document,
             query: "Review the overall flow of the entire draft."
@@ -42,7 +56,7 @@ struct ChatContextEvals {
             "short document was needlessly transformed"
         )
 
-        print("Chat context evals passed (relevance, flow, adaptive budgets, short drafts).")
+        print("Chat context evals passed (query and selection relevance, flow, adaptive budgets, short drafts).")
     }
 
     private static func require(_ condition: @autoclosure () -> Bool, _ message: String) {

@@ -102,6 +102,11 @@ import {
 } from './pendingEdits';
 import { buildEditContextSnapshot } from './editContext';
 import { applyPersistedProofreadingUserState, attachProofreading } from './proofreading';
+import {
+  WritingGapSuggestions,
+  completeGapFill,
+  resetGapSuggestionState,
+} from './gapSuggestions';
 
 function resetEditorSyncState() {
   resetDocSyncState();
@@ -109,6 +114,7 @@ function resetEditorSyncState() {
   resetCommentsSignature();
   pendingImageImports.clear();
   resetPersonalizationOutcomeTracking();
+  resetGapSuggestionState();
 }
 
 interface PendingImageImport {
@@ -215,6 +221,7 @@ const editor = new Editor({
     CommentMark,
     SearchHighlight,
     PendingEditHighlight,
+    WritingGapSuggestions,
     Extension.create({
       name: 'imagePasteHandler',
       addProseMirrorPlugins() {
@@ -513,6 +520,9 @@ registerSwiftCallbacks({
   },
   getGrammarContextSnapshot(): string {
     return proofreading.grammarContextJSON();
+  },
+  completeGapFill(requestId: string, text: string, rationale = '', errorMessage = '') {
+    completeGapFill(editor, requestId, text, rationale, errorMessage);
   },
   completeImageImport(requestId: string, source: string, errorMessage = '') {
     completeImageImport(requestId, source, errorMessage);

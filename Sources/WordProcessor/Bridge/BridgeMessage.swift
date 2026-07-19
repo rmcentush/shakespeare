@@ -11,6 +11,7 @@ enum BridgePayload: Codable {
     case commentActivated(commentId: String)
     case proofreadingUpdate(ProofreadingUpdateData)
     case proofreadingUserStateChanged(json: String)
+    case gapFillRequested(GapFillRequestData)
     case imageImportRequested(ImageImportRequestData)
     case openURL(url: String)
     case unknown
@@ -58,6 +59,16 @@ enum BridgePayload: Codable {
         let dataURL: String
         let filename: String
         let referencedSources: [String]
+    }
+
+    struct GapFillRequestData: Codable, Equatable {
+        let requestID: String
+        let from: Int
+        let to: Int
+        let revision: Int
+        let placeholder: String
+        let instruction: String
+        let isBlock: Bool
     }
 
     struct CommentData: Identifiable, Equatable {
@@ -278,6 +289,36 @@ enum BridgePayload: Codable {
                   json.utf8.count <= 256 * 1_024
             else { return .unknown }
             return .proofreadingUserStateChanged(json: json)
+        case "gapFillRequested":
+            guard let requestID = payload["requestId"] as? String,
+                  !requestID.isEmpty,
+                  requestID.utf8.count <= 128,
+                  let from = payload["from"] as? Int,
+                  let to = payload["to"] as? Int,
+                  let revision = payload["revision"] as? Int,
+                  from >= 0,
+                  to > from,
+                  to - from <= 604,
+                  revision >= 0,
+                  let placeholder = payload["placeholder"] as? String,
+                  placeholder.utf8.count <= 1_204,
+                  placeholder.hasPrefix("[["),
+                  placeholder.hasSuffix("]]"),
+                  let instruction = payload["instruction"] as? String,
+                  instruction.utf8.count <= 1_204,
+                  let isBlock = payload["isBlock"] as? Bool
+            else { return .unknown }
+            return .gapFillRequested(
+                GapFillRequestData(
+                    requestID: requestID,
+                    from: from,
+                    to: to,
+                    revision: revision,
+                    placeholder: placeholder,
+                    instruction: instruction,
+                    isBlock: isBlock
+                )
+            )
         case "imageImportRequested":
             guard let rawReferencedSources = payload["referencedSources"] as? [Any],
                   rawReferencedSources.count <= 2_048

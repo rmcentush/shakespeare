@@ -72,6 +72,7 @@ final class StyleGuideUpdater {
             Rules:
             - Generalize recurring mechanics of voice, syntax, rhythm, diction, paragraph movement, structure, clarity, and concision. Never preserve subject matter, names, facts, quotations, or distinctive phrases.
             - Treat each saved edit outcome as weak evidence, not a direct instruction.
+            - An accepted_unchanged event whose group starts with edit_gap_ is preference-only evidence. Its model-written prose is deliberately omitted. Use only repeated, consistent style_notes in rationale; never infer the writer authored the missing replacement or final text.
             - A rule is established only with support from at least 2 independent samples, at least 5 consistent edits across 3 sessions, or a mixture of 1 sample and 3 edits across 2 sessions.
             - A rule may be emerging with 1 sample or at least 3 consistent edits across 2 sessions. Drop weaker patterns.
             - Count only supplied evidence that directly supports a rule. Never invent counts. sample_count cannot exceed \(evidence.limits.sampleCount), edit_count cannot exceed \(evidence.limits.editCount), and edit_group_count cannot exceed \(evidence.limits.editGroupCount).

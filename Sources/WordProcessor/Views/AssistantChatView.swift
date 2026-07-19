@@ -145,9 +145,14 @@ struct AssistantChatView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             refreshConnectionStatus()
+            startPendingSelectionFeedbackIfPossible()
         }
         .onReceive(NotificationCenter.default.publisher(for: .openRouterConnectionChanged)) { _ in
             refreshConnectionStatus()
+            startPendingSelectionFeedbackIfPossible()
+        }
+        .onChange(of: editorViewModel.pendingSelectionFeedbackRequest?.id) {
+            startPendingSelectionFeedbackIfPossible()
         }
         .onDisappear {
             chatViewModel.cancelStreaming()
@@ -177,6 +182,18 @@ struct AssistantChatView: View {
 
     private func refreshConnectionStatus() {
         hasResearchConnection = APIKeyStore.shared.hasAPIKey(service: "openrouter")
+    }
+
+    private func startPendingSelectionFeedbackIfPossible() {
+        guard hasResearchConnection,
+              let request = editorViewModel.pendingSelectionFeedbackRequest
+        else { return }
+        editorViewModel.consumeSelectionFeedbackRequest(id: request.id)
+        shouldFollowLatestMessage = true
+        chatViewModel.sendSelectionFeedback(
+            selection: request.selection,
+            documentContent: request.documentContent
+        )
     }
 
     private func sendMessage() {

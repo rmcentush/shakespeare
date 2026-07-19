@@ -19,6 +19,7 @@ final class EditorViewModel {
     var pendingEditCount = 0
     var pendingEditCurrentIndex = -1
     var activePendingEditID: String?
+    var pendingSelectionFeedbackRequest: SelectionFeedbackRequest?
     var comments: [BridgePayload.CommentData] = []
     var activeCommentID: String?
     var ambientReviewEnabled = false
@@ -36,6 +37,7 @@ final class EditorViewModel {
     private var ambientReviewTask: Task<Void, Never>?
     private var grammarCheckTimer: Timer?
     private var grammarCheckTask: Task<Void, Never>?
+    private var gapFillTasks: [String: Task<Void, Never>] = [:]
     private var checkedGrammarBlockHashes: [String: String] = [:]
     private var grammarIssuesByBlockID: [String: [DisplayedGrammarIssue]] = [:]
     private var ambientReviewedBlockHashes: [String: String] = [:]
@@ -129,6 +131,12 @@ final class EditorViewModel {
             imageWidth = state.imageWidth
             imageHeight = state.imageHeight
         }
+    }
+
+    struct SelectionFeedbackRequest: Identifiable {
+        let id = UUID()
+        let selection: String
+        let documentContent: String
     }
 
     struct PendingEdit: Identifiable, Equatable {
@@ -379,6 +387,12 @@ final class EditorViewModel {
         case .proofreadingUserStateChanged(let json):
             TextCheckingSettings.shared.persistProofreadingUserState(json)
 
+        case .gapFillRequested(let request):
+            gapFillTasks[request.requestID]?.cancel()
+            gapFillTasks[request.requestID] = Task { [weak self] in
+                await self?.runGapFill(request)
+            }
+
         case .imageImportRequested(let request):
             guard !request.requestID.isEmpty,
                   !request.dataURL.isEmpty,
@@ -425,6 +439,7 @@ final class EditorViewModel {
     // MARK: - Content Loading
 
     func loadSnapshot(_ snapshot: DocumentFileStore.FileSnapshot) {
+        cancelGapFillTasks()
         activeDocumentID = snapshot.documentID
         ambientReviewedBlockHashes = [:]
         clearGrammarCheckingState()
@@ -577,6 +592,20 @@ final class EditorViewModel {
 
             completion(snapshot)
         }
+    }
+
+    func queueSelectionFeedback(selection: String, documentContent: String) {
+        let selectedText = selection.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !selectedText.isEmpty else { return }
+        pendingSelectionFeedbackRequest = SelectionFeedbackRequest(
+            selection: String(selectedText.prefix(6_000)),
+            documentContent: documentContent
+        )
+    }
+
+    func consumeSelectionFeedbackRequest(id: UUID) {
+        guard pendingSelectionFeedbackRequest?.id == id else { return }
+        pendingSelectionFeedbackRequest = nil
     }
 
     private func currentGrammarContextSnapshot() async -> GrammarContextSnapshot? {
@@ -1350,6 +1379,163 @@ final class EditorViewModel {
         }
     }
 
+    private func runGapFill(_ request: BridgePayload.GapFillRequestData) async {
+        defer { gapFillTasks[request.requestID] = nil }
+
+        do {
+            guard let context = await currentEditContextSnapshot(),
+                  let target = gapFillTarget(for: request, in: context)
+            else {
+                throw GapFillContract.ContractError.invalidResponse
+            }
+
+            let stylePacket = StyleContextAssembler.assemble(
+                task: GapFillContract.styleTask,
+                documentExcerpt: gapFillDocumentExcerpt(targetIndex: target.blockIndex, in: context),
+                reference: AuthorStyleReference.content,
+                learnedPreferences: AuthorStyleReference.learnedPreferences,
+                generalGuidance: Self.writingQualityGuidance,
+                writingSamples: trainingEventStore.writingSamples(),
+                confirmedEdits: trainingEventStore.confirmedStyleExamples()
+            )
+            let systemPrompt: [[String: Any]] = [[
+                "type": "text",
+                "text": GapFillContract.systemPrompt,
+                "cache_control": LanguageModelService.ephemeralPromptCacheControl,
+            ]]
+            let messages: [[String: Any]] = [[
+                "role": "user",
+                "content": stylePacket.text + "\n\n" + gapFillPrompt(
+                    request: request,
+                    context: context,
+                    target: target
+                ),
+            ]]
+
+            var responseText = ""
+            for try await chunk in ambientReviewService.streamMessage(
+                messages: messages,
+                systemPrompt: systemPrompt,
+                outputFormat: ["type": "json_schema", "schema": GapFillContract.outputSchema()],
+                temperature: 0.2,
+                maxTokens: 1_200,
+                webSearchEnabled: false
+            ) {
+                try Task.checkCancellation()
+                if case .text(let text) = chunk { responseText += text }
+            }
+
+            let response = try GapFillContract.decode(responseText)
+            callEditorAPI(
+                "completeGapFill",
+                arguments: [
+                    request.requestID,
+                    response.text,
+                    response.styleNotes.joined(separator: "; "),
+                    "",
+                ]
+            )
+        } catch is CancellationError {
+            return
+        } catch {
+            callEditorAPI(
+                "completeGapFill",
+                arguments: [request.requestID, "", "", error.localizedDescription]
+            )
+        }
+    }
+
+    private struct GapFillTarget {
+        let placeholder: EditContextSnapshot.Placeholder
+        let block: EditContextSnapshot.Block
+        let blockIndex: Int
+    }
+
+    private func gapFillTarget(
+        for request: BridgePayload.GapFillRequestData,
+        in context: EditContextSnapshot
+    ) -> GapFillTarget? {
+        let candidates = (context.placeholders ?? []).filter { placeholder in
+            placeholder.text == request.placeholder
+        }
+        let placeholder: EditContextSnapshot.Placeholder?
+        if context.revision == request.revision {
+            placeholder = candidates.first {
+                $0.from == request.from && $0.to == request.to
+            }
+        } else {
+            placeholder = candidates.min {
+                abs($0.from - request.from) < abs($1.from - request.from)
+            }
+        }
+        guard let placeholder,
+              let blockIndex = context.blocks.firstIndex(where: { $0.id == placeholder.blockId }),
+              context.blocks[blockIndex].type != "codeBlock"
+        else { return nil }
+        return GapFillTarget(
+            placeholder: placeholder,
+            block: context.blocks[blockIndex],
+            blockIndex: blockIndex
+        )
+    }
+
+    private func gapFillDocumentExcerpt(
+        targetIndex: Int,
+        in context: EditContextSnapshot
+    ) -> String {
+        let lower = max(0, targetIndex - 2)
+        let upper = min(context.blocks.count - 1, targetIndex + 2)
+        guard lower <= upper else { return "" }
+        return context.blocks[lower...upper].map(\.text).joined(separator: "\n\n")
+    }
+
+    private func gapFillPrompt(
+        request: BridgePayload.GapFillRequestData,
+        context: EditContextSnapshot,
+        target: GapFillTarget
+    ) -> String {
+        let lower = max(0, target.blockIndex - 2)
+        let upper = min(context.blocks.count - 1, target.blockIndex + 2)
+        let nearbyBlocks = context.blocks[lower...upper].map { block in
+            let role = block.id == target.block.id ? "target" : "context"
+            return """
+            <block role="\(role)" type="\(xmlEscaped(block.type))">
+            \(xmlEscaped(block.text))
+            </block>
+            """
+        }.joined(separator: "\n")
+        let flowMap = StyleContextAssembler.documentFlowMap(
+            blocks: context.blocks.map {
+                StyleContextAssembler.FlowBlock(id: $0.id, type: $0.type, text: $0.text)
+            },
+            targetIDs: [target.block.id]
+        )
+        let instruction = request.instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedInstruction = instruction.isEmpty
+            ? "Continue the surrounding text naturally."
+            : instruction
+
+        return """
+        Fill exactly one marked gap. Return JSON only.
+        <gap_request block_only="\(request.isBlock ? "true" : "false")">
+        <placeholder>\(xmlEscaped(request.placeholder))</placeholder>
+        <writer_note>\(xmlEscaped(resolvedInstruction))</writer_note>
+        </gap_request>
+        <nearby_blocks>
+        \(nearbyBlocks)
+        </nearby_blocks>
+        <document_flow_map>
+        Use this only to orient the fill within the larger document. Do not quote it.
+        \(xmlEscaped(flowMap))
+        </document_flow_map>
+        """
+    }
+
+    private func cancelGapFillTasks() {
+        gapFillTasks.values.forEach { $0.cancel() }
+        gapFillTasks.removeAll()
+    }
+
     /// Reviews only changed blocks (plus immediate neighbors) and caps each request.
     /// A first pass through a long imported document therefore stays bounded; later
     /// edits do not repeatedly upload every unchanged paragraph.
@@ -1874,6 +2060,7 @@ final class EditorViewModel {
         grammarCheckTimer = nil
         grammarCheckTask?.cancel()
         grammarCheckTask = nil
+        cancelGapFillTasks()
 
         guard document.isDirty else { return true }
         guard let snapshot = await latestSnapshot(for: document) else {

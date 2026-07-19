@@ -19,8 +19,9 @@ provides limited document flow and continuity. Samples are examples of voice,
 not instructions or factual sources, and their distinctive content must not be
 copied.
 
-Research chat and ordinary grammar checks do not receive permanent style
-context.
+Ordinary research chat and grammar checks do not receive permanent style
+context. An explicit **Feedback** request on selected text does, because the
+writer is asking for an editorial comparison to their voice.
 
 ## Samples and edits
 
@@ -28,10 +29,33 @@ Use **Add Samples…** to import representative `.txt` or `.md` files. Files sta
 in Shakespeare's owner-only local data folder; only selected excerpts are sent
 for relevant style-aware requests.
 
-Accepting or rejecting a suggestion does not create a lasting preference by
-itself. Shakespeare waits for a successful save, uses only high-confidence
-outcomes, and never learns from accepted-unchanged model prose. Repeated signals
-can become proposed preferences, but the writer must review them before use.
+Shakespeare waits for a successful save and uses only high-confidence outcomes.
+Accepted-unchanged model prose never becomes a sample of the writer's voice.
+Repeated signals can become proposed preferences, but the writer must review
+them before use.
+
+## Inline writing gaps
+
+Type `[[a short note about what belongs here]]`, then hover or place the cursor
+in the gap and use the sparkle button. **Command-Return** works too. Shakespeare
+uses the note, nearby prose, document flow, and the reviewed style profile to
+draft one fill. The fill remains a suggestion until the writer chooses **Use**;
+**Keep gap** leaves the brackets in place.
+
+If a used fill is saved unchanged, only its abstract style choices become a
+weak preference signal—the generated wording is deliberately omitted from the
+voice samples. If the writer changes the fill and saves it, the final
+writer-edited wording becomes higher-quality style evidence. Leaving the gap,
+rewriting it after rejection, or returning to it later is also resolved at save
+time so the outcome reflects what remains in the document.
+
+## Feedback on selected text
+
+Select a passage and choose **Feedback** in the status bar. Shakespeare sends
+the selected text, a bounded view of the surrounding draft, and the reviewed
+style context to the writing model. It returns one direct assessment and no
+more than three specific points. Selection feedback never starts a web search;
+research remains available as a separate follow-up when needed.
 
 ## Storage and deletion
 

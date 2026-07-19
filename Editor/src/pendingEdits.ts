@@ -178,11 +178,13 @@ function notifyPendingEditState(state: PendingEditsPluginState) {
 
 
 function inferPendingEditSource(id: string): string {
+  if (id.startsWith('edit_gap_')) return 'Shakespeare';
   if (id.startsWith('edit_')) return 'Assistant';
   return 'Suggestion';
 }
 
 function buildPendingEditLabel(source: string, kind: PendingEditKind): string {
+  if (source === 'Shakespeare') return 'Gap suggestion';
   switch (kind) {
     case 'selection':
       return `${source} selected edit`;
@@ -266,6 +268,7 @@ function serializePendingEdit(
 }
 
 function createPendingEditWidget(edit: PendingEdit, isActive: boolean): HTMLElement {
+  const isGapSuggestion = edit.groupId.startsWith('edit_gap_');
   const container = document.createElement('span');
   container.className = [
     'pending-edit-widget',
@@ -310,8 +313,8 @@ function createPendingEditWidget(edit: PendingEdit, isActive: boolean): HTMLElem
     const acceptButton = document.createElement('button');
     acceptButton.type = 'button';
     acceptButton.className = 'pending-edit-action pending-edit-action-accept';
-    acceptButton.textContent = 'Accept';
-    acceptButton.title = 'Accept suggestion';
+    acceptButton.textContent = isGapSuggestion ? 'Use' : 'Accept';
+    acceptButton.title = isGapSuggestion ? 'Use this text' : 'Accept suggestion';
     acceptButton.addEventListener('mousedown', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -327,10 +330,12 @@ function createPendingEditWidget(edit: PendingEdit, isActive: boolean): HTMLElem
   const rejectButton = document.createElement('button');
   rejectButton.type = 'button';
   rejectButton.className = 'pending-edit-action pending-edit-action-reject';
-  rejectButton.textContent = edit.status === 'conflicted' ? 'Dismiss' : 'Reject';
+  rejectButton.textContent = edit.status === 'conflicted'
+    ? 'Dismiss'
+    : isGapSuggestion ? 'Keep gap' : 'Reject';
   rejectButton.title = edit.status === 'conflicted'
     ? 'Dismiss conflicted suggestion'
-    : 'Reject suggestion';
+    : isGapSuggestion ? 'Leave the gap in place' : 'Reject suggestion';
   rejectButton.addEventListener('mousedown', (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -622,6 +627,7 @@ function colorizeHTMLTextNodes(html: string, color: string): string {
 }
 
 function htmlForAcceptedEdit(edit: PendingEdit): string {
+  if (edit.groupId.startsWith('edit_gap_')) return edit.newHtml;
   return isLLMEdit(edit)
     ? colorizeHTMLTextNodes(edit.newHtml, ACCEPTED_LLM_EDIT_COLOR)
     : edit.newHtml;

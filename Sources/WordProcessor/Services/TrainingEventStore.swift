@@ -638,8 +638,36 @@ final class TrainingEventStore: @unchecked Sendable {
                   !action.originalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { return nil }
 
-            guard let outcome = outcomes[action.id],
-                  StyleLearningPolicy.isDurableStyleEvidence(
+            guard let outcome = outcomes[action.id] else { return nil }
+
+            if StyleLearningPolicy.isAcceptedGapPreference(
+                groupID: action.groupID,
+                decision: action.decision,
+                instruction: action.instruction,
+                rationale: action.rationale,
+                outcome: outcome.outcome,
+                confidence: outcome.confidence
+            ) {
+                return DecisionSummary(
+                    id: action.id,
+                    decision: "accept",
+                    source: action.source,
+                    kind: action.learningCategory.isEmpty
+                        ? action.operationKind
+                        : action.learningCategory,
+                    originalText: action.instruction,
+                    replacementText: "",
+                    finalText: nil,
+                    surroundingSentence: "",
+                    groupID: action.groupID,
+                    rationale: action.rationale,
+                    outcome: outcome.outcome,
+                    confidence: outcome.confidence,
+                    timestamp: outcome.recordedAt
+                )
+            }
+
+            guard StyleLearningPolicy.isDurableStyleEvidence(
                     outcome: outcome.outcome,
                     finalText: outcome.finalText,
                     trainingEligible: outcome.trainingEligible,
@@ -784,15 +812,31 @@ final class TrainingEventStore: @unchecked Sendable {
                 || events.count >= lastCompactionAttemptEventCount + 250
         else { return }
         let processed = processedIDsUnlocked()
+        let actionsByID = events.reduce(into: [String: Event]()) { result, event in
+            if event.eventType == "edit_decision" { result[event.id] = event }
+        }
         let records = events.map { event in
             let requiresProfileProcessing: Bool
             if event.eventType == "edit_outcome" {
-                requiresProfileProcessing = StyleLearningPolicy.isDurableStyleEvidence(
+                let durableWriterEvidence = StyleLearningPolicy.isDurableStyleEvidence(
                     outcome: event.outcome,
                     finalText: event.finalText,
                     trainingEligible: event.trainingEligible,
                     confidence: event.confidence
                 )
+                let gapPreferenceEvidence = event.parentEventID
+                    .flatMap { actionsByID[$0] }
+                    .map { action in
+                        StyleLearningPolicy.isAcceptedGapPreference(
+                            groupID: action.groupID,
+                            decision: action.decision,
+                            instruction: action.instruction,
+                            rationale: action.rationale,
+                            outcome: event.outcome,
+                            confidence: event.confidence
+                        )
+                    } ?? false
+                requiresProfileProcessing = durableWriterEvidence || gapPreferenceEvidence
             } else {
                 // Legacy action-only records cannot prove the writer changed
                 // model prose, so they remain history rather than profile evidence.

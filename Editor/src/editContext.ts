@@ -15,6 +15,7 @@ import {
   serializeDocumentPlainText,
 } from './docSync';
 import { selectEditContextBlocks } from './editContextSelection';
+import { findWritingGaps } from './writingGaps';
 
 // ProseMirror docs are immutable; cache the complete local index by doc
 // identity, then select a bounded, cursor-aware view for the Swift bridge.
@@ -71,20 +72,14 @@ function textNearPosition(doc: any, pos: number): string {
 }
 
 function bracketPlaceholdersForBlock(block: EditContextBlock): EditContextPlaceholder[] {
-  const placeholders: EditContextPlaceholder[] = [];
-  const regex = /\[[^\]\n]{1,160}\]/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = regex.exec(block.text)) !== null) {
-    placeholders.push({
+  return findWritingGaps(block.text).map((match) => {
+    return {
       blockId: block.id,
       from: block.from + match.index,
-      to: block.from + match.index + match[0].length,
-      text: match[0],
-    });
-  }
-
-  return placeholders;
+      to: block.from + match.index + match.raw.length,
+      text: match.raw,
+    };
+  });
 }
 
 function bracketPlaceholders(blocks: EditContextBlock[]): EditContextPlaceholder[] {

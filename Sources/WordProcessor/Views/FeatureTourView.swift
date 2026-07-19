@@ -4,6 +4,7 @@ enum FeatureTourTarget: String, Sendable {
     case research
     case comments
     case formatting
+    case writingGaps
     case versionHistory
     case focus
 }
@@ -18,28 +19,33 @@ struct FeatureTourStep: Identifiable, Sendable {
     static let all: [FeatureTourStep] = [
         FeatureTourStep(
             target: .research,
-            title: "Research as you write",
-            message: "Ask about your draft or check a current fact."
+            title: "Research",
+            message: "Ask about the draft. Check live facts when needed."
         ),
         FeatureTourStep(
             target: .comments,
-            title: "Leave yourself a note",
-            message: "Select text, then add a comment here."
+            title: "Comments",
+            message: "Select text. Add a note."
         ),
         FeatureTourStep(
             target: .formatting,
-            title: "Shape the page",
-            message: "Select words, then style them with these controls."
+            title: "Format",
+            message: "Select text. Set its style."
+        ),
+        FeatureTourStep(
+            target: .writingGaps,
+            title: "Fill a gap",
+            message: "Type [[what belongs here]]. Click ✦ to write it in your style."
         ),
         FeatureTourStep(
             target: .versionHistory,
-            title: "Go back anytime",
-            message: "Version History keeps earlier saved drafts close by."
+            title: "Versions",
+            message: "Save a version. Restore it anytime."
         ),
         FeatureTourStep(
             target: .focus,
-            title: "Make some room",
-            message: "Focus Mode leaves just you and the page."
+            title: "Focus",
+            message: "Hide distractions. Keep the page."
         ),
     ]
 }
@@ -100,7 +106,7 @@ struct FeatureTourCard: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 8) {
-                Button("Skip Tour", action: onSkip)
+                Button("Exit", action: onSkip)
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
 
@@ -111,14 +117,14 @@ struct FeatureTourCard: View {
                         .controlSize(.small)
                 }
 
-                Button(isLastStep ? "Done" : "Next", action: onNext)
+                Button(isLastStep ? "Finish" : "Next", action: onNext)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .keyboardShortcut(.defaultAction)
             }
         }
         .padding(16)
-        .frame(width: 330)
+        .frame(width: 300)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)

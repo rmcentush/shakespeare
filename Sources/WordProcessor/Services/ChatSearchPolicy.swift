@@ -62,7 +62,8 @@ enum ChatSearchPolicy {
         "weather",
     ]
 
-    static func requiresWebSearch(for query: String) -> Bool {
+    static func requiresWebSearch(for query: String, whenAllowed: Bool = true) -> Bool {
+        guard whenAllowed else { return false }
         let normalized = query
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .trimmingCharacters(in: .whitespacesAndNewlines)
