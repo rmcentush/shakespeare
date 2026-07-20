@@ -2553,12 +2553,13 @@ final class EditorViewModel {
 
     private func captureEditorSnapshot(document: DocumentModel) async -> DocumentFileStore.FileSnapshot? {
         await withCheckedContinuation { continuation in
-            getDocumentSnapshot { [currentSnapshot = document.currentSnapshot()] snapshot in
+            getDocumentSnapshot { snapshot in
                 guard let snapshot else {
                     continuation.resume(returning: nil)
                     return
                 }
 
+                let currentSnapshot = document.currentSnapshot()
                 continuation.resume(
                     returning: DocumentFileStore.FileSnapshot(
                         canonicalJSON: snapshot.canonicalJSON,

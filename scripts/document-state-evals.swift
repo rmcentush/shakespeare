@@ -49,6 +49,19 @@ private struct DocumentStateEvals {
         precondition(notesDocument.isDirty, "capturing unchanged editor content cleared a notes edit")
         precondition(!notesDocument.hasUnsyncedEditorChanges)
 
+        var staleEditorSnapshot = notesDocument.currentSnapshot()
+        staleEditorSnapshot.notes = "Stale note captured before the bridge callback."
+        staleEditorSnapshot.htmlContent = "<p>Latest editor text</p>"
+        staleEditorSnapshot.plainText = "Latest editor text"
+        staleEditorSnapshot.wordCount = 3
+        staleEditorSnapshot.characterCount = 18
+        precondition(notesDocument.syncFromEditor(snapshot: staleEditorSnapshot))
+        precondition(
+            notesDocument.notes == "Track the scene turn before revising.",
+            "an in-flight editor snapshot replaced a newer native note"
+        )
+        precondition(notesDocument.htmlContent == "<p>Latest editor text</p>")
+
         let staleNotesRequest = notesDocument.makePersistenceRequest()
         notesDocument.updateNotes("Keep the newer note.")
         notesDocument.markSaved(

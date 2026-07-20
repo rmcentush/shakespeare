@@ -29,7 +29,7 @@ struct FocusModeEscapeMonitor: NSViewRepresentable {
         coordinator.uninstall()
     }
 
-    static func shouldHandle(
+    nonisolated static func shouldHandle(
         keyCode: UInt16,
         modifierFlags: NSEvent.ModifierFlags,
         isEnabled: Bool
@@ -39,6 +39,7 @@ struct FocusModeEscapeMonitor: NSViewRepresentable {
         return modifierFlags.intersection(disallowedModifiers).isEmpty
     }
 
+    @MainActor
     final class Coordinator {
         weak var hostView: NSView?
 
@@ -53,17 +54,17 @@ struct FocusModeEscapeMonitor: NSViewRepresentable {
 
         func install() {
             guard eventMonitor == nil else { return }
-            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { @MainActor [weak self] event in
                 guard let self,
-                      event.window === hostView?.window,
+                      event.window === self.hostView?.window,
                       FocusModeEscapeMonitor.shouldHandle(
                           keyCode: event.keyCode,
                           modifierFlags: event.modifierFlags,
-                          isEnabled: isEnabled
+                          isEnabled: self.isEnabled
                       )
                 else { return event }
 
-                onEscape()
+                self.onEscape()
                 return nil
             }
         }
@@ -72,10 +73,6 @@ struct FocusModeEscapeMonitor: NSViewRepresentable {
             guard let eventMonitor else { return }
             NSEvent.removeMonitor(eventMonitor)
             self.eventMonitor = nil
-        }
-
-        deinit {
-            uninstall()
         }
     }
 }

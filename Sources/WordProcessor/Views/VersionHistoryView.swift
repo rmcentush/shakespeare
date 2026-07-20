@@ -155,7 +155,7 @@ struct VersionHistoryView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Text("\(version.wordCount) words")
+                Text("\(version.wordCount) word\(version.wordCount == 1 ? "" : "s")")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }

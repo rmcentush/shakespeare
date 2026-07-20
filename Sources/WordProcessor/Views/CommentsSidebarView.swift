@@ -165,6 +165,12 @@ struct CommentsSidebarView: View {
 }
 
 private struct CommentCard: View {
+    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+
     let comment: BridgePayload.CommentData
     let isActive: Bool
     let isEditing: Bool
@@ -382,8 +388,6 @@ private struct CommentCard: View {
     private var formattedDate: String {
         guard comment.createdAt > 0 else { return "" }
         let date = Date(timeIntervalSince1970: comment.createdAt / 1000)
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        return Self.relativeDateFormatter.localizedString(for: date, relativeTo: Date())
     }
 }

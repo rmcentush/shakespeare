@@ -1,6 +1,6 @@
 import Foundation
 
-final class StyleGuideUpdater {
+final class StyleGuideUpdater: Sendable {
     private struct ApprovalJournal: Codable {
         enum Phase: String, Codable { case pending, committed }
 

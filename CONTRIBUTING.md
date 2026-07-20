@@ -35,12 +35,16 @@ outside the repository.
 | Command | Purpose |
 |---|---|
 | `make run` | Build and run a debug app |
-| `make check` | Run all deterministic checks and a release build |
+| `make check` | Run all deterministic checks and a strict-concurrency release build |
 | `make install` | Package and install the app |
 | `make editor` | Build the TipTap editor bundle |
 | `make privacy-check` | Check source for credentials and local paths |
 | `make evals` | Run Swift regression checks |
 | `make clean` | Remove generated build output |
+
+`make run` and alternate test bundles use isolated Application Support and
+Keychain namespaces. Only the shipping `com.shakespeare.app` bundle identifier
+can access production app data.
 
 ## Architecture and boundaries
 

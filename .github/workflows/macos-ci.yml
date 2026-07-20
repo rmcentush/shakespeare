@@ -45,3 +45,6 @@ jobs:
 
       - name: Run full deterministic check
         run: make check
+
+      - name: Build and verify universal app bundle
+        run: make package

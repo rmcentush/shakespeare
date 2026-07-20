@@ -55,7 +55,21 @@ final class LanguageModelService: Sendable {
         let isCumulative: Bool
     }
 
-    static let ephemeralPromptCacheControl: [String: Any] = ["type": "ephemeral"]
+    /// Callers construct these values from immutable JSON primitives. The
+    /// wrapper transfers that request payload into the detached transport task
+    /// without sharing mutable application state.
+    private struct StreamRequestInput: @unchecked Sendable {
+        let messages: [[String: Any]]
+        let systemPrompt: Any?
+        let outputFormat: [String: Any]?
+        let temperature: Double?
+        let maxTokens: Int
+        let webSearchEnabled: Bool?
+    }
+
+    static var ephemeralPromptCacheControl: [String: Any] {
+        ["type": "ephemeral"]
+    }
 
     static func cacheableTextBlock(_ text: String) -> [String: Any] {
         [
@@ -74,9 +88,17 @@ final class LanguageModelService: Sendable {
         webSearchEnabled: Bool? = nil
     ) -> AsyncThrowingStream<StreamChunk, Error> {
         let runtime = currentRuntime
+        let input = StreamRequestInput(
+            messages: messages,
+            systemPrompt: systemPrompt,
+            outputFormat: outputFormat,
+            temperature: temperature,
+            maxTokens: maxTokens,
+            webSearchEnabled: webSearchEnabled
+        )
         return AsyncThrowingStream { continuation in
             let task = Task.detached(priority: .userInitiated) {
-                [runtime, session, apiKeyProvider, promptCacheSessionID] in
+                [runtime, session, apiKeyProvider, promptCacheSessionID, input] in
                 guard let apiKey = apiKeyProvider(runtime.apiKeyService) else {
                     continuation.finish(throwing: APIError.noAPIKey)
                     return
@@ -91,12 +113,12 @@ final class LanguageModelService: Sendable {
                 while true {
                     let body = Self.requestBody(
                         runtime: attemptRuntime,
-                        messages: messages,
-                        systemPrompt: systemPrompt,
-                        outputFormat: outputFormat,
-                        temperature: temperature,
-                        maxTokens: maxTokens,
-                        webSearchEnabled: webSearchEnabled,
+                        messages: input.messages,
+                        systemPrompt: input.systemPrompt,
+                        outputFormat: input.outputFormat,
+                        temperature: input.temperature,
+                        maxTokens: input.maxTokens,
+                        webSearchEnabled: input.webSearchEnabled,
                         promptCacheSessionID: promptCacheSessionID
                     )
                     var hasYieldedChunk = false

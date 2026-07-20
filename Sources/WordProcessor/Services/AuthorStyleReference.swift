@@ -2,10 +2,11 @@ import Foundation
 
 enum AuthorStyleReference {
     private static let cacheLock = NSLock()
-    private static var cachedContent: String?
-    private static var cachedContentModificationDate: Date?
-    private static var cachedLearnedPreferences: String?
-    private static var cachedLearnedPreferencesModificationDate: Date?
+    // Every access to these process-wide caches is serialized by cacheLock.
+    private nonisolated(unsafe) static var cachedContent: String?
+    private nonisolated(unsafe) static var cachedContentModificationDate: Date?
+    private nonisolated(unsafe) static var cachedLearnedPreferences: String?
+    private nonisolated(unsafe) static var cachedLearnedPreferencesModificationDate: Date?
 
     static var content: String {
         cacheLock.lock()

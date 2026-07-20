@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
-private enum WordProcessorWindowID {
+enum WordProcessorWindowID {
     static let editor = "editor"
+    static let settings = "settings"
 }
 
 private struct WindowCommandContext {
@@ -140,7 +141,6 @@ private final class WordProcessorAppDelegate: NSObject, NSApplicationDelegate {
             }
 
             if let applicationMenu = mainMenu.items.first?.submenu {
-                self?.removeDuplicateSettingsItems(from: applicationMenu)
                 self?.removeRedundantSeparators(from: applicationMenu)
             }
         }
@@ -154,15 +154,6 @@ private final class WordProcessorAppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         consolidateMainMenu()
-    }
-
-    private func removeDuplicateSettingsItems(from menu: NSMenu) {
-        let settingsItems = menu.items.filter {
-            $0.keyEquivalent == "," && $0.keyEquivalentModifierMask.contains(.command)
-        }
-        for item in settingsItems.dropFirst() {
-            menu.removeItem(item)
-        }
     }
 
     private func removeRedundantSeparators(from menu: NSMenu) {
@@ -257,9 +248,11 @@ private struct WordProcessorCommands: Commands {
     @FocusedValue(\.windowCommandContext) private var windowCommandContext
 
     var body: some Commands {
-        CommandGroup(after: .appInfo) {
-            SettingsLink()
-                .keyboardShortcut(",")
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") {
+                openWindow(id: WordProcessorWindowID.settings)
+            }
+            .keyboardShortcut(",")
 
             Divider()
 
@@ -426,12 +419,22 @@ private struct RemovedEditingAndWindowCommands: Commands {
 }
 
 private struct EditorWindowRootView: View {
+    @Environment(ApplicationStorageStatus.self) private var storageStatus
     @State private var document = DocumentModel()
     @State private var editorViewModel = EditorViewModel()
     @State private var recentDocumentHandlerID = UUID()
     @State private var documentSessionID = UUID()
 
     var body: some View {
+        if storageStatus.isReady {
+            editorContent
+        } else {
+            StorageUnavailableView()
+                .frame(minWidth: 680, minHeight: 520)
+        }
+    }
+
+    private var editorContent: some View {
         ContentView()
             .frame(minWidth: 680, minHeight: 520)
             .environment(document)
@@ -499,16 +502,56 @@ private struct EditorWindowRootView: View {
     }
 }
 
+private struct StorageUnavailableView: View {
+    @Environment(ApplicationStorageStatus.self) private var storageStatus
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "externaldrive.badge.exclamationmark")
+                .font(.system(size: 42, weight: .medium))
+                .foregroundStyle(.red)
+                .accessibilityHidden(true)
+
+            Text("Shakespeare Storage Is Unavailable")
+                .font(.title2.weight(.semibold))
+
+            Text("Shakespeare can’t safely open documents because its private application data could not be prepared.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: 460)
+
+            if let failureMessage = storageStatus.failureMessage {
+                Text(failureMessage)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 520)
+                    .accessibilityLabel("Storage error: \(failureMessage)")
+            }
+
+            HStack(spacing: 12) {
+                Button("Quit Shakespeare") {
+                    NSApp.terminate(nil)
+                }
+                Button("Retry") {
+                    storageStatus.prepare()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(40)
+    }
+}
+
 @main
 struct WordProcessorApp: App {
     @NSApplicationDelegateAdaptor(WordProcessorAppDelegate.self) private var appDelegate
+    @State private var storageStatus = ApplicationStorageStatus.shared
 
     init() {
-        do {
-            try ShakespeareStorage.prepare()
-        } catch {
-            print("ShakespeareStorage: failed to prepare application data: \(error)")
-        }
+        ApplicationStorageStatus.shared.prepare()
 
         // Prevent duplicate processes while still allowing alternate bundle IDs
         // for isolated UI and release testing.
@@ -533,6 +576,7 @@ struct WordProcessorApp: App {
     var body: some Scene {
         WindowGroup(id: WordProcessorWindowID.editor) {
             EditorWindowRootView()
+                .environment(storageStatus)
         }
         .windowStyle(.titleBar)
         .defaultSize(width: 900, height: 700)
@@ -541,8 +585,17 @@ struct WordProcessorApp: App {
             WordProcessorCommands()
         }
 
-        Settings {
-            SettingsView()
+        Window("Settings", id: WordProcessorWindowID.settings) {
+            Group {
+                if storageStatus.isReady {
+                    SettingsView()
+                } else {
+                    StorageUnavailableView()
+                        .frame(minWidth: 560, minHeight: 380)
+                }
+            }
+            .environment(storageStatus)
         }
+        .windowResizability(.contentSize)
     }
 }

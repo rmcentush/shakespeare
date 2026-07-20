@@ -10,9 +10,10 @@ if [ ! -f ".github/workflows/macos-ci.yml" ]; then
 fi
 
 if ! grep -F "run: make check" .github/workflows/macos-ci.yml >/dev/null ||
+   ! grep -F "run: make package" .github/workflows/macos-ci.yml >/dev/null ||
    ! grep -F "permissions:" .github/workflows/macos-ci.yml >/dev/null ||
    ! grep -F "contents: read" .github/workflows/macos-ci.yml >/dev/null; then
-    echo "Delivery contract failed: macOS CI must run make check with read-only repository access." >&2
+    echo "Delivery contract failed: macOS CI must check and package with read-only repository access." >&2
     exit 1
 fi
 

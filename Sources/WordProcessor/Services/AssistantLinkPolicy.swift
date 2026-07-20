@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 enum AssistantLinkPolicy {
@@ -13,12 +14,23 @@ enum AssistantLinkPolicy {
     }
 
     static func sanitized(_ attributedString: AttributedString) -> AttributedString {
-        var sanitized = attributedString
-        for run in sanitized.runs {
-            if let link = run.link, !isAllowed(link) {
-                sanitized[run.range].link = nil
+        let sanitized = NSMutableAttributedString(
+            attributedString: NSAttributedString(attributedString)
+        )
+        let fullRange = NSRange(location: 0, length: sanitized.length)
+        sanitized.enumerateAttribute(.link, in: fullRange) { value, range, _ in
+            let url: URL?
+            if let candidate = value as? URL {
+                url = candidate
+            } else if let candidate = value as? String {
+                url = URL(string: candidate)
+            } else {
+                url = nil
+            }
+            if url.map(isAllowed) != true {
+                sanitized.removeAttribute(.link, range: range)
             }
         }
-        return sanitized
+        return AttributedString(sanitized)
     }
 }

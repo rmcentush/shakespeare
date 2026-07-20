@@ -52,7 +52,15 @@ for developer_tool in notarytool stapler; do
 done
 
 wrangler="$repository_root/Website/node_modules/.bin/wrangler"
-if [ -x "$wrangler" ] && [ "$($wrangler --version 2>/dev/null | awk '{print $2}')" = "4.111.0" ]; then
+wrangler_output=""
+wrangler_version=""
+if [ -x "$wrangler" ]; then
+    wrangler_output="$($wrangler --version 2>/dev/null || true)"
+    wrangler_version="$(
+        node scripts/release-state.mjs extract-tool-version "$wrangler_output" 2>/dev/null || true
+    )"
+fi
+if [ "$wrangler_version" = "4.111.0" ]; then
     pass "pinned Wrangler 4.111.0"
 else
     fail "run npm ci in Website to install pinned Wrangler 4.111.0"

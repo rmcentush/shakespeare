@@ -1,7 +1,9 @@
 import AppKit
+import Foundation
 import SwiftUI
 
 struct AssistantChatView: View {
+    @Environment(\.openWindow) private var openWindow
     @State private var chatViewModel = AssistantChatViewModel()
     @Environment(EditorViewModel.self) private var editorViewModel
     @Environment(DocumentModel.self) private var document
@@ -31,7 +33,6 @@ struct AssistantChatView: View {
                                 isRetryEnabled: !chatViewModel.isStreaming,
                                 onRetry: { chatViewModel.retryMessage(message.id) }
                             )
-                                .equatable()
                                 .id(message.id)
                         }
 
@@ -122,15 +123,15 @@ struct AssistantChatView: View {
 
                         Spacer(minLength: 0)
 
-                        SettingsLink {
-                            Label("Connect", systemImage: "key")
-                        }
-                        .simultaneousGesture(TapGesture().onEnded {
+                        Button {
                             UserDefaults.standard.set(
                                 SettingsDestination.apiKeys,
                                 forKey: SettingsDestination.defaultsKey
                             )
-                        })
+                            openWindow(id: WordProcessorWindowID.settings)
+                        } label: {
+                            Label("Connect", systemImage: "key")
+                        }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                         .fixedSize()
@@ -360,6 +361,10 @@ private struct ChatScrollObserver: NSViewRepresentable {
         }
     }
 
+    static func dismantleNSView(_ nsView: TrackingView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
     final class TrackingView: NSView {
         var onAttachedToHierarchy: ((TrackingView) -> Void)?
 
@@ -374,6 +379,7 @@ private struct ChatScrollObserver: NSViewRepresentable {
         }
     }
 
+    @MainActor
     final class Coordinator {
         private static let bottomThreshold: CGFloat = 32
 
@@ -385,10 +391,6 @@ private struct ChatScrollObserver: NSViewRepresentable {
 
         init(onNearBottomChanged: @escaping (Bool) -> Void) {
             self.onNearBottomChanged = onNearBottomChanged
-        }
-
-        deinit {
-            detach()
         }
 
         func attach(to scrollView: NSScrollView?) {
@@ -405,13 +407,15 @@ private struct ChatScrollObserver: NSViewRepresentable {
                 object: scrollView.contentView,
                 queue: .main
             ) { [weak self] _ in
-                self?.reportNearBottomIfNeeded()
+                MainActor.assumeIsolated {
+                    self?.reportNearBottomIfNeeded()
+                }
             }
 
             reportNearBottomIfNeeded(force: true)
         }
 
-        private func detach() {
+        fileprivate func detach() {
             if let boundsObserver {
                 NotificationCenter.default.removeObserver(boundsObserver)
             }
@@ -453,7 +457,7 @@ private struct ChatScrollObserver: NSViewRepresentable {
     }
 }
 
-struct MessageBubble: View, Equatable {
+struct MessageBubble: View {
     let message: ChatMessage
     let isStreaming: Bool
     let isSearchingWeb: Bool
@@ -461,17 +465,6 @@ struct MessageBubble: View, Equatable {
     let onRetry: () -> Void
 
     private let maxUserBubbleWidth: CGFloat = 360
-
-    static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
-        lhs.message.id == rhs.message.id
-            && lhs.message.content == rhs.message.content
-            && lhs.message.detail == rhs.message.detail
-            && lhs.message.sources == rhs.message.sources
-            && lhs.message.deliveryState == rhs.message.deliveryState
-            && lhs.isStreaming == rhs.isStreaming
-            && lhs.isSearchingWeb == rhs.isSearchingWeb
-            && lhs.isRetryEnabled == rhs.isRetryEnabled
-    }
 
     var body: some View {
         switch message.role {
@@ -819,9 +812,7 @@ private struct MarkdownText: View {
     private func append(_ block: SidebarMarkdownBlock, to result: inout AttributedString) {
         switch block {
         case .heading(let level, let text):
-            var heading = inlineMarkdown(text)
-            heading.font = headingFont(for: level)
-            result.append(heading)
+            result.append(applyingFont(headingFont(for: level), to: inlineMarkdown(text)))
         case .paragraph(let lines):
             append(lines, to: &result)
         case .unorderedList(let items):
@@ -831,8 +822,7 @@ private struct MarkdownText: View {
         case .quote(let lines):
             var quote = AttributedString()
             append(lines.map { "│ \($0)" }, to: &quote)
-            quote.foregroundColor = Color(nsColor: .secondaryLabelColor)
-            result.append(quote)
+            result.append(applyingColor(.secondaryLabelColor, to: quote))
         }
     }
 
@@ -855,15 +845,35 @@ private struct MarkdownText: View {
         return AssistantLinkPolicy.sanitized(attributed)
     }
 
-    private func headingFont(for level: Int) -> Font {
+    private func headingFont(for level: Int) -> NSFont {
         switch level {
         case 1:
-            return AssistantChatFont.text(size: 15.5, weight: .semibold)
+            return .systemFont(ofSize: 15.5, weight: .semibold)
         case 2:
-            return AssistantChatFont.text(size: 14.5, weight: .semibold)
+            return .systemFont(ofSize: 14.5, weight: .semibold)
         default:
-            return AssistantChatFont.text(size: 13.5, weight: .semibold)
+            return .systemFont(ofSize: 13.5, weight: .semibold)
         }
+    }
+
+    private func applyingFont(_ font: NSFont, to value: AttributedString) -> AttributedString {
+        let attributed = NSMutableAttributedString(attributedString: NSAttributedString(value))
+        attributed.addAttribute(
+            .font,
+            value: font,
+            range: NSRange(location: 0, length: attributed.length)
+        )
+        return AttributedString(attributed)
+    }
+
+    private func applyingColor(_ color: NSColor, to value: AttributedString) -> AttributedString {
+        let attributed = NSMutableAttributedString(attributedString: NSAttributedString(value))
+        attributed.addAttribute(
+            .foregroundColor,
+            value: color,
+            range: NSRange(location: 0, length: attributed.length)
+        )
+        return AttributedString(attributed)
     }
 }
 

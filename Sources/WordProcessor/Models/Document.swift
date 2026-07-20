@@ -81,10 +81,21 @@ final class DocumentModel: @unchecked Sendable {
             snapshot.htmlContent != htmlContent ||
             snapshot.plainText != plainTextContent ||
             snapshot.canonicalJSON != canonicalJSONContent ||
-            snapshot.notes != notes
+            snapshot.personalizationOutcomes != personalizationOutcomes
         let shouldRemainDirty = isDirty || changed
 
-        applySnapshot(snapshot, fileURL: fileURL, markDirty: shouldRemainDirty, resetRevision: false)
+        // The web editor owns rendered content, metrics, and pending model
+        // outcomes. Native UI owns notes and document identity. Merge only the
+        // editor-owned fields so an asynchronous bridge callback cannot replace
+        // a note edit made while the snapshot was in flight.
+        canonicalJSONContent = snapshot.canonicalJSON
+        htmlContent = snapshot.htmlContent
+        plainTextContent = snapshot.plainText
+        wordCount = snapshot.wordCount
+        characterCount = snapshot.characterCount
+        personalizationOutcomes = snapshot.personalizationOutcomes
+        modifiedAt = Date()
+        isDirty = shouldRemainDirty
 
         if changed {
             contentRevision &+= 1

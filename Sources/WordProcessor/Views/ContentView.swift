@@ -1038,19 +1038,19 @@ struct StatusBarView: View {
     @Environment(EditorViewModel.self) private var editorViewModel
 
     var body: some View {
-        ZStack {
+        HStack(spacing: 12) {
             documentMetrics
+                .layoutPriority(1)
 
-            HStack(spacing: 12) {
-                Spacer(minLength: 0)
-                proofreadingStatus
-                if !editorViewModel.persistenceStatusText.isEmpty {
-                    Text(editorViewModel.persistenceStatusText)
-                        .font(.caption)
-                        .foregroundColor(editorViewModel.persistenceStatusIsError ? .red : .secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
+            Spacer(minLength: 8)
+
+            proofreadingStatus
+            if !editorViewModel.persistenceStatusText.isEmpty {
+                Text(editorViewModel.persistenceStatusText)
+                    .font(.caption)
+                    .foregroundColor(editorViewModel.persistenceStatusIsError ? .red : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
         }
         .frame(maxWidth: .infinity)
@@ -1065,20 +1065,25 @@ struct StatusBarView: View {
     private var documentMetrics: some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             if editorViewModel.selectionState.hasSelection {
-                Text("Selected \(editorViewModel.selectionState.selectedWords) words")
+                Text("Selected \(countLabel(editorViewModel.selectionState.selectedWords, singular: "word"))")
                     .fontWeight(.semibold)
                     .foregroundStyle(.primary)
                 metricSeparator
-                Text("\(editorViewModel.selectionState.selectedCharacters) characters")
+                Text(countLabel(editorViewModel.selectionState.selectedCharacters, singular: "character"))
                 metricSeparator
             }
-            Text("\(document.wordCount) words")
+            Text(countLabel(document.wordCount, singular: "word"))
             metricSeparator
-            Text("\(document.characterCount) characters")
+            Text(countLabel(document.characterCount, singular: "character"))
         }
         .font(.caption)
         .monospacedDigit()
         .foregroundStyle(.secondary)
+        .lineLimit(1)
+    }
+
+    private func countLabel(_ count: Int, singular: String) -> String {
+        "\(count) \(singular)\(count == 1 ? "" : "s")"
     }
 
     private var metricSeparator: some View {

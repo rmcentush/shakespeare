@@ -1,4 +1,4 @@
-.PHONY: all build run clean editor editor-tests typecheck privacy-check delivery-contract-check release-script-check website-check cloud-ci check swift install update package deploy-site release-readiness release evals document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals style-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
+.PHONY: all build strict-concurrency-check run clean editor editor-tests typecheck privacy-check delivery-contract-check release-script-check website-check cloud-ci check swift install update package deploy-site release-readiness release evals document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals storage-runtime-evals style-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 all: build
 
@@ -37,7 +37,7 @@ website-check: Website/node_modules/.package-lock.json
 cloud-ci: privacy-check release-script-check typecheck editor-tests website-check
 
 # Full deterministic validation used locally and by independent macOS CI.
-check: privacy-check typecheck evals website-check build
+check: privacy-check typecheck evals website-check strict-concurrency-check
 
 # Copy editor bundles to Swift resources
 copy-assets: editor
@@ -64,20 +64,24 @@ canonical-document-evals:
 	/tmp/canonical-document-evals
 
 document-state-evals:
-	swiftc Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/DocumentAssetReference.swift Sources/WordProcessor/Services/PackageFileSafety.swift Sources/WordProcessor/Services/CanonicalDocumentValidator.swift Sources/WordProcessor/Services/DocumentFileStore.swift Sources/WordProcessor/Models/Document.swift scripts/document-state-evals.swift -o /tmp/document-state-evals
+	swiftc Sources/WordProcessor/Services/ShakespeareRuntime.swift Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/DocumentAssetReference.swift Sources/WordProcessor/Services/PackageFileSafety.swift Sources/WordProcessor/Services/CanonicalDocumentValidator.swift Sources/WordProcessor/Services/DocumentFileStore.swift Sources/WordProcessor/Models/Document.swift scripts/document-state-evals.swift -o /tmp/document-state-evals
 	/tmp/document-state-evals
 
 version-store-evals:
-	swiftc Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/DocumentAssetReference.swift Sources/WordProcessor/Services/PackageFileSafety.swift Sources/WordProcessor/Services/CanonicalDocumentValidator.swift Sources/WordProcessor/Services/DocumentFileStore.swift Sources/WordProcessor/Services/VersionStore.swift scripts/version-store-evals.swift -lsqlite3 -o /tmp/version-store-evals
+	swiftc Sources/WordProcessor/Services/ShakespeareRuntime.swift Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/DocumentAssetReference.swift Sources/WordProcessor/Services/PackageFileSafety.swift Sources/WordProcessor/Services/CanonicalDocumentValidator.swift Sources/WordProcessor/Services/DocumentFileStore.swift Sources/WordProcessor/Services/VersionStore.swift scripts/version-store-evals.swift -lsqlite3 -o /tmp/version-store-evals
 	/tmp/version-store-evals
 
 api-key-store-evals:
-	swiftc Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/APIKeyStore.swift scripts/api-key-store-evals.swift -o /tmp/api-key-store-evals
+	swiftc Sources/WordProcessor/Services/ShakespeareRuntime.swift Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/APIKeyStore.swift scripts/api-key-store-evals.swift -o /tmp/api-key-store-evals
 	/tmp/api-key-store-evals
 
 storage-layout-evals:
-	swiftc Sources/WordProcessor/Services/ShakespeareStorage.swift scripts/storage-layout-evals.swift -o /tmp/storage-layout-evals
+	swiftc Sources/WordProcessor/Services/ShakespeareRuntime.swift Sources/WordProcessor/Services/ShakespeareStorage.swift scripts/storage-layout-evals.swift -o /tmp/storage-layout-evals
 	/tmp/storage-layout-evals
+
+storage-runtime-evals:
+	swiftc Sources/WordProcessor/Services/ShakespeareRuntime.swift Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/ApplicationStorageStatus.swift scripts/storage-runtime-evals.swift -o /tmp/storage-runtime-evals
+	/tmp/storage-runtime-evals
 
 style-context-evals:
 	swiftc Sources/WordProcessor/Services/StyleContextAssembler.swift scripts/style-context-evals.swift -o /tmp/style-context-evals
@@ -117,7 +121,7 @@ live-writing-evals:
 	/tmp/live-writing-quality-evals
 
 openrouter-connection-evals:
-	swiftc -parse-as-library Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/OpenRouterConnectionValidator.swift scripts/openrouter-connection-evals.swift -o /tmp/openrouter-connection-evals
+	swiftc -parse-as-library Sources/WordProcessor/Services/ShakespeareRuntime.swift Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/OpenRouterConnectionValidator.swift scripts/openrouter-connection-evals.swift -o /tmp/openrouter-connection-evals
 	/tmp/openrouter-connection-evals
 
 model-availability-evals:
@@ -125,18 +129,21 @@ model-availability-evals:
 	/tmp/model-availability-evals
 
 language-model-wire-evals:
-	swiftc Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/APIKeyStore.swift Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/LanguageModelService.swift scripts/language-model-wire-evals.swift -o /tmp/language-model-wire-evals
+	swiftc Sources/WordProcessor/Services/ShakespeareRuntime.swift Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/APIKeyStore.swift Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/LanguageModelService.swift scripts/language-model-wire-evals.swift -o /tmp/language-model-wire-evals
 	/tmp/language-model-wire-evals
 
 focus-mode-escape-evals:
 	swiftc -parse-as-library Sources/WordProcessor/Views/FocusModeEscapeMonitor.swift scripts/focus-mode-escape-evals.swift -o /tmp/focus-mode-escape-evals
 	/tmp/focus-mode-escape-evals
 
-evals: release-script-check editor-tests document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals style-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
+evals: release-script-check editor-tests document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals storage-runtime-evals style-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 # Build release
 build: copy-assets
 	swift build -c release
+
+strict-concurrency-check: copy-assets
+	swift build -c release -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 
 # Create one self-contained app bundle under .build/package.
 package:
