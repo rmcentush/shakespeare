@@ -22,7 +22,7 @@ struct SettingsView: View {
     @AppStorage(SettingsDestination.defaultsKey) private var selectedTab = SettingsDestination.apiKeys
     @AppStorage(InferenceSettings.writingModelDefaultsKey) private var writingModel = InferenceSettings.defaultWritingModel
     @AppStorage(InferenceSettings.researchModelDefaultsKey) private var researchModel = InferenceSettings.defaultResearchModel
-    @AppStorage(PersonalizationSettings.enabledDefaultsKey) private var personalizationEnabled = true
+    @AppStorage(PersonalizationSettings.enabledDefaultsKey) private var personalizationEnabled = false
     @State private var personalizationReadiness = TrainingEventStore.Readiness(
         eventCount: 0,
         resolvedEditCount: 0,
@@ -38,6 +38,8 @@ struct SettingsView: View {
     @State private var proposedLearnedPreferences = ""
     @State private var proposedLearnedPreferencesDiff = ""
     @State private var proposalEventIDs: [String] = []
+    @State private var proposalRuleEvidence: [StyleProfileRuleEvidence] = []
+    @State private var proposalEvidenceItems: [StyleProfileEvidenceReviewItem] = []
     @State private var isUpdatingStylePreferences = false
     @State private var styleUpdateError = ""
     @State private var showStyleProposal = false
@@ -47,6 +49,8 @@ struct SettingsView: View {
     @State private var writingSampleImportFailed = false
     @State private var modelAvailability: [String: OpenRouterModelAvailabilityService.ModelStatus] = [:]
     @State private var isCheckingModelAvailability = false
+    @State private var modelUsage = LanguageModelUsageStore.Snapshot.empty
+    @State private var styleContextRefreshGeneration: UInt64 = 0
 
     // Font settings
     @State private var fontManager = FontManager.shared
@@ -77,6 +81,7 @@ struct SettingsView: View {
             writingModel = InferenceSettings.normalizedModelID(writingModel)
             researchModel = InferenceSettings.normalizedModelID(researchModel)
             refreshStyleContext()
+            modelUsage = LanguageModelUsageStore.shared.snapshot()
             Task { await refreshPreparedStyleDraft() }
         }
         .onChange(of: personalizationEnabled) { _, enabled in
@@ -133,6 +138,9 @@ struct SettingsView: View {
         )
         .onReceive(NotificationCenter.default.publisher(for: .styleProfileDraftChanged)) { _ in
             Task { await refreshPreparedStyleDraft() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .languageModelUsageChanged)) { _ in
+            modelUsage = LanguageModelUsageStore.shared.snapshot()
         }
     }
 
@@ -191,7 +199,12 @@ struct SettingsView: View {
                     Spacer()
                     Button {
                         if let preparedStyleDraft {
-                            presentStyleDraft(preparedStyleDraft)
+                            Task {
+                                let current = await Task.detached(priority: .utility) {
+                                    AuthorStyleReference.learnedPreferences
+                                }.value
+                                presentStyleDraft(preparedStyleDraft, currentProfile: current)
+                            }
                         } else {
                             Task { await updateStylePreferences() }
                         }
@@ -553,6 +566,41 @@ struct SettingsView: View {
                     }
                     .padding(.top, 8)
                 }
+
+                DisclosureGroup("Local usage diagnostics") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Counts and billed cost come from OpenRouter’s terminal usage event. No prompts or responses are stored here.")
+                            .settingsDescriptionStyle()
+
+                        LabeledContent("Completed attempts", value: "\(modelUsage.requestCount)")
+                        LabeledContent(
+                            "Tokens",
+                            value: "\(modelUsage.promptTokens) in · \(modelUsage.completionTokens) out"
+                        )
+                        LabeledContent(
+                            "Cache",
+                            value: "\(modelUsage.cachedTokens) read · \(modelUsage.cacheWriteTokens) written"
+                        )
+                        LabeledContent(
+                            "OpenRouter reported cost",
+                            value: String(format: "%.6f credits", modelUsage.cost)
+                        )
+                        if !modelUsage.lastActualModel.isEmpty {
+                            LabeledContent("Last actual model", value: modelUsage.lastActualModel)
+                            LabeledContent(
+                                "Last latency",
+                                value: "\(modelUsage.lastLatencyMilliseconds) ms"
+                            )
+                        }
+
+                        Button("Reset Diagnostics") {
+                            LanguageModelUsageStore.shared.reset()
+                        }
+                        .disabled(modelUsage.requestCount == 0)
+                    }
+                    .font(.caption)
+                    .padding(.top, 8)
+                }
             }
         }
         .task {
@@ -670,6 +718,49 @@ struct SettingsView: View {
                 .frame(minHeight: 260)
                 .border(Color.secondary.opacity(0.25))
 
+            HStack {
+                Text("\(proposedLearnedPreferences.count) / \(StyleProfileCompiler.maximumProfileCharacters) characters")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(
+                        proposedLearnedPreferences.count <= StyleProfileCompiler.maximumProfileCharacters
+                            ? Color.secondary : Color.red
+                    )
+                Spacer()
+            }
+
+            if !proposalRuleEvidence.isEmpty {
+                DisclosureGroup("Evidence behind each proposed rule") {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(proposalRuleEvidence) { rule in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("[\(rule.dimension)] \(rule.guidance)")
+                                        .font(.caption.weight(.semibold))
+                                    Text(
+                                        rule.carriedForward && rule.sampleIDs.isEmpty && rule.editIDs.isEmpty
+                                            ? "Previously reviewed rule"
+                                            : "\(rule.sampleIDs.count) sample(s) · \(rule.editIDs.count) edit(s) · \(rule.sessionIDs.count) session(s)"
+                                    )
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+
+                                    ForEach(rule.sampleIDs + rule.editIDs, id: \.self) { evidenceID in
+                                        if let item = proposalEvidenceItems.first(where: { $0.id == evidenceID }) {
+                                            Text("• \(item.summary)")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                                .textSelection(.enabled)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 170)
+                }
+            }
+
             DisclosureGroup("Diff") {
                 ScrollView {
                     Text(proposedLearnedPreferencesDiff)
@@ -689,7 +780,11 @@ struct SettingsView: View {
                     Task { await approveStyleProposal() }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(proposedLearnedPreferences.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(
+                    proposedLearnedPreferences.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || proposedLearnedPreferences.count
+                            > StyleProfileCompiler.maximumProfileCharacters
+                )
             }
         }
         .padding(20)
@@ -789,21 +884,35 @@ struct SettingsView: View {
     }
 
     private func deleteTrainingEvents() {
-        do {
-            try TrainingEventStore.shared.deleteAll()
-            refreshStyleContext()
-            Task { await refreshPreparedStyleDraft() }
-        } catch {
-            styleUpdateError = error.localizedDescription
+        Task {
+            do {
+                try await PersonalizationEventRecorder.shared.deleteAll()
+                refreshStyleContext()
+                await refreshPreparedStyleDraft()
+            } catch {
+                styleUpdateError = error.localizedDescription
+            }
         }
     }
 
     private func refreshStyleContext() {
-        _ = AuthorStyleReference.content
-        personalizationReadiness = TrainingEventStore.shared.readiness()
-        pendingProfileEvidenceCount = TrainingEventStore.shared.pendingProfileEvidenceCount()
-        learnedPreferencesPreview = AuthorStyleReference.learnedPreferences
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        styleContextRefreshGeneration &+= 1
+        let generation = styleContextRefreshGeneration
+        Task {
+            let snapshot = await Task.detached(priority: .utility) {
+                _ = AuthorStyleReference.content
+                return (
+                    TrainingEventStore.shared.readiness(),
+                    TrainingEventStore.shared.pendingProfileEvidenceCount(),
+                    AuthorStyleReference.learnedPreferences
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            }.value
+            guard generation == styleContextRefreshGeneration else { return }
+            personalizationReadiness = snapshot.0
+            pendingProfileEvidenceCount = snapshot.1
+            learnedPreferencesPreview = snapshot.2
+        }
     }
 
     @MainActor
@@ -816,7 +925,9 @@ struct SettingsView: View {
         }
 
         do {
-            let current = AuthorStyleReference.learnedPreferences
+            let current = await Task.detached(priority: .utility) {
+                AuthorStyleReference.learnedPreferences
+            }.value
             let draft = try await StyleProfileRefinementCoordinator.shared.prepareNow()
             preparedStyleDraft = draft
             presentStyleDraft(draft, currentProfile: current)
@@ -837,6 +948,8 @@ struct SettingsView: View {
             proposedLearnedPreferences = ""
             proposedLearnedPreferencesDiff = ""
             proposalEventIDs = []
+            proposalRuleEvidence = []
+            proposalEvidenceItems = []
             refreshStyleContext()
         } catch {
             styleUpdateError = error.localizedDescription
@@ -850,7 +963,7 @@ struct SettingsView: View {
 
     private func presentStyleDraft(
         _ draft: StyleProfileDraft,
-        currentProfile: String = AuthorStyleReference.learnedPreferences
+        currentProfile: String
     ) {
         proposedLearnedPreferences = draft.proposedMarkdown
         proposedLearnedPreferencesDiff = StyleGuideUpdater.unifiedDiff(
@@ -858,6 +971,8 @@ struct SettingsView: View {
             new: draft.proposedMarkdown
         )
         proposalEventIDs = draft.eventIDs
+        proposalRuleEvidence = draft.ruleEvidence
+        proposalEvidenceItems = draft.evidenceItems
         showStyleProposal = true
     }
 }

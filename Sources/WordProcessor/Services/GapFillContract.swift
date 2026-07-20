@@ -2,12 +2,6 @@ import Foundation
 
 struct GapFillResponse: Decodable, Equatable, Sendable {
     let text: String
-    let styleNotes: [String]
-
-    enum CodingKeys: String, CodingKey {
-        case text
-        case styleNotes = "style_notes"
-    }
 }
 
 /// Keeps inline gap generation small, predictable, and safe to hand to the
@@ -34,7 +28,6 @@ enum GapFillContract {
     - Follow the supplied style evidence without copying its subject matter or distinctive phrases. Preserve deliberate sentence fragments, irregularities, and register when they fit the passage.
     - Prefer the shortest complete fill that satisfies the note and preserves the document's flow.
     - Do not invent names, quotations, citations, statistics, events, or factual claims. If the note requires missing facts, write a neutral bridge that does not fabricate them.
-    - style_notes must contain 1 to 3 brief, reusable descriptions of the stylistic choices in this fill, such as sentence directness, rhythm, diction, or transition shape. Do not mention the topic or quote the generated prose.
     """
 
     static func outputSchema() -> [String: Any] {
@@ -47,20 +40,8 @@ enum GapFillContract {
                     "minLength": 1,
                     "maxLength": 4_000,
                 ],
-                "style_notes": [
-                    "type": "array",
-                    "description": "One to three compact, topic-free notes describing the fill's reusable stylistic choices.",
-                    "minItems": 1,
-                    "maxItems": 3,
-                    "items": [
-                        "type": "string",
-                        "description": "An abstract note about voice, syntax, rhythm, diction, transition shape, or paragraph movement.",
-                        "minLength": 4,
-                        "maxLength": 160,
-                    ],
-                ],
             ],
-            "required": ["text", "style_notes"],
+            "required": ["text"],
             "additionalProperties": false,
         ]
     }
@@ -73,28 +54,14 @@ enum GapFillContract {
         else { throw ContractError.invalidResponse }
 
         let text = decoded.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let notes = decoded.styleNotes
-            .prefix(3)
-            .map { compact($0, limit: 160) }
-            .filter { $0.count >= 4 }
         guard !text.isEmpty,
               text.count <= 4_000,
               !text.contains("[["),
               !text.contains("]]"),
-              !text.contains("```"),
-              !notes.isEmpty
+              !text.contains("```")
         else { throw ContractError.invalidResponse }
 
-        return GapFillResponse(text: text, styleNotes: notes)
-    }
-
-    private static func compact(_ value: String, limit: Int) -> String {
-        let normalized = value
-            .replacingOccurrences(of: "\r\n", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-            .split(whereSeparator: { $0.isWhitespace })
-            .joined(separator: " ")
-        return String(normalized.prefix(limit))
+        return GapFillResponse(text: text)
     }
 
     private static func jsonObject(in text: String) -> String? {

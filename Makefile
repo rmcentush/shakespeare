@@ -1,4 +1,4 @@
-.PHONY: all build strict-concurrency-check run clean editor editor-tests typecheck privacy-check delivery-contract-check release-script-check website-check cloud-ci check swift install update package deploy-site release-readiness release evals document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals storage-runtime-evals style-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
+.PHONY: all build strict-concurrency-check run clean editor editor-tests typecheck privacy-check delivery-contract-check release-script-check website-check cloud-ci check swift install update package deploy-site release-readiness release evals document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals storage-runtime-evals style-context-evals language-model-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 all: build
 
@@ -87,6 +87,10 @@ style-context-evals:
 	swiftc Sources/WordProcessor/Services/StyleContextAssembler.swift scripts/style-context-evals.swift -o /tmp/style-context-evals
 	/tmp/style-context-evals
 
+language-model-context-evals:
+	swiftc Sources/WordProcessor/Services/LanguageModelContextBudget.swift scripts/language-model-context-evals.swift -o /tmp/language-model-context-evals
+	/tmp/language-model-context-evals
+
 chat-context-evals:
 	swiftc Sources/WordProcessor/Services/ChatDocumentContextAssembler.swift scripts/chat-context-evals.swift -o /tmp/chat-context-evals
 	/tmp/chat-context-evals
@@ -129,14 +133,14 @@ model-availability-evals:
 	/tmp/model-availability-evals
 
 language-model-wire-evals:
-	swiftc Sources/WordProcessor/Services/ShakespeareRuntime.swift Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/APIKeyStore.swift Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/LanguageModelService.swift scripts/language-model-wire-evals.swift -o /tmp/language-model-wire-evals
+	swiftc Sources/WordProcessor/Services/ShakespeareRuntime.swift Sources/WordProcessor/Services/ShakespeareStorage.swift Sources/WordProcessor/Services/APIKeyStore.swift Sources/WordProcessor/Services/InferenceSettings.swift Sources/WordProcessor/Services/LanguageModelUsageStore.swift Sources/WordProcessor/Services/LanguageModelService.swift scripts/language-model-wire-evals.swift -o /tmp/language-model-wire-evals
 	/tmp/language-model-wire-evals
 
 focus-mode-escape-evals:
 	swiftc -parse-as-library Sources/WordProcessor/Views/FocusModeEscapeMonitor.swift scripts/focus-mode-escape-evals.swift -o /tmp/focus-mode-escape-evals
 	/tmp/focus-mode-escape-evals
 
-evals: release-script-check editor-tests document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals storage-runtime-evals style-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
+evals: release-script-check editor-tests document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals storage-runtime-evals style-context-evals language-model-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 # Build release
 build: copy-assets

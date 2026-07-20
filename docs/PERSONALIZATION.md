@@ -1,7 +1,7 @@
 # Personalization
 
 Shakespeare learns through bounded context, not remote fine-tuning. Learning is
-on by default, disclosed during setup, and can be paused or disabled under
+off by default, enabled only by the writer, and can be paused or disabled under
 **Settings → My Style**.
 
 ## What is used
@@ -56,15 +56,16 @@ in Shakespeare's owner-only local data folder; only selected excerpts are sent
 for relevant style-aware requests.
 
 Shakespeare waits for a successful save and uses only high-confidence outcomes.
-Accepted-unchanged model prose never becomes a sample of the writer's voice.
-An accepted suggestion can still contribute its abstract rationale as a weak
-preference signal. A final passage enters the runtime rewrite-example layer
+Accepted-unchanged model prose and model-authored rationales never become style
+evidence. A final passage enters the runtime rewrite-example layer
 only when the writer changed it materially; punctuation or one-word tweaks stay
 contrastive edit evidence instead of turning the surrounding model prose into a
-voice sample. Repeated signals can become proposed preferences, but the writer
-must review them before use. The proposed profile condenses those signals into
-short, actionable notes about voice, syntax, rhythm, diction, punctuation, and
-paragraph movement; it is not a raw-text archive.
+voice sample. Repeated writer-authored signals can become proposed preferences,
+but the writer must review them before use. Each proposed rule links to the exact
+local sample and edit IDs that support it; sample, edit, and real editing-session
+counts are derived locally rather than accepted from the model. The proposed
+profile condenses those signals into short, actionable notes about voice, syntax,
+rhythm, diction, punctuation, and paragraph movement; it is not a raw-text archive.
 
 ## Inline writing gaps
 
@@ -74,9 +75,8 @@ uses the note, nearby prose, document flow, and the reviewed style profile to
 draft one fill. Animated dots stay inside the brackets while it writes. The fill
 remains inline with a **✓** to use it or **×** to leave the brackets in place.
 
-If a used fill is saved unchanged, only its abstract style choices become a
-weak preference signal—the generated wording is deliberately omitted from the
-voice samples. If the writer changes the fill and saves it, the final
+If a used fill is saved unchanged, it remains interaction history and does not
+become style evidence. If the writer changes the fill and saves it, the final
 writer-edited wording becomes higher-quality style evidence. Leaving the gap,
 rewriting it after rejection, or returning to it later is also resolved at save
 time so the outcome reflects what remains in the document.
@@ -132,5 +132,8 @@ content-addressed, changing the style profile, conversation, or document
 produces a new entry instead of reusing stale text. Generated suggestions and
 answers are never cached or replayed by Shakespeare.
 
-OpenRouter usage events expose prompt, cache-read, and cache-write token counts
-so cache behavior can be verified without recording document content.
+OpenRouter usage events expose the actual routed model, prompt and completion
+tokens, cache-read and cache-write tokens, billed cost, and request latency.
+Shakespeare stores only aggregate diagnostics—never prompts, responses, or
+document identifiers—so routing, cache behavior, and spend can be reviewed in
+Settings without recording document content.

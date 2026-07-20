@@ -8,6 +8,7 @@ struct LanguageModelWireEvals {
         rejectsUnsafeCitationURLs()
         extractsProviderTextShapes()
         extractsPromptCacheUsage()
+        aggregatesContentFreeUsageDiagnostics()
         buildsPrivateStructuredRequest()
         buildsCacheableStickyRequest()
         enablesBoundedWebSearchWhenRequested()
@@ -15,6 +16,7 @@ struct LanguageModelWireEvals {
         validatesCuratedModelCatalog()
         configuresBoundedModelWaterfall()
         boundsClientRetriesAroundProviderWaterfall()
+        classifiesClientFallbackErrors()
         await acceptsSupportedStreamingShapes()
         await retriesEmptyStreamsBeforeRerouting()
         await rejectsIncompleteMalformedAndRepeatedEmptyStreams()
@@ -101,8 +103,12 @@ struct LanguageModelWireEvals {
 
     private static func extractsPromptCacheUsage() {
         let event: [String: Any] = [
+            "model": "anthropic/claude-haiku-4.5",
             "usage": [
                 "prompt_tokens": 4_096,
+                "completion_tokens": 256,
+                "total_tokens": 4_352,
+                "cost": 0.0125,
                 "prompt_tokens_details": [
                     "cached_tokens": 3_072,
                     "cache_write_tokens": 512,
@@ -111,8 +117,71 @@ struct LanguageModelWireEvals {
         ]
         precondition(
             LanguageModelService.openRouterPromptCacheUsage(from: event)
-                == .init(promptTokens: 4_096, cachedTokens: 3_072, cacheWriteTokens: 512)
+                == .init(
+                    promptTokens: 4_096,
+                    completionTokens: 256,
+                    totalTokens: 4_352,
+                    cachedTokens: 3_072,
+                    cacheWriteTokens: 512,
+                    cost: 0.0125,
+                    actualModel: "anthropic/claude-haiku-4.5"
+                )
         )
+    }
+
+    private static func aggregatesContentFreeUsageDiagnostics() {
+        let suite = "shakespeare-language-usage-eval-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            preconditionFailure("Could not create isolated usage defaults")
+        }
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = LanguageModelUsageStore(defaults: defaults)
+        store.record(
+            purpose: .ambientReview,
+            selectedModel: "selected/model",
+            routedModel: "fallback/model",
+            usage: .init(
+                promptTokens: 100,
+                completionTokens: 25,
+                totalTokens: 125,
+                cachedTokens: 40,
+                cacheWriteTokens: 10,
+                cost: 0.00125,
+                actualModel: "actual/model"
+            ),
+            latencyMilliseconds: 420
+        )
+        let snapshot = store.snapshot()
+        precondition(snapshot.requestCount == 1)
+        precondition(snapshot.promptTokens == 100)
+        precondition(snapshot.completionTokens == 25)
+        precondition(snapshot.cost == 0.00125)
+        precondition(snapshot.lastActualModel == "actual/model")
+        precondition(snapshot.lastSelectedModel == "selected/model")
+        precondition(snapshot.lastPurpose == InferencePurpose.ambientReview.rawValue)
+        precondition(snapshot.lastLatencyMilliseconds == 420)
+
+        store.record(
+            purpose: .grammar,
+            selectedModel: "selected/model",
+            routedModel: "fallback/model",
+            usage: .init(
+                promptTokens: -1,
+                completionTokens: -1,
+                totalTokens: -2,
+                cachedTokens: -1,
+                cacheWriteTokens: -1,
+                cost: .nan,
+                actualModel: "actual/model"
+            ),
+            latencyMilliseconds: -5
+        )
+        let sanitized = store.snapshot()
+        precondition(sanitized.requestCount == 2)
+        precondition(sanitized.promptTokens == 100)
+        precondition(sanitized.completionTokens == 25)
+        precondition(sanitized.cost == 0.00125)
+        precondition(sanitized.lastLatencyMilliseconds == 0)
     }
 
     private static func buildsPrivateStructuredRequest() {
@@ -352,6 +421,13 @@ struct LanguageModelWireEvals {
         )
         precondition(chatRuntime.model == InferenceSettings.geminiFlashModel)
         precondition(chatRuntime.fallbackModels.first == InferenceSettings.haikuModel)
+        precondition(chatRuntime.fallbackModels.count <= 2)
+        precondition(
+            chatRuntime.fallbackModels.allSatisfy {
+                !["openai/gpt-5.6-sol", "anthropic/claude-fable-5",
+                  "anthropic/claude-opus-4.7", "anthropic/claude-opus-4.8"].contains($0)
+            }
+        )
         precondition(!chatRuntime.webSearchEnabled)
         precondition(InferenceSettings.normalizedModelID("~x-ai/grok-latest") == "x-ai/grok-4.5")
         precondition(
@@ -371,13 +447,43 @@ struct LanguageModelWireEvals {
     private static func boundsClientRetriesAroundProviderWaterfall() {
         precondition(LanguageModelService.maximumTransportRetryCount == 1)
         precondition(LanguageModelService.maximumEmptyResponseAttempts == 3)
-        precondition(LanguageModelService.maximumRequestBodyBytes == 512 * 1_024)
+        precondition(LanguageModelService.maximumRequestBodyBytes == 128 * 1_024)
         let runtime = InferenceSettings.runtime(purpose: .assistant)
         let batches = LanguageModelService.modelBatches(for: runtime)
         precondition(batches.count >= 2)
         precondition(
             batches.flatMap { [$0.model] + $0.fallbackModels }.count
                 == 1 + runtime.fallbackModels.count
+        )
+    }
+
+    private static func classifiesClientFallbackErrors() {
+        for status in [408, 409, 425, 429, 500, 502, 503, 599] {
+            precondition(
+                LanguageModelService.canAdvanceModelBatch(
+                    after: 0,
+                    batchCount: 2,
+                    statusCode: status
+                ),
+                "transient HTTP \(status) did not permit fallback"
+            )
+        }
+        for status in [400, 401, 402, 403, 404, 413, 422] {
+            precondition(
+                !LanguageModelService.canAdvanceModelBatch(
+                    after: 0,
+                    batchCount: 2,
+                    statusCode: status
+                ),
+                "permanent HTTP \(status) incorrectly permitted fallback"
+            )
+        }
+        precondition(
+            !LanguageModelService.canAdvanceModelBatch(
+                after: 1,
+                batchCount: 2,
+                statusCode: 503
+            )
         )
     }
 
@@ -513,7 +619,8 @@ struct LanguageModelWireEvals {
             purpose: purpose,
             model: model,
             session: session,
-            apiKeyProvider: { _ in "test-key" }
+            apiKeyProvider: { _ in "test-key" },
+            usageRecorder: { _, _, _, _, _ in }
         )
         var text = ""
         for try await chunk in service.streamMessage(

@@ -24,11 +24,18 @@ profile refinement do not share mutable conversation history.
   fields and `additionalProperties: false`. OpenRouter routing requires support
   for every requested parameter. Local decoders then validate anchors, limits,
   uniqueness, and safe applicability before anything reaches the editor.
-- Research is the only flow that may enable web search. Search is selected by a
-  deterministic policy, citations are validated as HTTP(S) URLs, and research
+- Research is the only flow that may enable web search. Every explicit research
+  turn receives the bounded server tool, which decides whether that turn needs a
+  search. Citations are validated as HTTP(S) URLs, and research
   history never enters editorial-writing requests.
 - No generated edit is applied automatically. Empty, malformed, unanchorable,
   stale, duplicated, or structurally inconsistent output fails closed.
+- Dynamic prose is bounded before transport. Oversized grammar and ambient-review
+  blocks are split with exact UTF-16 offsets, gap context is capped, and the
+  transport retains a final serialized-body ceiling.
+- Automatic model fallback is limited to a short, cost-bounded catalog and only
+  advances client-side for transient failures. Terminal usage records the model
+  actually billed, token/cache counts, cost, and latency without retaining prose.
 
 ## Cache layout
 

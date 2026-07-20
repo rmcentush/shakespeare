@@ -72,18 +72,26 @@ actor StyleProfileRefinementCoordinator {
     }
 
     func approve(proposedMarkdown: String, eventIDs: [String]) throws {
-        let existingCreatedAt = (try? draftStore.load())?.createdAt ?? Date()
+        guard !proposedMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              proposedMarkdown.count <= StyleProfileCompiler.maximumProfileCharacters,
+              !eventIDs.isEmpty
+        else { throw StyleProfileCompiler.CompilerError.invalidResponse }
+        let existingDraft = try? draftStore.load()
         try draftStore.save(
             StyleProfileDraft(
                 proposedMarkdown: proposedMarkdown,
                 eventIDs: eventIDs,
-                createdAt: existingCreatedAt
+                createdAt: existingDraft?.createdAt ?? Date(),
+                ruleEvidence: existingDraft?.ruleEvidence ?? [],
+                evidenceItems: existingDraft?.evidenceItems ?? []
             )
         )
         try updater.approve(
             StyleGuideUpdater.Proposal(
                 proposedMarkdown: proposedMarkdown,
-                eventIDs: eventIDs
+                eventIDs: eventIDs,
+                ruleEvidence: existingDraft?.ruleEvidence ?? [],
+                evidenceItems: existingDraft?.evidenceItems ?? []
             )
         )
         try? draftStore.delete()
@@ -119,7 +127,9 @@ actor StyleProfileRefinementCoordinator {
             let draft = StyleProfileDraft(
                 proposedMarkdown: proposal.proposedMarkdown,
                 eventIDs: proposal.eventIDs,
-                createdAt: Date()
+                createdAt: Date(),
+                ruleEvidence: proposal.ruleEvidence,
+                evidenceItems: proposal.evidenceItems
             )
             try draftStore.save(draft)
             NotificationCenter.default.post(name: .styleProfileDraftChanged, object: nil)

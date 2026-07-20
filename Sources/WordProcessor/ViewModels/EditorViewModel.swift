@@ -20,6 +20,7 @@ final class EditorViewModel {
     var isEditorReady = false
     var assetBaseURL: URL?
     private var activeDocumentID = ""
+    private var personalizationSessionID = UUID().uuidString
     var selectionState = SelectionState()
     var zoomScale = EditorViewModel.storedZoomScale()
     var pendingEdits: [PendingEdit] = []
@@ -70,6 +71,7 @@ final class EditorViewModel {
     private static let defaultZoomScale = 1.0
     private static let zoomStep = 0.1
     @ObservationIgnored private let trainingEventStore = TrainingEventStore.shared
+    @ObservationIgnored private let personalizationEventRecorder = PersonalizationEventRecorder.shared
 
     struct SelectionState: Equatable {
         var isBold = false
@@ -357,9 +359,10 @@ final class EditorViewModel {
             pendingEdits = update.edits.map(PendingEdit.init)
 
         case .editDecision(let decision):
-            trainingEventStore.appendEditDecision(
+            personalizationEventRecorder.appendEditDecision(
                 decision,
                 documentID: activeDocumentID,
+                sessionID: personalizationSessionID,
                 runtime: ambientReviewService.currentRuntime
             )
 
@@ -455,7 +458,7 @@ final class EditorViewModel {
 
     func loadSnapshot(_ snapshot: DocumentFileStore.FileSnapshot) {
         cancelGapFillTasks()
-        activeDocumentID = snapshot.documentID
+        beginPersonalizationSession(documentID: snapshot.documentID)
         ambientReviewedBlockHashes = [:]
         clearGrammarCheckingState()
 
@@ -483,6 +486,11 @@ final class EditorViewModel {
         } else {
             loadHTMLContent(snapshot.htmlContent)
         }
+    }
+
+    private func beginPersonalizationSession(documentID: String) {
+        activeDocumentID = documentID
+        personalizationSessionID = UUID().uuidString
     }
 
     private func loadHTMLContent(_ html: String) {
@@ -847,10 +855,11 @@ final class EditorViewModel {
     func setCommentStatus(_ commentId: String, status: String) {
         if status == "dismissed",
            let comment = comments.first(where: { $0.id == commentId && $0.source == "agent" }) {
-            trainingEventStore.appendCommentDecision(
+            personalizationEventRecorder.appendCommentDecision(
                 decision: "reject",
                 comment: comment,
                 documentID: activeDocumentID,
+                sessionID: personalizationSessionID,
                 runtime: ambientReviewService.currentRuntime
             )
         }
@@ -859,10 +868,11 @@ final class EditorViewModel {
 
     func removeComment(_ commentId: String) {
         if let comment = comments.first(where: { $0.id == commentId && $0.source == "agent" && $0.status == "open" }) {
-            trainingEventStore.appendCommentDecision(
+            personalizationEventRecorder.appendCommentDecision(
                 decision: "reject",
                 comment: comment,
                 documentID: activeDocumentID,
+                sessionID: personalizationSessionID,
                 runtime: ambientReviewService.currentRuntime
             )
         }
@@ -979,13 +989,13 @@ final class EditorViewModel {
         proofreadingErrorMessage = ""
 
         do {
+            for block in changedBlocks {
+                grammarIssuesByBlockID[block.id] = []
+            }
+            publishGrammarIssues()
+
             for batch in grammarBlockBatches(changedBlocks) {
                 try Task.checkCancellation()
-
-                for block in batch {
-                    grammarIssuesByBlockID[block.id] = []
-                }
-                publishGrammarIssues()
 
                 var response = try await collectGrammarResponse(
                     blocks: batch,
@@ -1000,10 +1010,10 @@ final class EditorViewModel {
                 }
                 applyGrammarResponse(response, to: batch)
 
-                for block in batch {
-                    checkedGrammarBlockHashes[block.id] = block.textHash
-                }
                 publishGrammarIssues()
+            }
+            for block in changedBlocks {
+                checkedGrammarBlockHashes[block.id] = block.textHash
             }
             proofreadingStatus = "ready"
         } catch is CancellationError {
@@ -1016,27 +1026,49 @@ final class EditorViewModel {
 
     private func grammarBlockBatches(
         _ blocks: [GrammarContextSnapshot.Block],
-        maximumCharacters: Int = 12_000,
+        maximumCharacters: Int = LanguageModelContextBudget.maximumGrammarBatchCharacters,
         maximumBlocks: Int = 30
     ) -> [[GrammarContextSnapshot.Block]] {
         var batches: [[GrammarContextSnapshot.Block]] = []
         var current: [GrammarContextSnapshot.Block] = []
         var characters = 0
 
+        func flushCurrent() {
+            guard !current.isEmpty else { return }
+            batches.append(current)
+            current = []
+            characters = 0
+        }
+
         for block in blocks {
+            let chunks = LanguageModelContextBudget.chunks(
+                of: block.text,
+                maximumCharacters: maximumCharacters
+            )
+            if chunks.count > 1 {
+                flushCurrent()
+                for chunk in chunks {
+                    batches.append([GrammarContextSnapshot.Block(
+                        id: block.id,
+                        from: block.from + chunk.utf16Offset,
+                        to: block.from + chunk.utf16Offset + chunk.text.utf16.count,
+                        text: chunk.text,
+                        textHash: block.textHash,
+                        type: block.type
+                    )])
+                }
+                continue
+            }
+
             let blockCharacters = block.text.count
             if !current.isEmpty,
                current.count >= maximumBlocks || characters + blockCharacters > maximumCharacters {
-                batches.append(current)
-                current = []
-                characters = 0
+                flushCurrent()
             }
             current.append(block)
             characters += blockCharacters
         }
-        if !current.isEmpty {
-            batches.append(current)
-        }
+        flushCurrent()
         return batches
     }
 
@@ -1185,7 +1217,12 @@ final class EditorViewModel {
             let end = start + issue.exactOriginal.utf16.count
             let candidateRange = (start: start, end: end)
             let existingRanges = acceptedRangesByBlockID[block.id, default: []]
-            guard !existingRanges.contains(where: { rangesOverlap($0, candidateRange) }) else { continue }
+            let displayedRanges = grammarIssuesByBlockID[block.id, default: []].map {
+                (start: $0.from, end: $0.to)
+            }
+            guard !existingRanges.contains(where: { rangesOverlap($0, candidateRange) }),
+                  !displayedRanges.contains(where: { rangesOverlap($0, candidateRange) })
+            else { continue }
 
             let displayed = DisplayedGrammarIssue(
                 id: "ai_grammar_\(UUID().uuidString)",
@@ -1289,22 +1326,38 @@ final class EditorViewModel {
         ambientReviewStatusText = "Reviewing..."
 
         do {
-            let responseText = try await collectAmbientReviewResponse(
-                context: context,
-                reviewBlocks: reviewBlocks
-            )
-            try Task.checkCancellation()
-            let decodedSuggestions = try AmbientReviewContract.decode(responseText)
-            let suggestions = AmbientReviewContract.validated(
-                decodedSuggestions,
-                against: reviewBlocks.map {
-                    AmbientReviewContract.Block(id: $0.id, type: $0.type, text: $0.text)
+            var suggestions: [AmbientReviewSuggestion] = []
+            for batch in ambientReviewBatches(reviewBlocks) {
+                let responseText = try await collectAmbientReviewResponse(
+                    context: context,
+                    reviewBlocks: batch
+                )
+                try Task.checkCancellation()
+                let decoded = try AmbientReviewContract.decode(responseText)
+                let validated = AmbientReviewContract.validated(
+                    decoded,
+                    against: batch.map {
+                        AmbientReviewContract.Block(id: $0.id, type: $0.type, text: $0.text)
+                    }
+                )
+                guard decoded.isEmpty || !validated.isEmpty else {
+                    throw AmbientReviewContract.ContractError.invalidResponse
                 }
-            )
-            guard decodedSuggestions.isEmpty || !suggestions.isEmpty else {
-                throw AmbientReviewContract.ContractError.invalidResponse
+                suggestions.append(contentsOf: validated)
             }
-            let addedCount = await addAmbientReviewComments(suggestions, context: context)
+            let uniqueSuggestions = suggestions.reduce(into: [AmbientReviewSuggestion]()) {
+                let candidate = $1
+                guard !$0.contains(where: {
+                    $0.blockID == candidate.blockID
+                        && $0.exactOriginal == candidate.exactOriginal
+                        && $0.comment == candidate.comment
+                }) else { return }
+                $0.append(candidate)
+            }
+            let addedCount = await addAmbientReviewComments(
+                Array(uniqueSuggestions.prefix(4)),
+                context: context
+            )
             markAmbientBlocksReviewed(reviewBlocks, currentContext: context)
             Task { await StyleProfileRefinementCoordinator.shared.prepareIfNeeded() }
             if addedCount > 0 {
@@ -1398,7 +1451,7 @@ final class EditorViewModel {
                 arguments: [
                     request.requestID,
                     response.text,
-                    response.styleNotes.joined(separator: "; "),
+                    "",
                     "",
                 ]
             )
@@ -1453,7 +1506,10 @@ final class EditorViewModel {
         let lower = max(0, targetIndex - 2)
         let upper = min(context.blocks.count - 1, targetIndex + 2)
         guard lower <= upper else { return "" }
-        return context.blocks[lower...upper].map(\.text).joined(separator: "\n\n")
+        return LanguageModelContextBudget.boundedEdges(
+            context.blocks[lower...upper].map(\.text).joined(separator: "\n\n"),
+            maximumCharacters: LanguageModelContextBudget.maximumGapContextCharacters
+        )
     }
 
     private func gapFillPrompt(
@@ -1463,21 +1519,39 @@ final class EditorViewModel {
     ) -> String {
         let lower = max(0, target.blockIndex - 2)
         let upper = min(context.blocks.count - 1, target.blockIndex + 2)
-        let nearbyBlocks = context.blocks[lower...upper].map { block in
+        var remainingCharacters = LanguageModelContextBudget.maximumGapContextCharacters
+        var nearbyBlockValues: [String] = []
+        for block in context.blocks[lower...upper] where remainingCharacters > 0 {
             let role = block.id == target.block.id ? "target" : "context"
-            return """
+            let wrapperAllowance = 120
+            let textLimit = min(
+                LanguageModelContextBudget.maximumBlockCharacters,
+                max(remainingCharacters - wrapperAllowance, 0)
+            )
+            guard textLimit > 0 else { break }
+            let escapedText = LanguageModelContextBudget.boundedEdges(
+                xmlEscaped(block.text),
+                maximumCharacters: textLimit
+            )
+            let rendered = """
             <block role="\(role)" type="\(xmlEscaped(block.type))">
-            \(xmlEscaped(block.text))
+            \(escapedText)
             </block>
             """
-        }.joined(separator: "\n")
+            nearbyBlockValues.append(rendered)
+            remainingCharacters -= rendered.count
+        }
+        let nearbyBlocks = nearbyBlockValues.joined(separator: "\n")
         let flowMap = StyleContextAssembler.documentFlowMap(
             blocks: context.blocks.map {
                 StyleContextAssembler.FlowBlock(id: $0.id, type: $0.type, text: $0.text)
             },
             targetIDs: [target.block.id]
         )
-        let instruction = request.instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        let instruction = LanguageModelContextBudget.boundedEdges(
+            request.instruction.trimmingCharacters(in: .whitespacesAndNewlines),
+            maximumCharacters: 2_000
+        )
         let resolvedInstruction = instruction.isEmpty
             ? "Continue the surrounding text naturally."
             : instruction
@@ -1485,7 +1559,7 @@ final class EditorViewModel {
         return """
         Fill exactly one marked gap. Return JSON only.
         <gap_request block_only="\(request.isBlock ? "true" : "false")">
-        <placeholder>\(xmlEscaped(request.placeholder))</placeholder>
+        <placeholder>\(xmlEscaped(String(request.placeholder.prefix(512))))</placeholder>
         <writer_note>\(xmlEscaped(resolvedInstruction))</writer_note>
         </gap_request>
         <nearby_blocks>
@@ -1553,6 +1627,63 @@ final class EditorViewModel {
         }
     }
 
+    private func ambientReviewBatches(
+        _ blocks: [EditContextSnapshot.Block],
+        maximumCharacters: Int = LanguageModelContextBudget.maximumAmbientBatchCharacters,
+        maximumBlocks: Int = 12
+    ) -> [[EditContextSnapshot.Block]] {
+        var batches: [[EditContextSnapshot.Block]] = []
+        var current: [EditContextSnapshot.Block] = []
+        var characters = 0
+
+        func flushCurrent() {
+            guard !current.isEmpty else { return }
+            batches.append(current)
+            current = []
+            characters = 0
+        }
+
+        for block in blocks {
+            let allChunks = LanguageModelContextBudget.chunks(of: block.text)
+            let selectedChunks: [LanguageModelContextBudget.TextChunk]
+            if allChunks.count > 3 {
+                selectedChunks = [
+                    allChunks[0],
+                    allChunks[allChunks.count / 2],
+                    allChunks[allChunks.count - 1],
+                ]
+            } else {
+                selectedChunks = allChunks
+            }
+
+            if selectedChunks.count > 1 {
+                flushCurrent()
+                for chunk in selectedChunks {
+                    batches.append([EditContextSnapshot.Block(
+                        id: block.id,
+                        path: block.path,
+                        type: block.type,
+                        from: block.from + chunk.utf16Offset,
+                        to: block.from + chunk.utf16Offset + chunk.text.utf16.count,
+                        text: chunk.text,
+                        textHash: block.textHash
+                    )])
+                }
+                continue
+            }
+
+            guard let chunk = selectedChunks.first else { continue }
+            if !current.isEmpty,
+               current.count >= maximumBlocks || characters + chunk.text.count > maximumCharacters {
+                flushCurrent()
+            }
+            current.append(block)
+            characters += chunk.text.count
+        }
+        flushCurrent()
+        return batches
+    }
+
     private func collectAmbientReviewResponse(
         context: EditContextSnapshot,
         reviewBlocks: [EditContextSnapshot.Block]
@@ -1567,6 +1698,7 @@ final class EditorViewModel {
             task: AmbientReviewContract.styleTask,
             documentExcerpt: reviewBlocks.map(\.text).joined(separator: "\n\n")
         )
+        let recentRejected = await ambientRecentRejectedSuggestionsXML()
         let messages: [[String: Any]] = [
             [
                 "role": "user",
@@ -1582,7 +1714,8 @@ final class EditorViewModel {
                         "type": "text",
                         "text": ambientReviewPrompt(
                             context,
-                            reviewBlocks: reviewBlocks
+                            reviewBlocks: reviewBlocks,
+                            recentRejected: recentRejected
                         ),
                     ],
                 ]
@@ -1612,10 +1745,10 @@ final class EditorViewModel {
 
     private func ambientReviewPrompt(
         _ context: EditContextSnapshot,
-        reviewBlocks: [EditContextSnapshot.Block]
+        reviewBlocks: [EditContextSnapshot.Block],
+        recentRejected: String
     ) -> String {
         let existingComments = ambientExistingCommentsXML()
-        let recentRejected = ambientRecentRejectedSuggestionsXML()
         var flowBlocks = context.blocks.map {
             StyleContextAssembler.FlowBlock(id: $0.id, type: $0.type, text: $0.text)
         }
@@ -1688,8 +1821,15 @@ final class EditorViewModel {
         """
     }
 
-    private func ambientRecentRejectedSuggestionsXML(limit: Int = 6) -> String {
-        let rejected = trainingEventStore.recentRejectedDecisions(limit: limit)
+    private func ambientRecentRejectedSuggestionsXML(limit: Int = 6) async -> String {
+        guard PersonalizationSettings.isEnabled, !activeDocumentID.isEmpty else {
+            return "<recent_rejected_suggestions />"
+        }
+        let documentID = activeDocumentID
+        let store = trainingEventStore
+        let rejected = await Task.detached(priority: .utility) {
+            store.recentRejectedDecisions(documentID: documentID, limit: limit)
+        }.value
         guard !rejected.isEmpty else {
             return "<recent_rejected_suggestions />"
         }
@@ -2297,7 +2437,7 @@ final class EditorViewModel {
                 document.load(snapshot: candidate, from: url)
                 assetBaseURL = DocumentFileStore.isNativeDocumentURL(url) ? url : nil
                 if editorWasReady {
-                    activeDocumentID = candidate.documentID
+                    beginPersonalizationSession(documentID: candidate.documentID)
                     pendingSnapshot = nil
                     ambientReviewedBlockHashes = [:]
                     clearGrammarCheckingState()
@@ -2464,7 +2604,7 @@ final class EditorViewModel {
                     versionHistoryError = error
                 }
             }
-            let acknowledgedOutcomes = trainingEventStore.appendOutcomes(
+            let acknowledgedOutcomes = await personalizationEventRecorder.appendOutcomes(
                 request.snapshot.personalizationOutcomes,
                 documentID: persistedSnapshot.documentID,
                 runtime: ambientReviewService.currentRuntime

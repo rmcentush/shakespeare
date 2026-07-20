@@ -74,7 +74,7 @@ enum BridgePayload: Codable {
         let isBlock: Bool
     }
 
-    struct CommentData: Identifiable, Equatable {
+    struct CommentData: Identifiable, Equatable, Sendable {
         let id: String
         var text: String
         let selectedText: String
@@ -121,7 +121,7 @@ enum BridgePayload: Codable {
         let canFocus: Bool
     }
 
-    struct EditDecisionData: Codable {
+    struct EditDecisionData: Codable, Sendable {
         let eventID: String
         let decision: String
         let source: String

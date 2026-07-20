@@ -27,18 +27,19 @@ enum PersonalizedWritingContext {
         documentExcerpt: String,
         generalGuidance: String? = nil
     ) async -> StyleContextAssembler.Packet {
-        let usesPersonalStyle = PersonalizationSettings.isEnabled
-        let reference = usesPersonalStyle ? AuthorStyleReference.content : ""
-        let learnedPreferences = usesPersonalStyle ? AuthorStyleReference.learnedPreferences : ""
-        let writingSamples = usesPersonalStyle
-            ? TrainingEventStore.shared.writingSamples()
-            : []
-        let confirmedEdits = usesPersonalStyle
-            ? TrainingEventStore.shared.confirmedStyleExamples()
-            : []
-
         return await Task.detached(priority: .utility) {
-            StyleContextAssembler.assemble(
+            let usesPersonalStyle = PersonalizationSettings.isEnabled
+            let reference = usesPersonalStyle ? AuthorStyleReference.content : ""
+            let learnedPreferences = usesPersonalStyle
+                ? AuthorStyleReference.learnedPreferences
+                : ""
+            let writingSamples = usesPersonalStyle
+                ? TrainingEventStore.shared.writingSamples()
+                : []
+            let confirmedEdits = usesPersonalStyle
+                ? TrainingEventStore.shared.confirmedStyleExamples()
+                : []
+            return StyleContextAssembler.assemble(
                 task: task,
                 documentExcerpt: documentExcerpt,
                 reference: reference,

@@ -676,13 +676,13 @@ private struct AssistantThinkingLabel: View {
                 .scaleEffect(0.72)
                 .frame(width: 16, height: 16)
 
-            Text(isSearchingWeb ? "Searching sources…" : "Thinking…")
+            Text(isSearchingWeb ? "Researching…" : "Thinking…")
             .font(.system(size: 11.5, weight: .medium))
             .foregroundStyle(.secondary)
         }
         .padding(.vertical, 1)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(isSearchingWeb ? "Searching sources" : "Preparing a response")
+        .accessibilityLabel(isSearchingWeb ? "Researching with source access" : "Preparing a response")
     }
 }
 

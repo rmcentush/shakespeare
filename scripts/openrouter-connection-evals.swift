@@ -51,7 +51,7 @@ private struct OpenRouterConnectionEvals {
             precondition(runtime.model == (purpose == .chat
                 ? InferenceSettings.defaultResearchModel
                 : InferenceSettings.defaultWritingModel))
-            // Web search is opt-in per chat request after query classification.
+            // Web search is opt-in per explicit research-chat request.
             precondition(!runtime.webSearchEnabled)
             let expectedTemperatureSupport = InferenceSettings.modelOption(for: runtime.model)?
                 .supportsTemperature ?? true

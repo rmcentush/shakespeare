@@ -63,7 +63,7 @@ learning ledger. Document Notes remain local, are not included in model
 requests, and are omitted from HTML exports. Grammar checks remain scoped to
 changed text.
 
-Style learning is local, optional, reviewable, and deletable. Shakespeare uses
+Style learning is local, off by default, reviewable, and deletable. Shakespeare uses
 bounded excerpts rather than remote fine-tuning, and accepted-unchanged model
 text is never learned as the writer's voice. See
 [Personalization](docs/PERSONALIZATION.md).
