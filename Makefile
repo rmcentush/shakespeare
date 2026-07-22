@@ -1,13 +1,10 @@
-.PHONY: all build strict-concurrency-check run clean editor editor-tests typecheck privacy-check delivery-contract-check release-script-check website-check cloud-ci check swift install update package deploy-site release-readiness release evals document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals storage-runtime-evals style-context-evals language-model-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals live-writing-evals-compile live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
+.PHONY: all build strict-concurrency-check run clean editor editor-tests typecheck privacy-check provenance-check check swift install package evals document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals storage-runtime-evals style-context-evals language-model-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals live-writing-evals-compile live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 all: build
 
 # Install exact editor dependencies only when the lockfile changes.
 Editor/node_modules/.package-lock.json: Editor/package.json Editor/package-lock.json
 	cd Editor && npm ci
-
-Website/node_modules/.package-lock.json: Website/package.json Website/package-lock.json
-	cd Website && npm ci
 
 # Build TipTap editor bundle
 editor: Editor/node_modules/.package-lock.json
@@ -22,22 +19,11 @@ editor-tests: Editor/node_modules/.package-lock.json
 privacy-check:
 	bash scripts/verify-source-privacy.sh
 
-delivery-contract-check:
-	bash scripts/verify-delivery-contract.sh
-
-release-script-check: delivery-contract-check
-	bash -n scripts/verify-release-archive.sh scripts/verify-public-release.sh scripts/install-release-archive.sh scripts/update-from-public-download.sh scripts/verify-release-provenance.sh scripts/run-wrangler.sh scripts/release-readiness.sh scripts/release.sh
-	node --test scripts/release-state.test.mjs
-
-website-check: Website/node_modules/.package-lock.json
-	cd Website && npm run build
-
-# Portable, zero-credential checks run by Cloudflare for every main-branch push.
-# The independent macOS workflow runs the complete AppKit gate for pull requests.
-cloud-ci: privacy-check release-script-check typecheck editor-tests website-check
+provenance-check:
+	bash scripts/verify-app-provenance.sh
 
 # Full deterministic validation used locally and by independent macOS CI.
-check: privacy-check typecheck evals website-check strict-concurrency-check
+check: privacy-check provenance-check typecheck evals strict-concurrency-check
 
 # Copy editor bundles to Swift resources
 copy-assets: editor
@@ -142,7 +128,7 @@ focus-mode-escape-evals:
 	swiftc -parse-as-library Sources/WordProcessor/Views/FocusModeEscapeMonitor.swift scripts/focus-mode-escape-evals.swift -o /tmp/focus-mode-escape-evals
 	/tmp/focus-mode-escape-evals
 
-evals: release-script-check editor-tests document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals storage-runtime-evals style-context-evals language-model-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals live-writing-evals-compile api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
+evals: editor-tests document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals storage-runtime-evals style-context-evals language-model-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals live-writing-evals-compile api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 # Build release
 build: copy-assets
@@ -165,30 +151,7 @@ install: package
 	ditto .build/package/Shakespeare.app /Applications/Shakespeare.app
 	@echo "Installed to /Applications/Shakespeare.app"
 
-# Install the exact signed and notarized app currently served by the website.
-update:
-	bash scripts/update-from-public-download.sh
-
-# Recovery-only production deploy. Routine site delivery is push-based in Cloudflare.
-deploy-site: Website/node_modules/.package-lock.json
-	@if [ "$$(git branch --show-current)" != "main" ] || [ -n "$$(git status --porcelain --untracked-files=normal)" ]; then \
-		echo "Deploy the production site only from a clean main branch." >&2; exit 1; \
-	fi
-	@git fetch --quiet origin main
-	@if [ "$$(git rev-parse HEAD)" != "$$(git rev-parse origin/main)" ]; then \
-		echo "Local main must exactly match origin/main." >&2; exit 1; \
-	fi
-	cd Website && npm run build
-	bash scripts/run-wrangler.sh deploy
-
-# Build, sign, notarize, verify, and publish one release from this Mac.
-release-readiness: Website/node_modules/.package-lock.json
-	bash scripts/release-readiness.sh
-
-release:
-	bash scripts/release.sh
-
 # Clean everything
 clean:
-	rm -rf .build Editor/node_modules Editor/dist Website/node_modules
+	rm -rf .build Editor/node_modules Editor/dist
 	rm -f Sources/WordProcessor/Resources/editor.js Sources/WordProcessor/Resources/editor.css Sources/WordProcessor/Resources/harper-runtime.js Sources/WordProcessor/Resources/harper-wasm-data.js Sources/WordProcessor/Resources/THIRD_PARTY_NOTICES.txt

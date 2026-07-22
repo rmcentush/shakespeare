@@ -34,14 +34,10 @@ jobs:
         with:
           node-version: 22.13.0
           cache: npm
-          cache-dependency-path: |
-            Editor/package-lock.json
-            Website/package-lock.json
+          cache-dependency-path: Editor/package-lock.json
 
       - name: Install locked dependencies
-        run: |
-          npm ci --prefix Editor
-          npm ci --prefix Website
+        run: npm ci --prefix Editor
 
       - name: Run full deterministic check
         run: make check

@@ -48,7 +48,6 @@ personal paths, app archives, or unrelated generated files.
 | `make editor` | Build the TipTap editor bundle |
 | `make privacy-check` | Check source files for credentials and personal paths |
 | `make evals` | Run Swift regression checks |
-| `OPENROUTER_API_KEY=… make live-writing-evals` | Run four capped live writing and learning checks |
 | `make clean` | Remove generated build output |
 
 Debug and test builds use isolated Application Support and Keychain namespaces.
@@ -77,10 +76,10 @@ Do not add another provider, credential type, hosted service, or training
 runtime without an explicit product decision. See
 [Personalization](docs/PERSONALIZATION.md) for the user-facing contract.
 
-## Delivery
+## Repository scope
 
 The `main` branch is the source of truth. Pull requests must pass the repository's
-macOS CI check before merge. Cloudflare deploys the website from `Website/`.
-Signed macOS releases run through `make release` from a clean, current `main`
-checkout on a trusted Mac. Never publish an ad-hoc package or uncommitted source.
-See [Development and releasing](docs/RELEASING.md).
+macOS CI check before merge. This repository contains the macOS application,
+its embedded editor, application build scripts, tests, and supporting technical
+documentation. Keep marketing sites, web deployment configuration, and unrelated
+infrastructure in separate repositories.
