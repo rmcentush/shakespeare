@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 enum OnboardingSettings {
     static let completedVersionKey = "onboardingCompletedVersion"
-    static let currentVersion = 4
+    static let currentVersion = 5
     @MainActor private static var presentingWindowID: UUID?
 
     static var shouldPresent: Bool {
@@ -85,9 +85,9 @@ struct OnboardingView: View {
         HStack(spacing: 14) {
             ShakespeareMark()
             VStack(alignment: .leading, spacing: 3) {
-                Text("Set up Shakespeare")
+                Text("Welcome to Shakespeare")
                     .font(.system(size: 15, weight: .semibold))
-                Text("One key. Writing that sounds like you.")
+                Text("A private writing workspace, ready in under a minute.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -99,10 +99,11 @@ struct OnboardingView: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 14) {
+            localWritingNote
             credentialCard
             personalizationCard
 
-            PrivacyNote(text: "Your key stays securely on this Mac. Style data stays here too; only short excerpts are sent for writing help. OpenRouter bills usage.")
+            PrivacyNote(text: "Documents, notes, versions, recovery drafts, and style data stay on this Mac. Your key is kept in Keychain. Connected tools send only the context they need, and OpenRouter bills usage directly.")
 
         }
         .padding(.horizontal, 28)
@@ -110,19 +111,37 @@ struct OnboardingView: View {
         .padding(.bottom, 14)
     }
 
+    private var localWritingNote: some View {
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: "checkmark.shield.fill")
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 20)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Ready without an account")
+                    .font(.subheadline.weight(.semibold))
+                Text("Draft, format, spell-check, add notes, save versions, and recover work locally.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 2)
+    }
+
     private var personalizationCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Toggle(isOn: $personalizationEnabled) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("2. Make it sound like me").font(.headline)
-                    Text("Learns from rewrites you save.")
+                    Text("2. Personalize suggestions (optional)").font(.headline)
+                    Text("Learns only from samples and writing choices you save.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
 
             HStack {
-                Text("Add samples for a faster start.")
+                Text("Add .txt or .md samples for a faster start.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -150,8 +169,8 @@ struct OnboardingView: View {
     private var credentialCard: some View {
         if hasKey && !isReplacingKey {
             ConnectedCredentialCard(
-                title: "1. OpenRouter connected",
-                detail: "Writing and web research are ready.",
+                title: "1. OpenRouter is connected",
+                detail: "Writing help, AI review, grammar, and cited research are ready.",
                 onReplace: {
                     connectionError = ""
                     requiresBilling = false
@@ -162,7 +181,12 @@ struct OnboardingView: View {
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Text("1. OpenRouter key").font(.headline)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("1. Connect OpenRouter (optional)").font(.headline)
+                        Text("Unlock writing help, AI review, grammar, and cited research.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
                     Link("Get a key ↗", destination: InferenceSettings.openRouterKeysURL).font(.caption)
                 }
@@ -227,8 +251,8 @@ struct OnboardingView: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
-            Button("Skip for Now") { finish() }
-            Button("Open Document") {
+            Button("Use Offline") { finish() }
+            Button("Open Document…") {
                 cancelConnection()
                 OnboardingSettings.markCompleted()
                 onOpenDocument()
@@ -236,11 +260,11 @@ struct OnboardingView: View {
             Spacer()
 
             if hasKey && !isReplacingKey {
-                Button("Start Writing") { finish() }
+                Button("Continue to Editor") { finish() }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
             } else {
-                Button("Connect & Start Writing") { connect() }
+                Button("Connect & Continue") { connect() }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isConnecting)
