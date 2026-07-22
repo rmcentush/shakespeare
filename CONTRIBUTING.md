@@ -44,6 +44,7 @@ personal paths, app archives, or unrelated generated files.
 | --- | --- |
 | `make run` | Build and run a debug app |
 | `make check` | Run deterministic checks and a strict-concurrency release build |
+| `make package` | Create a self-contained app bundle under `.build/package` |
 | `make install` | Package and install the app |
 | `make editor` | Build the TipTap editor bundle |
 | `make privacy-check` | Check source files for credentials and personal paths |

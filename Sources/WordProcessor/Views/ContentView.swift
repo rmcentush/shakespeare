@@ -86,23 +86,29 @@ struct ContentView: View {
             .overlay {
                 if let featureTourStepIndex,
                    FeatureTourStep.all.indices.contains(featureTourStepIndex) {
-                    FeatureTourCard(
-                        step: FeatureTourStep.all[featureTourStepIndex],
-                        stepIndex: featureTourStepIndex,
-                        stepCount: FeatureTourStep.all.count,
-                        onBack: previousFeatureTourStep,
-                        onNext: nextFeatureTourStep,
-                        onSkip: finishFeatureTour
-                    )
-                    .frame(
-                        maxWidth: .infinity,
-                        maxHeight: .infinity,
-                        alignment: featureTourCardAlignment
-                    )
-                    .padding(.horizontal, 18)
-                    .padding(.top, 54)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .zIndex(20)
+                    GeometryReader { proxy in
+                        let editorWidth = mainLayoutWidths(for: proxy.size.width).editor
+                        let cardWidth = min(390, max(editorWidth - 36, 320))
+
+                        FeatureTourCard(
+                            step: FeatureTourStep.all[featureTourStepIndex],
+                            stepIndex: featureTourStepIndex,
+                            stepCount: FeatureTourStep.all.count,
+                            width: cardWidth,
+                            onBack: previousFeatureTourStep,
+                            onNext: nextFeatureTourStep,
+                            onSkip: finishFeatureTour
+                        )
+                        .frame(
+                            maxWidth: .infinity,
+                            maxHeight: .infinity,
+                            alignment: featureTourCardAlignment
+                        )
+                        .padding(.horizontal, 18)
+                        .padding(.top, 54)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .zIndex(20)
+                    }
                 }
             }
             .navigationTitle("")
@@ -155,6 +161,7 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "note.text")
                             .frame(width: 22, height: 22)
+                            .featureTourHighlight(featureTourTarget == .notes)
                     }
                     .help("Toggle Notes (Cmd+Option+N)")
                     .accessibilityLabel(activeSidebar == .notes ? "Hide Notes" : "Show Notes")
@@ -175,7 +182,7 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: activeSidebar == .comments ? "quote.bubble.fill" : "quote.bubble")
                             .frame(width: 22, height: 22)
-                            .featureTourHighlight(featureTourTarget == .comments)
+                            .featureTourHighlight(featureTourTarget == .proofreading)
                     }
                     .help(editorViewModel.selectionState.hasSelection ? "Add Comment (Cmd+Shift+M)" : "Toggle Comments")
                     .accessibilityLabel(
@@ -384,7 +391,14 @@ struct ContentView: View {
     }
 
     private var featureTourCardAlignment: Alignment {
-        featureTourTarget == .formatting ? .topLeading : .topTrailing
+        switch featureTourTarget {
+        case .formatting, .proofreading, .research, .notes, .focus:
+            return .topLeading
+        case .settings:
+            return .center
+        default:
+            return .topTrailing
+        }
     }
 
     private var editableDocumentTitle: some View {
@@ -441,6 +455,7 @@ struct ContentView: View {
                     lineWidth: 1
                 )
         }
+        .featureTourHighlight(featureTourTarget == .documents)
         .help(isEditingDocumentTitle ? "Edit file name" : "Click to rename")
         .accessibilityLabel("Document title")
         .disabled(editorViewModel.isDocumentTransitioning)
@@ -782,11 +797,7 @@ extension ContentView {
 
         pendingInitialFeatureTour = false
         withAnimation(.easeInOut(duration: 0.2)) {
-            activeSidebar = nil
-            showVersionHistory = false
-            showFindBar = false
-            showReplace = false
-            featureTourStepIndex = 0
+            setFeatureTourStep(0)
         }
         editorViewModel.webView?.window?.makeKeyAndOrderFront(nil)
     }
@@ -794,7 +805,7 @@ extension ContentView {
     private func previousFeatureTourStep() {
         guard let featureTourStepIndex, featureTourStepIndex > 0 else { return }
         withAnimation(.easeInOut(duration: 0.18)) {
-            self.featureTourStepIndex = featureTourStepIndex - 1
+            setFeatureTourStep(featureTourStepIndex - 1)
         }
     }
 
@@ -805,7 +816,33 @@ extension ContentView {
             return
         }
         withAnimation(.easeInOut(duration: 0.18)) {
-            self.featureTourStepIndex = featureTourStepIndex + 1
+            setFeatureTourStep(featureTourStepIndex + 1)
+        }
+    }
+
+    private func setFeatureTourStep(_ index: Int) {
+        guard FeatureTourStep.all.indices.contains(index) else { return }
+
+        featureTourStepIndex = index
+        showFindBar = false
+        showReplace = false
+
+        switch FeatureTourStep.all[index].target {
+        case .research:
+            showVersionHistory = false
+            activeSidebar = .chat
+        case .notes:
+            showVersionHistory = false
+            activeSidebar = .notes
+        case .proofreading:
+            showVersionHistory = false
+            activeSidebar = .comments
+        case .versionHistory:
+            activeSidebar = nil
+            showVersionHistory = true
+        default:
+            activeSidebar = nil
+            showVersionHistory = false
         }
     }
 
@@ -814,6 +851,8 @@ extension ContentView {
         pendingInitialFeatureTour = false
         withAnimation(.easeInOut(duration: 0.18)) {
             featureTourStepIndex = nil
+            activeSidebar = nil
+            showVersionHistory = false
         }
         FeatureTourPresentationCoordinator.release(for: onboardingWindowID)
         editorViewModel.focusEditor()
