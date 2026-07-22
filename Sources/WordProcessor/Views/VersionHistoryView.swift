@@ -155,7 +155,7 @@ struct VersionHistoryView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Text("\(version.wordCount) words")
+                Text("\(version.wordCount) word\(version.wordCount == 1 ? "" : "s")")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -260,7 +260,8 @@ struct VersionHistoryView: View {
                 if let url = document.fileURL {
                     let sameJSON = currentSnapshot.canonicalJSON == version.canonicalJSON
                     let sameHTML = currentSnapshot.htmlContent == version.htmlContent
-                    if !sameJSON || !sameHTML {
+                    let sameNotes = currentSnapshot.notes == version.notes
+                    if !sameJSON || !sameHTML || !sameNotes {
                         try await editorViewModel.saveVersionSnapshot(
                             currentSnapshot,
                             documentURL: url
@@ -272,6 +273,7 @@ struct VersionHistoryView: View {
                     canonicalJSON: version.canonicalJSON,
                     htmlContent: version.htmlContent,
                     plainText: version.plainText,
+                    notes: version.notes,
                     wordCount: version.wordCount,
                     characterCount: version.characterCount,
                     documentID: version.documentID ?? document.documentID,

@@ -4,13 +4,20 @@ final class LanguageModelService: Sendable {
     static let maximumTransportRetryCount = 1
     static let maximumFallbackModelsPerRequest = 3
     static let maximumEmptyResponseAttempts = 3
-    static let maximumRequestBodyBytes = 512 * 1_024
+    static let maximumRequestBodyBytes = 128 * 1_024
 
     private let purpose: InferencePurpose
     private let modelOverride: String?
     private let session: URLSession
     private let apiKeyProvider: @Sendable (String) -> String?
     private let promptCacheSessionID: String
+    private let usageRecorder: @Sendable (
+        InferencePurpose,
+        String,
+        String,
+        PromptCacheUsage?,
+        Int
+    ) -> Void
 
     init(
         purpose: InferencePurpose = .assistant,
@@ -19,12 +26,28 @@ final class LanguageModelService: Sendable {
         session: URLSession = LanguageModelService.makeSession(),
         apiKeyProvider: @escaping @Sendable (String) -> String? = {
             APIKeyStore.shared.getAPIKey(service: $0)
+        },
+        usageRecorder: @escaping @Sendable (
+            InferencePurpose,
+            String,
+            String,
+            PromptCacheUsage?,
+            Int
+        ) -> Void = { purpose, selectedModel, routedModel, usage, latency in
+            LanguageModelUsageStore.shared.record(
+                purpose: purpose,
+                selectedModel: selectedModel,
+                routedModel: routedModel,
+                usage: usage,
+                latencyMilliseconds: latency
+            )
         }
     ) {
         self.purpose = purpose
         self.modelOverride = model
         self.session = session
         self.apiKeyProvider = apiKeyProvider
+        self.usageRecorder = usageRecorder
         let requestedCacheSessionID = promptCacheSessionID?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         self.promptCacheSessionID = String(
@@ -46,8 +69,12 @@ final class LanguageModelService: Sendable {
 
     struct PromptCacheUsage: Equatable, Sendable {
         let promptTokens: Int
+        let completionTokens: Int
+        let totalTokens: Int
         let cachedTokens: Int
         let cacheWriteTokens: Int
+        let cost: Double
+        let actualModel: String
     }
 
     struct ProviderTextCandidate: Equatable {
@@ -55,7 +82,21 @@ final class LanguageModelService: Sendable {
         let isCumulative: Bool
     }
 
-    static let ephemeralPromptCacheControl: [String: Any] = ["type": "ephemeral"]
+    /// Callers construct these values from immutable JSON primitives. The
+    /// wrapper transfers that request payload into the detached transport task
+    /// without sharing mutable application state.
+    private struct StreamRequestInput: @unchecked Sendable {
+        let messages: [[String: Any]]
+        let systemPrompt: Any?
+        let outputFormat: [String: Any]?
+        let temperature: Double?
+        let maxTokens: Int
+        let webSearchEnabled: Bool?
+    }
+
+    static var ephemeralPromptCacheControl: [String: Any] {
+        ["type": "ephemeral"]
+    }
 
     static func cacheableTextBlock(_ text: String) -> [String: Any] {
         [
@@ -74,9 +115,17 @@ final class LanguageModelService: Sendable {
         webSearchEnabled: Bool? = nil
     ) -> AsyncThrowingStream<StreamChunk, Error> {
         let runtime = currentRuntime
+        let input = StreamRequestInput(
+            messages: messages,
+            systemPrompt: systemPrompt,
+            outputFormat: outputFormat,
+            temperature: temperature,
+            maxTokens: maxTokens,
+            webSearchEnabled: webSearchEnabled
+        )
         return AsyncThrowingStream { continuation in
             let task = Task.detached(priority: .userInitiated) {
-                [runtime, session, apiKeyProvider, promptCacheSessionID] in
+                [purpose, runtime, session, apiKeyProvider, promptCacheSessionID, usageRecorder, input] in
                 guard let apiKey = apiKeyProvider(runtime.apiKeyService) else {
                     continuation.finish(throwing: APIError.noAPIKey)
                     return
@@ -89,14 +138,15 @@ final class LanguageModelService: Sendable {
                 var attemptRuntime = modelBatches[modelBatchIndex]
 
                 while true {
+                    let attemptStartedAt = Date()
                     let body = Self.requestBody(
                         runtime: attemptRuntime,
-                        messages: messages,
-                        systemPrompt: systemPrompt,
-                        outputFormat: outputFormat,
-                        temperature: temperature,
-                        maxTokens: maxTokens,
-                        webSearchEnabled: webSearchEnabled,
+                        messages: input.messages,
+                        systemPrompt: input.systemPrompt,
+                        outputFormat: input.outputFormat,
+                        temperature: input.temperature,
+                        maxTokens: input.maxTokens,
+                        webSearchEnabled: input.webSearchEnabled,
                         promptCacheSessionID: promptCacheSessionID
                     )
                     var hasYieldedChunk = false
@@ -132,6 +182,20 @@ final class LanguageModelService: Sendable {
                                 batchCount: modelBatches.count,
                                 statusCode: httpResponse.statusCode
                             ) {
+                                if let delay = Self.retryAfterDelay(from: httpResponse) {
+                                    guard delay <= 15 else {
+                                        continuation.finish(
+                                            throwing: APIError.httpError(
+                                                httpResponse.statusCode,
+                                                errorBody
+                                            )
+                                        )
+                                        return
+                                    }
+                                    try await Task.sleep(
+                                        nanoseconds: UInt64(delay * 1_000_000_000)
+                                    )
+                                }
                                 modelBatchIndex += 1
                                 attemptRuntime = modelBatches[modelBatchIndex]
                                 transportRetryCount = 0
@@ -144,8 +208,11 @@ final class LanguageModelService: Sendable {
                         var emittedCitationURLs = Set<String>()
                         var pendingCitations: [ProviderCitation] = []
                         var streamFailure: String?
+                        var streamFailureAllowsFallback = false
                         var sawTerminalEvent = false
                         var attemptText = ""
+                        var actualModel = attemptRuntime.model
+                        var latestUsage: PromptCacheUsage?
                         var yieldedTextCount = 0
                         var dataLines: [String] = []
 
@@ -187,7 +254,13 @@ final class LanguageModelService: Sendable {
 
                             if let error = event["error"] as? [String: Any] {
                                 streamFailure = error["message"] as? String ?? "Unknown error"
+                                streamFailureAllowsFallback = Self.isRetryableProviderError(error)
                                 return true
+                            }
+
+                            if let eventModel = event["model"] as? String,
+                               !eventModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                actualModel = String(eventModel.prefix(256))
                             }
 
                             if let candidate = Self.openRouterTextCandidate(from: event) {
@@ -225,7 +298,17 @@ final class LanguageModelService: Sendable {
                             }
 
                             if let usage = Self.openRouterPromptCacheUsage(from: event) {
-                                continuation.yield(.cacheUsage(usage))
+                                let resolvedUsage = PromptCacheUsage(
+                                    promptTokens: usage.promptTokens,
+                                    completionTokens: usage.completionTokens,
+                                    totalTokens: usage.totalTokens,
+                                    cachedTokens: usage.cachedTokens,
+                                    cacheWriteTokens: usage.cacheWriteTokens,
+                                    cost: usage.cost,
+                                    actualModel: actualModel
+                                )
+                                latestUsage = resolvedUsage
+                                continuation.yield(.cacheUsage(resolvedUsage))
                             }
 
                             if let choice = (event["choices"] as? [[String: Any]])?.first,
@@ -263,7 +346,9 @@ final class LanguageModelService: Sendable {
                         }
 
                         if let streamFailure {
-                            if !hasYieldedChunk, modelBatchIndex + 1 < modelBatches.count {
+                            if !hasYieldedChunk,
+                               streamFailureAllowsFallback,
+                               modelBatchIndex + 1 < modelBatches.count {
                                 modelBatchIndex += 1
                                 attemptRuntime = modelBatches[modelBatchIndex]
                                 transportRetryCount = 0
@@ -279,6 +364,13 @@ final class LanguageModelService: Sendable {
                         }
 
                         guard !attemptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                            usageRecorder(
+                                purpose,
+                                runtime.model,
+                                actualModel,
+                                latestUsage,
+                                Int(Date().timeIntervalSince(attemptStartedAt) * 1_000)
+                            )
                             completedEmptyResponses += 1
                             transportRetryCount = 0
 
@@ -298,6 +390,13 @@ final class LanguageModelService: Sendable {
                             return
                         }
 
+                        usageRecorder(
+                            purpose,
+                            runtime.model,
+                            actualModel,
+                            latestUsage,
+                            Int(Date().timeIntervalSince(attemptStartedAt) * 1_000)
+                        )
                         continuation.finish()
                         return
                     } catch is CancellationError {
@@ -362,14 +461,25 @@ final class LanguageModelService: Sendable {
         let details = usage["prompt_tokens_details"] as? [String: Any] ?? [:]
         return PromptCacheUsage(
             promptTokens: integerValue(usage["prompt_tokens"]),
+            completionTokens: integerValue(usage["completion_tokens"]),
+            totalTokens: integerValue(usage["total_tokens"]),
             cachedTokens: integerValue(details["cached_tokens"]),
-            cacheWriteTokens: integerValue(details["cache_write_tokens"])
+            cacheWriteTokens: integerValue(details["cache_write_tokens"]),
+            cost: doubleValue(usage["cost"]),
+            actualModel: String((event["model"] as? String ?? "").prefix(256))
         )
     }
 
     private static func integerValue(_ value: Any?) -> Int {
         if let value = value as? Int { return value }
         if let value = value as? NSNumber { return value.intValue }
+        return 0
+    }
+
+    private static func doubleValue(_ value: Any?) -> Double {
+        if let value = value as? Double { return value }
+        if let value = value as? NSNumber { return value.doubleValue }
+        if let value = value as? String { return Double(value) ?? 0 }
         return 0
     }
 
@@ -685,20 +795,41 @@ final class LanguageModelService: Sendable {
         }
     }
 
-    private static func canAdvanceModelBatch(
+    static func canAdvanceModelBatch(
         after batchIndex: Int,
         batchCount: Int,
         statusCode: Int
     ) -> Bool {
         guard batchIndex + 1 < batchCount else { return false }
         switch statusCode {
-        case 401, 402, 403:
-            return false
-        case 400...599:
+        case 408, 409, 425, 429, 500...599:
             return true
         default:
             return false
         }
+    }
+
+    private static func isRetryableProviderError(_ error: [String: Any]) -> Bool {
+        let code = integerValue(error["code"])
+        let metadata = error["metadata"] as? [String: Any]
+        let errorType = metadata?["error_type"] as? String ?? ""
+        if [
+            "rate_limit_exceeded", "provider_overloaded", "provider_unavailable",
+            "server", "timeout",
+        ].contains(errorType) {
+            return true
+        }
+        return [408, 409, 425, 429].contains(code) || (500...599).contains(code)
+    }
+
+    private static func retryAfterDelay(from response: HTTPURLResponse) -> Double? {
+        guard response.statusCode == 429 || response.statusCode == 503,
+              let value = response.value(forHTTPHeaderField: "Retry-After")?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              let seconds = Double(value),
+              seconds > 0
+        else { return nil }
+        return seconds
     }
 
     private static func backoff(attempt: Int) async throws {

@@ -27,7 +27,9 @@ private final class APIKeySessionCache: @unchecked Sendable {
 final class APIKeyStore: Sendable {
     static let shared = APIKeyStore()
     static let keychainItemLabel = "Shakespeare"
-    static let keychainServicePrefix = "com.shakespeare.credential.v2"
+    static var keychainServicePrefix: String {
+        ShakespeareRuntime.keychainServicePrefix
+    }
     private let keychainAccount = "default"
     private let sessionCache = APIKeySessionCache()
     private let storageDirectoryOverride: URL?

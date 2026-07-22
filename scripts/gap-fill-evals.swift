@@ -5,23 +5,22 @@ struct GapFillEvals {
     static func main() throws {
         try acceptsBoundedPlainProse()
         rejectsMetaOrRecursiveGapOutput()
-        enforcesStyleNotesAndSchemaBounds()
-        print("Gap-fill evals passed (3 cases: valid prose, unsafe output rejection, style-note contract).")
+        enforcesSchemaBounds()
+        print("Gap-fill evals passed (3 cases: valid prose, unsafe output rejection, compact contract).")
     }
 
     private static func acceptsBoundedPlainProse() throws {
         let response = try GapFillContract.decode("""
-        {"text":"That constraint changes the result, but not the underlying argument.","style_notes":["Uses a compact declarative transition","Ends on the consequence"]}
+        {"text":"That constraint changes the result, but not the underlying argument."}
         """)
         require(response.text.hasPrefix("That constraint"), "valid prose was rejected")
-        require(response.styleNotes.count == 2, "valid style notes were lost")
     }
 
     private static func rejectsMetaOrRecursiveGapOutput() {
         for response in [
-            #"{"text":"[[try again]]","style_notes":["Uses a direct transition"]}"#,
-            #"{"text":"```Here is the fill```","style_notes":["Uses a direct transition"]}"#,
-            #"{"text":"Usable prose","style_notes":[]}"#,
+            #"{"text":"[[try again]]"}"#,
+            #"{"text":"```Here is the fill```"}"#,
+            #"{"text":""}"#,
         ] {
             do {
                 _ = try GapFillContract.decode(response)
@@ -34,7 +33,7 @@ struct GapFillEvals {
         }
     }
 
-    private static func enforcesStyleNotesAndSchemaBounds() {
+    private static func enforcesSchemaBounds() {
         require(
             GapFillContract.systemPrompt.contains("both sides of the gap"),
             "surrounding-flow instruction disappeared"
@@ -45,9 +44,10 @@ struct GapFillEvals {
         )
         let schema = GapFillContract.outputSchema()
         let properties = schema["properties"] as? [String: Any]
-        let notes = properties?["style_notes"] as? [String: Any]
-        require(notes?["minItems"] as? Int == 1, "style-note evidence became optional")
-        require(notes?["maxItems"] as? Int == 3, "style-note evidence escaped its cap")
+        let text = properties?["text"] as? [String: Any]
+        require(text?["maxLength"] as? Int == 4_000, "fill text escaped its cap")
+        require(properties?["style_notes"] == nil, "model-authored style rationale remains in the contract")
+        require(schema["additionalProperties"] as? Bool == false, "schema permits extra fields")
     }
 
     private static func require(_ condition: @autoclosure () -> Bool, _ message: String) {

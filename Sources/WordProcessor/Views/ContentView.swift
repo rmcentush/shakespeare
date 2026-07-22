@@ -21,6 +21,7 @@ private enum RecoveryDraftPresentationCoordinator {
 struct ContentView: View {
     private enum SidebarPanel {
         case chat
+        case notes
         case suggestions
         case comments
     }
@@ -145,6 +146,18 @@ struct ContentView: View {
                     }
                     .help("Toggle Research Chat (Cmd+\\)")
                     .accessibilityLabel(activeSidebar == .chat ? "Hide Research Chat" : "Show Research Chat")
+                    .opacity(isDistractionFree ? 0 : 1)
+                    .disabled(isDistractionFree)
+                }
+                ToolbarItem(placement: .automatic) {
+                    Button {
+                        toggleSidebar(.notes)
+                    } label: {
+                        Image(systemName: "note.text")
+                            .frame(width: 22, height: 22)
+                    }
+                    .help("Toggle Notes (Cmd+Option+N)")
+                    .accessibilityLabel(activeSidebar == .notes ? "Hide Notes" : "Show Notes")
                     .opacity(isDistractionFree ? 0 : 1)
                     .disabled(isDistractionFree)
                 }
@@ -533,6 +546,8 @@ struct ContentView: View {
         switch panel {
         case .chat:
             AssistantChatView()
+        case .notes:
+            NotesSidebarView()
         case .suggestions:
             PendingEditsSidebarView()
         case .comments:
@@ -614,6 +629,13 @@ struct ContentView: View {
             toggleSidebar(.chat)
         }
         .keyboardShortcut("\\", modifiers: .command)
+        .hidden()
+
+        // Cmd+Option+N to toggle document notes
+        Button("") {
+            toggleSidebar(.notes)
+        }
+        .keyboardShortcut("n", modifiers: [.command, .option])
         .hidden()
 
         // Cmd+Shift+F for focus mode
@@ -1016,19 +1038,19 @@ struct StatusBarView: View {
     @Environment(EditorViewModel.self) private var editorViewModel
 
     var body: some View {
-        ZStack {
+        HStack(spacing: 12) {
             documentMetrics
+                .layoutPriority(1)
 
-            HStack(spacing: 12) {
-                Spacer(minLength: 0)
-                proofreadingStatus
-                if !editorViewModel.persistenceStatusText.isEmpty {
-                    Text(editorViewModel.persistenceStatusText)
-                        .font(.caption)
-                        .foregroundColor(editorViewModel.persistenceStatusIsError ? .red : .secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
+            Spacer(minLength: 8)
+
+            proofreadingStatus
+            if !editorViewModel.persistenceStatusText.isEmpty {
+                Text(editorViewModel.persistenceStatusText)
+                    .font(.caption)
+                    .foregroundColor(editorViewModel.persistenceStatusIsError ? .red : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
         }
         .frame(maxWidth: .infinity)
@@ -1043,20 +1065,25 @@ struct StatusBarView: View {
     private var documentMetrics: some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             if editorViewModel.selectionState.hasSelection {
-                Text("Selected \(editorViewModel.selectionState.selectedWords) words")
+                Text("Selected \(countLabel(editorViewModel.selectionState.selectedWords, singular: "word"))")
                     .fontWeight(.semibold)
                     .foregroundStyle(.primary)
                 metricSeparator
-                Text("\(editorViewModel.selectionState.selectedCharacters) characters")
+                Text(countLabel(editorViewModel.selectionState.selectedCharacters, singular: "character"))
                 metricSeparator
             }
-            Text("\(document.wordCount) words")
+            Text(countLabel(document.wordCount, singular: "word"))
             metricSeparator
-            Text("\(document.characterCount) characters")
+            Text(countLabel(document.characterCount, singular: "character"))
         }
         .font(.caption)
         .monospacedDigit()
         .foregroundStyle(.secondary)
+        .lineLimit(1)
+    }
+
+    private func countLabel(_ count: Int, singular: String) -> String {
+        "\(count) \(singular)\(count == 1 ? "" : "s")"
     }
 
     private var metricSeparator: some View {

@@ -8,7 +8,7 @@ enum PersonalizationSettings {
     static var isEnabled: Bool {
         get {
             guard UserDefaults.standard.object(forKey: enabledDefaultsKey) != nil else {
-                return true
+                return false
             }
             return UserDefaults.standard.bool(forKey: enabledDefaultsKey)
         }
@@ -36,7 +36,7 @@ struct PersonalizationOutcomeSnapshot: Codable, Equatable, Sendable {
 
 final class TrainingEventStore: @unchecked Sendable {
     static let shared = TrainingEventStore()
-    static let currentSchemaVersion = 2
+    static let currentSchemaVersion = 3
     static let maximumWritingSampleCharacters = 100_000
     static let minimumWritingSampleWords = 300
     static let maximumWritingSamples = 50
@@ -82,6 +82,7 @@ final class TrainingEventStore: @unchecked Sendable {
         let surroundingText: String
         let rationale: String
         let groupID: String
+        let sessionID: String?
         let contentHash: String
         let consent: Consent
         let provenance: Provenance
@@ -101,6 +102,8 @@ final class TrainingEventStore: @unchecked Sendable {
         let finalText: String?
         let surroundingSentence: String
         let groupID: String
+        let sessionID: String?
+        let documentID: String
         let rationale: String
         let outcome: String?
         let confidence: Double?
@@ -189,6 +192,7 @@ final class TrainingEventStore: @unchecked Sendable {
     func appendEditDecision(
         _ decision: BridgePayload.EditDecisionData,
         documentID: String,
+        sessionID: String,
         runtime: InferenceRuntime
     ) {
         guard PersonalizationSettings.isEnabled, !documentID.isEmpty else { return }
@@ -212,6 +216,7 @@ final class TrainingEventStore: @unchecked Sendable {
             surroundingText: decision.surroundingSentence,
             rationale: decision.rationale,
             groupID: decision.groupID,
+            sessionID: sessionID,
             contentHash: Self.hash(
                 [decision.originalText, decision.replacementText, decision.surroundingSentence]
                     .joined(separator: "\u{001f}")
@@ -283,6 +288,7 @@ final class TrainingEventStore: @unchecked Sendable {
                 surroundingText: action.surroundingText,
                 rationale: action.rationale,
                 groupID: action.groupID,
+                sessionID: action.sessionID,
                 contentHash: Self.hash(
                     [snapshot.actionID, snapshot.outcome, snapshot.finalText]
                         .joined(separator: "\u{001f}")
@@ -364,6 +370,7 @@ final class TrainingEventStore: @unchecked Sendable {
             surroundingText: "",
             rationale: "",
             groupID: "",
+            sessionID: nil,
             contentHash: contentHash,
             consent: Self.localConsent,
             provenance: Self.provenance(capture: "writing_sample_import"),
@@ -381,6 +388,7 @@ final class TrainingEventStore: @unchecked Sendable {
         decision: String,
         comment: BridgePayload.CommentData,
         documentID: String,
+        sessionID: String,
         runtime: InferenceRuntime
     ) {
         guard PersonalizationSettings.isEnabled,
@@ -411,6 +419,7 @@ final class TrainingEventStore: @unchecked Sendable {
             surroundingText: comment.selectedText,
             rationale: comment.text,
             groupID: comment.agentRunID.isEmpty ? comment.id : comment.agentRunID,
+            sessionID: sessionID,
             contentHash: Self.hash(
                 [comment.selectedText, proposed, comment.text].joined(separator: "\u{001f}")
             ),
@@ -441,6 +450,7 @@ final class TrainingEventStore: @unchecked Sendable {
             surroundingText: action.surroundingText,
             rationale: action.rationale,
             groupID: action.groupID,
+            sessionID: action.sessionID,
             contentHash: Self.hash(
                 [actionID, "rejected_unchanged", action.originalText]
                     .joined(separator: "\u{001f}")
@@ -592,7 +602,14 @@ final class TrainingEventStore: @unchecked Sendable {
             + unprocessedWritingSamples(limit: .max).count
     }
 
-    func recentRejectedDecisions(limit: Int = 10) -> [DecisionSummary] {
+    func recentRejectedDecisions(
+        documentID: String,
+        limit: Int = 10
+    ) -> [DecisionSummary] {
+        guard PersonalizationSettings.isEnabled,
+              !documentID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              limit > 0
+        else { return [] }
         lock.lock()
         defer { lock.unlock() }
         let events = allEventsUnlocked()
@@ -604,6 +621,7 @@ final class TrainingEventStore: @unchecked Sendable {
         return events
             .compactMap { action -> DecisionSummary? in
                 guard action.eventType == "edit_decision",
+                      action.documentID == documentID,
                       action.decision == "reject" || action.decision == "dismiss",
                       let outcome = outcomes[action.id],
                       ["rejected_unchanged", "rejected_rewritten"].contains(outcome.outcome ?? "")
@@ -618,6 +636,8 @@ final class TrainingEventStore: @unchecked Sendable {
                     finalText: outcome.finalText,
                     surroundingSentence: action.surroundingText,
                     groupID: action.groupID,
+                    sessionID: action.sessionID,
+                    documentID: action.documentID,
                     rationale: action.rationale,
                     outcome: outcome.outcome,
                     confidence: outcome.confidence,
@@ -655,6 +675,15 @@ final class TrainingEventStore: @unchecked Sendable {
     }
 
     func writeLearnedPreferences(_ content: String) throws {
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              content.count <= StyleProfileCompiler.maximumProfileCharacters
+        else { throw StyleProfileCompiler.CompilerError.invalidResponse }
+        try AuthorStyleReference.writeLearnedPreferences(content)
+    }
+
+    /// Approval rollback may need to restore a legacy profile created before
+    /// the current runtime limit existed. New writes must use the validated path.
+    func restoreLearnedPreferences(_ content: String) throws {
         try AuthorStyleReference.writeLearnedPreferences(content)
     }
 
@@ -690,32 +719,6 @@ final class TrainingEventStore: @unchecked Sendable {
 
             guard let outcome = outcomes[action.id] else { return nil }
 
-            if StyleLearningPolicy.isAcceptedSuggestionPreference(
-                decision: action.decision,
-                instruction: action.instruction,
-                rationale: action.rationale,
-                outcome: outcome.outcome,
-                confidence: outcome.confidence
-            ) {
-                return DecisionSummary(
-                    id: action.id,
-                    decision: "accept",
-                    source: action.source,
-                    kind: action.learningCategory.isEmpty
-                        ? action.operationKind
-                        : action.learningCategory,
-                    originalText: action.instruction,
-                    replacementText: "",
-                    finalText: nil,
-                    surroundingSentence: "",
-                    groupID: action.groupID,
-                    rationale: action.rationale,
-                    outcome: outcome.outcome,
-                    confidence: outcome.confidence,
-                    timestamp: outcome.recordedAt
-                )
-            }
-
             guard StyleLearningPolicy.isDurableStyleEvidence(
                     outcome: outcome.outcome,
                     finalText: outcome.finalText,
@@ -734,6 +737,8 @@ final class TrainingEventStore: @unchecked Sendable {
                 finalText: outcome.finalText,
                 surroundingSentence: action.surroundingText,
                 groupID: action.groupID,
+                sessionID: action.sessionID,
+                documentID: action.documentID,
                 rationale: action.rationale,
                 outcome: outcome.outcome,
                 confidence: outcome.confidence,
@@ -753,6 +758,8 @@ final class TrainingEventStore: @unchecked Sendable {
             finalText: event.finalText,
             surroundingSentence: event.surroundingText,
             groupID: event.groupID,
+            sessionID: event.sessionID,
+            documentID: event.documentID,
             rationale: event.rationale,
             outcome: event.outcome,
             confidence: event.confidence,
@@ -861,9 +868,6 @@ final class TrainingEventStore: @unchecked Sendable {
                 || events.count >= lastCompactionAttemptEventCount + 250
         else { return }
         let processed = processedIDsUnlocked()
-        let actionsByID = events.reduce(into: [String: Event]()) { result, event in
-            if event.eventType == "edit_decision" { result[event.id] = event }
-        }
         let records = events.map { event in
             let requiresProfileProcessing: Bool
             if event.eventType == "edit_outcome" {
@@ -873,18 +877,7 @@ final class TrainingEventStore: @unchecked Sendable {
                     trainingEligible: event.trainingEligible,
                     confidence: event.confidence
                 )
-                let acceptedPreferenceEvidence = event.parentEventID
-                    .flatMap { actionsByID[$0] }
-                    .map { action in
-                        StyleLearningPolicy.isAcceptedSuggestionPreference(
-                            decision: action.decision,
-                            instruction: action.instruction,
-                            rationale: action.rationale,
-                            outcome: event.outcome,
-                            confidence: event.confidence
-                        )
-                    } ?? false
-                requiresProfileProcessing = durableWriterEvidence || acceptedPreferenceEvidence
+                requiresProfileProcessing = durableWriterEvidence
             } else {
                 // Legacy action-only records cannot prove the writer changed
                 // model prose, so they remain history rather than profile evidence.

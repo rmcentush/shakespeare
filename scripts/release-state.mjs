@@ -18,6 +18,17 @@ export function compareVersions(left, right) {
   return 0;
 }
 
+export function extractToolVersion(value) {
+  if (typeof value !== "string") throw new Error("tool version output is not text");
+  const matches = [...value.matchAll(/(?:^|[^0-9])(\d+\.\d+\.\d+)(?=$|[^0-9])/g)]
+    .map((match) => match[1]);
+  const versions = [...new Set(matches)];
+  if (versions.length !== 1) {
+    throw new Error(`expected one semantic version in tool output, found ${versions.length}`);
+  }
+  return versions[0];
+}
+
 export function validateManifest(value) {
   if (!value || typeof value !== "object") throw new Error("release manifest is not an object");
   parseVersion(value.version);
@@ -54,13 +65,19 @@ function readJSON(path) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const [command, previousPath, intendedPath] = process.argv.slice(2);
+  const [command, ...args] = process.argv.slice(2);
   try {
-    if (command !== "validate-advance" || !previousPath || !intendedPath) {
-      throw new Error("usage: release-state.mjs validate-advance PREVIOUS INTENDED");
+    if (command === "extract-tool-version" && args.length === 1) {
+      console.log(extractToolVersion(args[0]));
+    } else if (command === "validate-advance" && args.length === 2) {
+      validateAdvance(readJSON(args[0]), readJSON(args[1]));
+      console.log("Release metadata advances monotonically.");
+    } else {
+      throw new Error(
+        "usage: release-state.mjs extract-tool-version OUTPUT | "
+          + "validate-advance PREVIOUS INTENDED",
+      );
     }
-    validateAdvance(readJSON(previousPath), readJSON(intendedPath));
-    console.log("Release metadata advances monotonically.");
   } catch (error) {
     console.error(`Release metadata rejected: ${error.message}`);
     process.exit(1);

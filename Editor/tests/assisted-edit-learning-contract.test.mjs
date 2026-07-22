@@ -16,7 +16,7 @@ const eventStore = readProjectFile(
 );
 const pendingEdits = readProjectFile('Editor/src/pendingEdits.ts');
 
-test('superseded model tasks cannot clear newer request handles', () => {
+test('superseded connected tasks cannot clear newer request handles', () => {
   assert.match(editorViewModel, /grammarCheckGeneration == generation/);
   assert.match(editorViewModel, /gapFillTaskIDs\[request\.requestID\] == taskID/);
   assert.match(editorViewModel, /ambientReviewGeneration == generation/);

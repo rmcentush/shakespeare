@@ -75,22 +75,6 @@ enum StyleLearningPolicy {
         return tokens
     }
 
-    /// Accepting a model suggestion unchanged is a preference signal, but not a
-    /// writer-authored prose sample. The evidence packet therefore carries only
-    /// the instruction and abstract rationale, never the accepted model prose.
-    static func isAcceptedSuggestionPreference(
-        decision: String,
-        instruction: String,
-        rationale: String,
-        outcome: String?,
-        confidence: Double?
-    ) -> Bool {
-        ((decision == "accept" && outcome == "accepted_unchanged")
-            || outcome == "later_accepted")
-            && (confidence ?? 0) >= 0.8
-            && !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !rationale.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
 }
 
 struct StyleProfileSampleEvidence: Codable, Equatable, Sendable {
@@ -105,9 +89,29 @@ struct StyleProfileEditEvidence: Codable, Equatable, Sendable {
     let originalText: String
     let replacementText: String
     let finalText: String
-    let groupID: String
-    let rationale: String
+    let documentID: String
+    let sessionID: String
     let timestamp: Double
+}
+
+struct StyleProfileEvidenceReviewItem: Codable, Equatable, Sendable, Identifiable {
+    enum Kind: String, Codable, Sendable { case sample, edit }
+
+    let id: String
+    let kind: Kind
+    let summary: String
+}
+
+struct StyleProfileRuleEvidence: Codable, Equatable, Sendable, Identifiable {
+    var id: String { "\(dimension):\(guidance)" }
+
+    let dimension: String
+    let guidance: String
+    let established: Bool
+    let sampleIDs: [String]
+    let editIDs: [String]
+    let sessionIDs: [String]
+    let carriedForward: Bool
 }
 
 /// Compiles raw local evidence into a deliberately small, provenance-preserving
@@ -128,6 +132,7 @@ enum StyleProfileEvidenceCompiler {
         let limits: StyleProfileCompiler.EvidenceLimits
         let sampleCount: Int
         let editCount: Int
+        let reviewItems: [StyleProfileEvidenceReviewItem]
     }
 
     static func compile(
@@ -138,7 +143,9 @@ enum StyleProfileEvidenceCompiler {
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
 
         var selectedSamples: [StyleProfileSampleEvidence] = []
+        var selectedSampleIDs = Set<String>()
         for sample in samples.prefix(maximumSamples) {
+            guard !sample.id.isEmpty, selectedSampleIDs.insert(sample.id).inserted else { continue }
             let excerpt = representativeExcerpt(from: sample.text, maximumCharacters: 1_500)
             guard excerpt.count >= 240 else { continue }
             let candidate = StyleProfileSampleEvidence(id: sample.id, text: excerpt)
@@ -148,7 +155,9 @@ enum StyleProfileEvidenceCompiler {
         }
 
         var selectedEdits: [StyleProfileEditEvidence] = []
+        var selectedEditIDs = Set<String>()
         for edit in edits.suffix(maximumEdits).reversed() {
+            guard !edit.id.isEmpty, selectedEditIDs.insert(edit.id).inserted else { continue }
             let candidate = StyleProfileEditEvidence(
                 id: edit.id,
                 decision: bounded(edit.decision, to: 40),
@@ -156,8 +165,8 @@ enum StyleProfileEvidenceCompiler {
                 originalText: bounded(edit.originalText, to: 240),
                 replacementText: bounded(edit.replacementText, to: 240),
                 finalText: bounded(edit.finalText, to: 280),
-                groupID: bounded(edit.groupID, to: 80),
-                rationale: bounded(edit.rationale, to: 160),
+                documentID: bounded(edit.documentID, to: 160),
+                sessionID: bounded(edit.sessionID, to: 160),
                 timestamp: edit.timestamp
             )
             let encoded = try encoder.encode(selectedEdits + [candidate])
@@ -172,10 +181,23 @@ enum StyleProfileEvidenceCompiler {
         let eventIDs = (selectedSamples.map(\.id) + selectedEdits.map(\.id)).reduce(into: [String]()) {
             if !$0.contains($1) { $0.append($1) }
         }
-        let groups = Set(selectedEdits.map(\.groupID).filter { !$0.isEmpty })
         let sourceTexts = selectedSamples.map(\.text) + selectedEdits.flatMap {
             [$0.originalText, $0.replacementText, $0.finalText]
         }.filter { !$0.isEmpty }
+        let reviewItems = selectedSamples.map {
+            StyleProfileEvidenceReviewItem(
+                id: $0.id,
+                kind: .sample,
+                summary: "Imported sample: \(reviewExcerpt($0.text))"
+            )
+        } + selectedEdits.map {
+            let preferred = $0.finalText.isEmpty ? $0.originalText : $0.finalText
+            return StyleProfileEvidenceReviewItem(
+                id: $0.id,
+                kind: .edit,
+                summary: "[\($0.kind)] Preferred \(reviewExcerpt(preferred)) over \(reviewExcerpt($0.replacementText))"
+            )
+        }
 
         return Packet(
             samplesJSON: sampleJSON,
@@ -183,12 +205,17 @@ enum StyleProfileEvidenceCompiler {
             eventIDs: eventIDs,
             sourceTexts: sourceTexts,
             limits: StyleProfileCompiler.EvidenceLimits(
-                sampleCount: selectedSamples.count,
-                editCount: selectedEdits.count,
-                editGroupCount: groups.count
+                sampleIDs: Set(selectedSamples.map(\.id)),
+                editSessionByID: Dictionary(
+                    uniqueKeysWithValues: selectedEdits.compactMap { edit in
+                        guard !edit.sessionID.isEmpty else { return nil }
+                        return (edit.id, edit.sessionID)
+                    }
+                )
             ),
             sampleCount: selectedSamples.count,
-            editCount: selectedEdits.count
+            editCount: selectedEdits.count,
+            reviewItems: reviewItems
         )
     }
 
@@ -232,6 +259,15 @@ enum StyleProfileEvidenceCompiler {
             in: .whitespacesAndNewlines
         ) + "…"
     }
+
+    private static func reviewExcerpt(_ value: String) -> String {
+        let compact = value
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let excerpt = bounded(compact, to: 180)
+        return excerpt.isEmpty ? "(empty)" : "“\(excerpt)”"
+    }
 }
 
 /// Validates the model-produced profile against the amount of evidence actually
@@ -243,9 +279,12 @@ enum StyleProfileCompiler {
     static let maximumEmergingRules = 6
 
     struct EvidenceLimits: Equatable, Sendable {
-        let sampleCount: Int
-        let editCount: Int
-        let editGroupCount: Int
+        let sampleIDs: Set<String>
+        let editSessionByID: [String: String]
+
+        var sampleCount: Int { sampleIDs.count }
+        var editCount: Int { editSessionByID.count }
+        var editGroupCount: Int { Set(editSessionByID.values).count }
     }
 
     enum CompilerError: LocalizedError {
@@ -270,17 +309,15 @@ enum StyleProfileCompiler {
     struct ModelRule: Codable, Equatable, Sendable {
         let dimension: String
         let guidance: String
-        let sampleCount: Int
-        let editCount: Int
-        let editGroupCount: Int
+        let supportingSampleIDs: [String]
+        let supportingEditIDs: [String]
         let carriedForward: Bool
 
         enum CodingKeys: String, CodingKey {
             case dimension
             case guidance
-            case sampleCount = "sample_count"
-            case editCount = "edit_count"
-            case editGroupCount = "edit_group_count"
+            case supportingSampleIDs = "supporting_sample_ids"
+            case supportingEditIDs = "supporting_edit_ids"
             case carriedForward = "carried_forward"
         }
     }
@@ -315,23 +352,23 @@ enum StyleProfileCompiler {
                                 "minLength": 12,
                                 "maxLength": 180,
                             ],
-                            "sample_count": [
-                                "type": "integer",
-                                "description": "Number of supplied independent samples that directly support this rule.",
-                                "minimum": 0,
-                                "maximum": limits.sampleCount,
+                            "supporting_sample_ids": [
+                                "type": "array",
+                                "description": "Distinct supplied sample IDs that directly support this rule. Use only IDs present in the evidence JSON.",
+                                "maxItems": limits.sampleCount,
+                                "items": [
+                                    "type": "string",
+                                    "maxLength": 256,
+                                ],
                             ],
-                            "edit_count": [
-                                "type": "integer",
-                                "description": "Number of supplied edit outcomes that directly support this rule.",
-                                "minimum": 0,
-                                "maximum": limits.editCount,
-                            ],
-                            "edit_group_count": [
-                                "type": "integer",
-                                "description": "Number of supplied independent edit groups represented by the supporting edits.",
-                                "minimum": 0,
-                                "maximum": limits.editGroupCount,
+                            "supporting_edit_ids": [
+                                "type": "array",
+                                "description": "Distinct supplied writer-edit IDs that directly support this rule. Use only IDs present in the evidence JSON.",
+                                "maxItems": limits.editCount,
+                                "items": [
+                                    "type": "string",
+                                    "maxLength": 256,
+                                ],
                             ],
                             "carried_forward": [
                                 "type": "boolean",
@@ -339,8 +376,8 @@ enum StyleProfileCompiler {
                             ],
                         ],
                         "required": [
-                            "dimension", "guidance", "sample_count", "edit_count",
-                            "edit_group_count", "carried_forward",
+                            "dimension", "guidance", "supporting_sample_ids",
+                            "supporting_edit_ids", "carried_forward",
                         ],
                         "additionalProperties": false,
                     ],
@@ -358,6 +395,27 @@ enum StyleProfileCompiler {
         currentProfile: String,
         date: String
     ) throws -> String {
+        try compileDetailed(
+            response: response,
+            limits: limits,
+            sourceTexts: sourceTexts,
+            currentProfile: currentProfile,
+            date: date
+        ).markdown
+    }
+
+    struct Compilation: Equatable, Sendable {
+        let markdown: String
+        let ruleEvidence: [StyleProfileRuleEvidence]
+    }
+
+    static func compileDetailed(
+        response: String,
+        limits: EvidenceLimits,
+        sourceTexts: [String],
+        currentProfile: String,
+        date: String
+    ) throws -> Compilation {
         guard let data = jsonData(from: response),
               let profile = try? JSONDecoder().decode(ModelProfile.self, from: data)
         else { throw CompilerError.invalidResponse }
@@ -365,6 +423,7 @@ enum StyleProfileCompiler {
         struct AcceptedRule {
             let line: String
             let established: Bool
+            let evidence: StyleProfileRuleEvidence
         }
 
         let reviewedRules = reviewedRuleStatuses(in: currentProfile)
@@ -379,9 +438,18 @@ enum StyleProfileCompiler {
                   seen.insert(guidance.lowercased()).inserted
             else { continue }
 
-            let sampleCount = min(max(rule.sampleCount, 0), limits.sampleCount)
-            let editCount = min(max(rule.editCount, 0), limits.editCount)
-            let groupCount = min(max(rule.editGroupCount, 0), limits.editGroupCount)
+            let sampleIDs = Array(
+                Set(rule.supportingSampleIDs).intersection(limits.sampleIDs)
+            ).sorted()
+            let editIDs = Array(
+                Set(rule.supportingEditIDs).intersection(limits.editSessionByID.keys)
+            ).sorted()
+            let sessionIDs = Array(Set(editIDs.compactMap {
+                limits.editSessionByID[$0]
+            })).sorted()
+            let sampleCount = sampleIDs.count
+            let editCount = editIDs.count
+            let groupCount = sessionIDs.count
             let reviewedStatus = rule.carriedForward
                 ? reviewedRules[guidance.lowercased()]
                 : nil
@@ -403,7 +471,16 @@ enum StyleProfileCompiler {
             let suffix = evidence.isEmpty ? "" : " — \(evidence.joined(separator: ", "))"
             accepted.append(AcceptedRule(
                 line: "- [\(dimension)] \(guidance)\(suffix)",
-                established: established
+                established: established,
+                evidence: StyleProfileRuleEvidence(
+                    dimension: dimension,
+                    guidance: guidance,
+                    established: established,
+                    sampleIDs: sampleIDs,
+                    editIDs: editIDs,
+                    sessionIDs: sessionIDs,
+                    carriedForward: reviewedStatus != nil
+                )
             ))
         }
 
@@ -436,7 +513,26 @@ enum StyleProfileCompiler {
             if appendedRule { rendered += "\n\n" + section }
         }
         guard rendered.contains("- [") else { throw CompilerError.insufficientEvidence }
-        return rendered
+        let renderedGuidance = Set(
+            rendered.components(separatedBy: .newlines).compactMap { rawLine -> String? in
+                let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard line.hasPrefix("- ["), let bracket = line.firstIndex(of: "]") else {
+                    return nil
+                }
+                var guidance = String(line[line.index(after: bracket)...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if let evidence = guidance.range(of: " — ") {
+                    guidance = String(guidance[..<evidence.lowerBound])
+                }
+                return guidance.lowercased()
+            }
+        )
+        return Compilation(
+            markdown: rendered,
+            ruleEvidence: accepted.map(\.evidence).filter {
+                renderedGuidance.contains($0.guidance.lowercased())
+            }
+        )
     }
 
     private static let allowedDimensions: Set<String> = [

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { compareVersions, validateAdvance, validateManifest } from "./release-state.mjs";
+import {
+  compareVersions,
+  extractToolVersion,
+  validateAdvance,
+  validateManifest,
+} from "./release-state.mjs";
 
 function manifest(version, buildNumber) {
   return {
@@ -15,6 +20,13 @@ test("compares two- and three-component versions numerically", () => {
   assert.equal(compareVersions("1.10.0", "1.9.9"), 1);
   assert.equal(compareVersions("2.0", "2.0.0"), 0);
   assert.equal(compareVersions("1.2.2", "1.2.3"), -1);
+});
+
+test("extracts bare and decorated tool versions deterministically", () => {
+  assert.equal(extractToolVersion("4.111.0\n"), "4.111.0");
+  assert.equal(extractToolVersion("wrangler 4.111.0"), "4.111.0");
+  assert.throws(() => extractToolVersion("wrangler unknown"), /found 0/);
+  assert.throws(() => extractToolVersion("node 22.13.0, wrangler 4.111.0"), /found 2/);
 });
 
 test("requires both version and build number to advance", () => {

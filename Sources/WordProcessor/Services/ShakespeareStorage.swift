@@ -5,11 +5,10 @@ import Foundation
 /// Support root with a stable, inspectable layout.
 enum ShakespeareStorage {
     private static let lock = NSLock()
-    private static var preparedRoots: Set<String> = []
+    private nonisolated(unsafe) static var preparedRoots: Set<String> = []
 
     static var rootURL: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Shakespeare", isDirectory: true)
+        ShakespeareRuntime.storageRootURL
     }
 
     static var documentsDirectoryURL: URL {

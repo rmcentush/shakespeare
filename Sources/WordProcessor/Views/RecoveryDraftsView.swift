@@ -1,6 +1,13 @@
 import SwiftUI
 
 struct RecoveryDraftsView: View {
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
     let drafts: [RecoveryDraftStore.DraftMetadata]
     let onRecover: (RecoveryDraftStore.DraftMetadata) -> Void
     let onDiscard: (RecoveryDraftStore.DraftMetadata) -> Void
@@ -62,7 +69,7 @@ struct RecoveryDraftsView: View {
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
 
-                Text("\(formattedDate(draft.updatedAt)) - \(draft.wordCount) words")
+                Text("\(formattedDate(draft.updatedAt)) - \(draft.wordCount) word\(draft.wordCount == 1 ? "" : "s")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -95,9 +102,6 @@ struct RecoveryDraftsView: View {
     }
 
     private func formattedDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        Self.dateFormatter.string(from: date)
     }
 }

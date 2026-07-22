@@ -106,31 +106,12 @@ enum InferenceSettings {
         after primaryModel: String,
         purpose: InferencePurpose = .assistant
     ) -> [String] {
-        let orderedModelIDs: [String]
-        if purpose == .chat {
-            // Keep Flash primary for speed. If research needs rerouting, prefer
-            // models with strong native web-search support before general models.
-            orderedModelIDs = [
-                geminiFlashModel,
-                haikuModel,
-                grokModel,
-                kimiModel,
-            ] + availableModels.map(\.id).filter {
-                ![geminiFlashModel, haikuModel, grokModel, kimiModel].contains($0)
-            }
-        } else {
-            // Keep the fast, low-reasoning models at the front of the writing
-            // recovery path. Slower deep-reasoning models remain available as
-            // later fallbacks and as explicit user choices.
-            orderedModelIDs = [
-                geminiFlashModel,
-                haikuModel,
-                kimiModel,
-                grokModel,
-            ] + availableModels.map(\.id).filter {
-                ![geminiFlashModel, haikuModel, kimiModel, grokModel].contains($0)
-            }
-        }
+        // Automatic recovery is intentionally short and cost-bounded. Frontier
+        // models remain explicit choices in Settings and are never silently
+        // selected after a cheaper request fails.
+        let orderedModelIDs = purpose == .chat
+            ? [geminiFlashModel, haikuModel, grokModel]
+            : [geminiFlashModel, haikuModel, kimiModel]
         return orderedModelIDs.filter { $0 != primaryModel }
     }
 
@@ -162,8 +143,8 @@ enum InferenceSettings {
             apiKeyService: "openrouter",
             model: model,
             fallbackModels: fallbackModels(after: model, purpose: purpose),
-            // Search is opt-in per request. AssistantChatViewModel applies the
-            // query policy explicitly, so ordinary draft conversation stays fast.
+            // Search remains opt-in per request. Research chat enables the
+            // bounded server tool; editorial feedback explicitly disables it.
             webSearchEnabled: false,
             supportsTemperature: modelOption(for: model)?.supportsTemperature ?? true
         )

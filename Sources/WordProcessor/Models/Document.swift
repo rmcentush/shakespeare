@@ -13,6 +13,7 @@ final class DocumentModel: @unchecked Sendable {
     var canonicalJSONContent: String?
     var htmlContent: String = ""
     var plainTextContent: String = ""
+    private(set) var notes: String = ""
     var fileURL: URL?
     var isDirty: Bool = false
     var wordCount: Int = 0
@@ -66,14 +67,35 @@ final class DocumentModel: @unchecked Sendable {
         hasUnsyncedEditorChanges = true
     }
 
+    func updateNotes(_ notes: String) {
+        guard notes != self.notes else { return }
+        self.notes = notes
+        contentRevision &+= 1
+        modifiedAt = Date()
+        isDirty = true
+    }
+
     @discardableResult
     func syncFromEditor(snapshot: DocumentFileStore.FileSnapshot) -> Bool {
         let changed =
             snapshot.htmlContent != htmlContent ||
             snapshot.plainText != plainTextContent ||
-            snapshot.canonicalJSON != canonicalJSONContent
+            snapshot.canonicalJSON != canonicalJSONContent ||
+            snapshot.personalizationOutcomes != personalizationOutcomes
+        let shouldRemainDirty = isDirty || changed
 
-        applySnapshot(snapshot, fileURL: fileURL, markDirty: changed, resetRevision: false)
+        // The web editor owns rendered content, metrics, and pending model
+        // outcomes. Native UI owns notes and document identity. Merge only the
+        // editor-owned fields so an asynchronous bridge callback cannot replace
+        // a note edit made while the snapshot was in flight.
+        canonicalJSONContent = snapshot.canonicalJSON
+        htmlContent = snapshot.htmlContent
+        plainTextContent = snapshot.plainText
+        wordCount = snapshot.wordCount
+        characterCount = snapshot.characterCount
+        personalizationOutcomes = snapshot.personalizationOutcomes
+        modifiedAt = Date()
+        isDirty = shouldRemainDirty
 
         if changed {
             contentRevision &+= 1
@@ -114,8 +136,14 @@ final class DocumentModel: @unchecked Sendable {
         guard request.requestID >= lastCommittedPersistenceRequestID else { return }
 
         lastCommittedPersistenceRequestID = request.requestID
-        applySnapshot(request.snapshot, fileURL: url, markDirty: false, resetRevision: false)
-        isDirty = request.revision != contentRevision
+        if request.revision == contentRevision {
+            applySnapshot(request.snapshot, fileURL: url, markDirty: false, resetRevision: false)
+        } else {
+            // A newer editor or notes mutation landed while this save was in flight.
+            // Keep that in-memory state authoritative and let the next save persist it.
+            fileURL = url
+            isDirty = true
+        }
         Self.addToRecentFiles(url)
     }
 
@@ -143,7 +171,8 @@ final class DocumentModel: @unchecked Sendable {
         let changed =
             snapshot.htmlContent != htmlContent ||
             snapshot.plainText != plainTextContent ||
-            snapshot.canonicalJSON != canonicalJSONContent
+            snapshot.canonicalJSON != canonicalJSONContent ||
+            snapshot.notes != notes
 
         applySnapshot(snapshot, fileURL: fileURL, markDirty: true, resetRevision: false)
 
@@ -168,6 +197,7 @@ final class DocumentModel: @unchecked Sendable {
             canonicalJSON: canonicalJSONContent,
             htmlContent: htmlContent,
             plainText: plainTextContent,
+            notes: notes,
             wordCount: wordCount,
             characterCount: characterCount,
             documentID: documentID,
@@ -187,6 +217,7 @@ final class DocumentModel: @unchecked Sendable {
         canonicalJSONContent = snapshot.canonicalJSON
         htmlContent = snapshot.htmlContent
         plainTextContent = snapshot.plainText
+        notes = snapshot.notes
         self.fileURL = fileURL
         wordCount = snapshot.wordCount
         characterCount = snapshot.characterCount

@@ -74,26 +74,6 @@ struct StyleProfileEvals {
             "a tiny edit was treated as representative style evidence"
         )
         require(
-            StyleLearningPolicy.isAcceptedSuggestionPreference(
-                decision: "accept",
-                instruction: "bridge to the consequence",
-                rationale: "Uses a compact declarative transition",
-                outcome: "accepted_unchanged",
-                confidence: 1
-            ),
-            "an accepted suggestion did not become preference-only evidence"
-        )
-        require(
-            !StyleLearningPolicy.isAcceptedSuggestionPreference(
-                decision: "accept",
-                instruction: "bridge to the consequence",
-                rationale: "Uses a compact declarative transition",
-                outcome: "accepted_modified",
-                confidence: 1
-            ),
-            "a writer-modified suggestion was duplicated as preference-only evidence"
-        )
-        require(
             !StyleLearningPolicy.isConfirmedUserRewrite(
                 outcome: "accepted_modified",
                 proposedText: substantial,
@@ -130,8 +110,8 @@ struct StyleProfileEvals {
                 originalText: String(repeating: "generic opening ", count: 40),
                 replacementText: String(repeating: "concrete opening ", count: 40),
                 finalText: String(repeating: "writer revised opening ", count: 40),
-                groupID: "session-\($0 % 8)",
-                rationale: String(repeating: "more direct ", count: 30),
+                documentID: "document-\($0 % 4)",
+                sessionID: "session-\($0 % 8)",
                 timestamp: Double($0)
             )
         }
@@ -153,18 +133,27 @@ struct StyleProfileEvals {
         {
           "summary": "Direct, concrete prose with controlled variation and decisive paragraph endings.",
           "rules": [
-            {"dimension":"syntax","guidance":"Prefer compact declarative sentences before expanding a causal argument.","sample_count":2,"edit_count":0,"edit_group_count":0,"carried_forward":false},
-            {"dimension":"rhythm","guidance":"Vary sentence length, then stop the paragraph on its consequence.","sample_count":0,"edit_count":5,"edit_group_count":3,"carried_forward":false},
-            {"dimension":"voice","guidance":"Use an unsupported weak habit as a permanent rule.","sample_count":0,"edit_count":2,"edit_group_count":2,"carried_forward":false},
-            {"dimension":"diction","guidance":"The harbor opened beyond the stone road bright with salt and afternoon light.","sample_count":2,"edit_count":0,"edit_group_count":0,"carried_forward":false},
-            {"dimension":"tone","guidance":"Carry an unreviewed rule without any evidence.","sample_count":0,"edit_count":0,"edit_group_count":0,"carried_forward":true}
+            {"dimension":"syntax","guidance":"Prefer compact declarative sentences before expanding a causal argument.","supporting_sample_ids":["sample-1","sample-2"],"supporting_edit_ids":[],"carried_forward":false},
+            {"dimension":"rhythm","guidance":"Vary sentence length, then stop the paragraph on its consequence.","supporting_sample_ids":[],"supporting_edit_ids":["edit-1","edit-2","edit-3","edit-4","edit-5"],"carried_forward":false},
+            {"dimension":"voice","guidance":"Use an unsupported weak habit as a permanent rule.","supporting_sample_ids":[],"supporting_edit_ids":["unknown-1","unknown-2","unknown-3"],"carried_forward":false},
+            {"dimension":"diction","guidance":"The harbor opened beyond the stone road bright with salt and afternoon light.","supporting_sample_ids":["sample-1","sample-2"],"supporting_edit_ids":[],"carried_forward":false},
+            {"dimension":"tone","guidance":"Carry an unreviewed rule without any evidence.","supporting_sample_ids":[],"supporting_edit_ids":[],"carried_forward":true}
           ]
         }
         """
 
         let profile = try StyleProfileCompiler.compile(
             response: response,
-            limits: .init(sampleCount: 2, editCount: 5, editGroupCount: 3),
+            limits: .init(
+                sampleIDs: ["sample-1", "sample-2"],
+                editSessionByID: [
+                    "edit-1": "session-1",
+                    "edit-2": "session-1",
+                    "edit-3": "session-2",
+                    "edit-4": "session-2",
+                    "edit-5": "session-3",
+                ]
+            ),
             sourceTexts: [copied],
             currentProfile: "",
             date: "2026-07-16"
@@ -180,26 +169,25 @@ struct StyleProfileEvals {
     private static func preservesReviewedRulesWithoutInventedSupport() throws {
         let response = """
         {"summary":"A reviewed profile remains stable until stronger evidence contradicts it.","rules":[
-          {"dimension":"voice","guidance":"Open with the concrete claim instead of preliminary scene-setting.","sample_count":99,"edit_count":99,"edit_group_count":99,"carried_forward":true}
+          {"dimension":"voice","guidance":"Open with the concrete claim instead of preliminary scene-setting.","supporting_sample_ids":["invented-sample"],"supporting_edit_ids":["invented-edit"],"carried_forward":true}
         ]}
         """
         let profile = try StyleProfileCompiler.compile(
             response: response,
-            limits: .init(sampleCount: 0, editCount: 0, editGroupCount: 0),
+            limits: .init(sampleIDs: [], editSessionByID: [:]),
             sourceTexts: [],
             currentProfile: "## Established\n- [voice] Open with the concrete claim instead of preliminary scene-setting.",
             date: "2026-07-16"
         )
         require(profile.contains("reviewed"), "carried rule did not expose its reviewed basis")
-        require(!profile.contains("99 samples"), "invented evidence counts were not clamped")
-        require(!profile.contains("99 edits"), "invented edit counts were not clamped")
+        require(!profile.contains("invented"), "invented evidence IDs entered the rendered profile")
     }
 
     private static func rejectsMalformedProfiles() {
         do {
             _ = try StyleProfileCompiler.compile(
                 response: "not-json",
-                limits: .init(sampleCount: 1, editCount: 0, editGroupCount: 0),
+                limits: .init(sampleIDs: ["sample-1"], editSessionByID: [:]),
                 sourceTexts: [],
                 currentProfile: "",
                 date: "2026-07-16"
@@ -220,7 +208,21 @@ struct StyleProfileEvals {
         let draft = StyleProfileDraft(
             proposedMarkdown: "## Established\n- Prefer direct openings.",
             eventIDs: ["sample-1", "edit-2"],
-            createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            ruleEvidence: [StyleProfileRuleEvidence(
+                dimension: "voice",
+                guidance: "Prefer direct openings.",
+                established: true,
+                sampleIDs: ["sample-1"],
+                editIDs: ["edit-2"],
+                sessionIDs: ["session-1"],
+                carriedForward: false
+            )],
+            evidenceItems: [StyleProfileEvidenceReviewItem(
+                id: "sample-1",
+                kind: .sample,
+                summary: "Imported sample: “Direct opening.”"
+            )]
         )
 
         try store.save(draft)

@@ -1,27 +1,33 @@
 # Shakespeare
 
-Shakespeare is a local-first writing app for macOS with model-assisted editing,
-personal style learning, and source-backed research through one OpenRouter
-connection.
+Shakespeare is a local-first writing app for macOS, built for focused drafting,
+revision, proofreading, and source-backed research.
 
-Documents, local spelling, recovery drafts, version history, and style data
-remain available without a model connection.
+Documents, notes, spelling data, recovery drafts, version history, and writing
+preferences remain available without an internet connection.
 
 ## Features
 
-- Native long-form editor with `.shkdoc` documents and HTML export
-- Reviewable writing and proofreading suggestions
-- Read-only research chat with linked sources
-- Optional learning from writing samples and confirmed rewrites
+- Native long-form editor with `.shkdoc` documents and HTML import and export
+- Reviewable writing and proofreading suggestions that are never applied automatically
+- Source-backed research chat with linked references
+- Document notes, image alt text, and accessibility controls
+- Optional personal style guidance based on writing samples and confirmed revisions
 - Local recovery drafts and named versions
 
-## Install
+## Installation
 
-Shakespeare is currently available from source. A signed and notarized build
-will be published on [writeshakespeare.com](https://writeshakespeare.com) after
-the first release is ready.
+Shakespeare is currently available as a source build. A signed and notarized
+download will be published on [writeshakespeare.com](https://writeshakespeare.com)
+when the first release is ready.
 
-Requirements: macOS 14+, Xcode 26+, Node.js 22+, and npm.
+### Requirements
+
+- macOS 14 or later
+- Apple developer tools with the macOS 26 SDK
+- Node.js 22 or later and npm
+
+### Build from source
 
 ```bash
 git clone https://github.com/rmcentush/shakespeare.git
@@ -30,49 +36,39 @@ make install
 open /Applications/Shakespeare.app
 ```
 
-## Get started
+`make install` builds the editor and installs `Shakespeare.app` in
+`/Applications`, replacing an existing source build at that location.
 
-1. Create an [OpenRouter API key](https://openrouter.ai/keys).
-2. Paste it during setup. Shakespeare validates it before storing it in macOS
-   Keychain.
-3. Choose whether to learn from saved edits and optionally add `.txt` or `.md`
-   writing samples.
-4. Start a new document or open a `.shkdoc` or HTML file.
+## Getting started
 
-Setup can be skipped. Connections and style learning remain available under
-**Settings → Connections** and **Settings → My Style**.
+Create a document or open an existing `.shkdoc` or HTML file. The editor,
+document storage, spelling, notes, recovery, and version history work locally.
 
-Use the **Shakespeare** menu to save or export, the clock button for
-asset-complete version history, and **Shakespeare → Run Thorough Proofread**
-(Command-Option-P) for an on-demand review. Selected images expose an
-accessibility control for alt text or an explicit decorative designation.
-Suggestions are never applied automatically. Open Research Chat with
-the speech-bubble button or `Command-\`.
+Connected writing and research features are optional. They can be configured
+during setup or later under **Settings → Connections** using an
+[OpenRouter](https://openrouter.ai) account. OpenRouter charges the account
+holder directly; Shakespeare adds no usage markup.
 
-OpenRouter bills model and web-search usage directly to the key owner;
-Shakespeare adds no usage markup.
+Personal style guidance is off by default. It can be enabled, reviewed, paused,
+or deleted under **Settings → My Style**.
 
 ## Privacy
 
-OpenRouter is Shakespeare's only remote model connection. Requests deny
-provider data collection and send only the context needed for the selected
-feature. Research does not receive writing samples, learned preferences, or the
-learning ledger. Grammar checks remain scoped to changed text.
-
-Style learning is local, optional, reviewable, and deletable. Shakespeare uses
-bounded excerpts rather than remote fine-tuning, and accepted-unchanged model
-text is never learned as the writer's voice. See
-[Personalization](docs/PERSONALIZATION.md).
-
-App data is stored with owner-only permissions under:
+Shakespeare stores application data with owner-only permissions under:
 
 ```text
 ~/Library/Application Support/Shakespeare/
 ```
 
-Files explicitly saved by the writer remain in the chosen location. **Delete
-Learning History** does not delete documents, versions, settings, or the
-OpenRouter key.
+Files saved by the writer remain in the chosen location. Connection credentials
+are stored in the macOS Keychain. When a connected feature is used, Shakespeare
+sends only the context required for that request and asks the provider not to
+retain it. Document notes remain local, are excluded from connected requests,
+and are omitted from HTML exports. Research does not receive writing samples or
+personal style history.
+
+See [Personalization](docs/PERSONALIZATION.md) for details about optional style
+guidance and deletion controls.
 
 ## Development
 
@@ -82,17 +78,15 @@ make check    # Run the complete validation suite
 make install  # Build and install in /Applications
 ```
 
-See [Contributing](CONTRIBUTING.md) for repository conventions and
-[Development and releasing](docs/RELEASING.md) for publishing. The model-call
-boundaries, prompt contracts, structured outputs, and cache layout are documented
-in [Model prompt architecture](docs/MODEL_PROMPTS.md).
+See [Contributing](CONTRIBUTING.md) for development conventions and
+[Development and releasing](docs/RELEASING.md) for the release process.
 
 ## Security
 
 Report suspected vulnerabilities privately through
-[GitHub Security Advisories](../../security/advisories/new). Please do not open
-a public issue for an undisclosed vulnerability. See the
-[security policy](SECURITY.md) for details.
+[GitHub Security Advisories](../../security/advisories/new). Do not open a
+public issue for an undisclosed vulnerability. See the
+[security policy](SECURITY.md) for reporting guidance.
 
 ## License
 

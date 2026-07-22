@@ -18,7 +18,7 @@ private struct ChatSearchPolicyEvals {
             precondition(ChatSearchPolicy.requiresWebSearch(for: query), query)
         }
 
-        let conversationalQueries = [
+        let ordinaryResearchQueries = [
             "Reply with exactly: Ready.",
             "Tighten this paragraph.",
             "What counterargument is missing from my draft?",
@@ -26,9 +26,11 @@ private struct ChatSearchPolicyEvals {
             "Give concise editorial feedback on this selected passage.",
             "Explain the difference between affect and effect.",
         ]
-        for query in conversationalQueries {
-            precondition(!ChatSearchPolicy.requiresWebSearch(for: query), query)
+        for query in ordinaryResearchQueries {
+            precondition(ChatSearchPolicy.requiresWebSearch(for: query), query)
         }
+
+        precondition(!ChatSearchPolicy.requiresWebSearch(for: "   "))
 
         precondition(
             !ChatSearchPolicy.requiresWebSearch(
@@ -38,6 +40,6 @@ private struct ChatSearchPolicyEvals {
             "a selection-feedback request bypassed its no-web gate"
         )
 
-        print("Chat search-policy evals passed (research routing, fast-path conversation, forced no-web feedback).")
+        print("Chat search-policy evals passed (explicit research routing and forced no-web feedback).")
     }
 }

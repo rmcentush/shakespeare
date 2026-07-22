@@ -50,6 +50,15 @@ const stringEscaping = readProjectFile(
 const styleProfileCompiler = readProjectFile(
   'Sources/WordProcessor/Services/StyleProfileCompiler.swift'
 );
+const trainingEventStore = readProjectFile(
+  'Sources/WordProcessor/Services/TrainingEventStore.swift'
+);
+const personalizationRecorder = readProjectFile(
+  'Sources/WordProcessor/Services/PersonalizationEventRecorder.swift'
+);
+const styleDraftStore = readProjectFile(
+  'Sources/WordProcessor/Services/StyleProfileDraftStore.swift'
+);
 
 test('every model service uses sticky prompt-cache routing and cacheable instructions', () => {
   assert.match(modelService, /promptCacheSessionID/);
@@ -155,4 +164,40 @@ test('machine-consumed outputs use strict, described, bounded schemas', () => {
   assert.match(editorViewModel, /Set\(decisionIDs\) == candidateIDs/);
   assert.match(modelService, /"strict": true/);
   assert.match(modelService, /provider\["require_parameters"\] = true/);
+});
+
+test('personalization privacy and style evidence are enforced locally', () => {
+  assert.match(personalizedContext, /Task\.detached[\s\S]*?PersonalizationSettings\.isEnabled/);
+  assert.match(
+    trainingEventStore,
+    /guard UserDefaults\.standard\.object\(forKey: enabledDefaultsKey\) != nil[\s\S]*?return false/
+  );
+  assert.match(
+    trainingEventStore,
+    /recentRejectedDecisions\([\s\S]*?documentID: String[\s\S]*?PersonalizationSettings\.isEnabled[\s\S]*?action\.documentID == documentID/
+  );
+  assert.match(trainingEventStore, /let sessionID: String\?/);
+  assert.match(editorViewModel, /personalizationSessionID = UUID\(\)\.uuidString/);
+  assert.match(editorViewModel, /personalizationEventRecorder\.appendEditDecision/);
+  assert.match(editorViewModel, /await personalizationEventRecorder\.appendOutcomes/);
+  assert.match(personalizationRecorder, /DispatchQueue\(/);
+  assert.match(personalizationRecorder, /Serializes ledger mutations away from the main actor/);
+  assert.doesNotMatch(styleProfileCompiler, /isAcceptedSuggestionPreference/);
+  assert.match(styleProfileCompiler, /supporting_sample_ids/);
+  assert.match(styleProfileCompiler, /supporting_edit_ids/);
+  assert.match(styleProfileCompiler, /intersection\(limits\.sampleIDs\)/);
+  assert.match(styleProfileCompiler, /limits\.editSessionByID/);
+  assert.match(
+    styleDraftStore,
+    /StyleProfileCompiler\.maximumProfileCharacters/
+  );
+});
+
+test('usage diagnostics retain actual billed routing without prose', () => {
+  assert.match(modelService, /completionTokens/);
+  assert.match(modelService, /cost: doubleValue\(usage\["cost"\]\)/);
+  assert.match(modelService, /event\["model"\]/);
+  assert.match(modelService, /usageRecorder/);
+  assert.match(modelService, /case 408, 409, 425, 429, 500\.\.\.599/);
+  assert.doesNotMatch(modelService, /case 400\.\.\.599/);
 });

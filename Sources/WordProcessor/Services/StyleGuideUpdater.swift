@@ -1,6 +1,6 @@
 import Foundation
 
-final class StyleGuideUpdater {
+final class StyleGuideUpdater: Sendable {
     private struct ApprovalJournal: Codable {
         enum Phase: String, Codable { case pending, committed }
 
@@ -11,6 +11,8 @@ final class StyleGuideUpdater {
     struct Proposal: Equatable, Sendable {
         let proposedMarkdown: String
         let eventIDs: [String]
+        let ruleEvidence: [StyleProfileRuleEvidence]
+        let evidenceItems: [StyleProfileEvidenceReviewItem]
     }
 
     enum UpdateError: LocalizedError {
@@ -46,16 +48,17 @@ final class StyleGuideUpdater {
 
         let evidence = try StyleProfileEvidenceCompiler.compile(
             samples: samples.map { StyleProfileSampleEvidence(id: $0.id, text: $0.text) },
-            edits: decisions.map {
-                StyleProfileEditEvidence(
+            edits: decisions.compactMap {
+                guard let sessionID = $0.sessionID, !sessionID.isEmpty else { return nil }
+                return StyleProfileEditEvidence(
                     id: $0.id,
                     decision: $0.decision,
                     kind: $0.kind,
                     originalText: $0.originalText,
                     replacementText: $0.replacementText,
                     finalText: $0.finalText ?? "",
-                    groupID: $0.groupID,
-                    rationale: $0.rationale,
+                    documentID: $0.documentID,
+                    sessionID: sessionID,
                     timestamp: $0.timestamp
                 )
             }
@@ -75,11 +78,10 @@ final class StyleGuideUpdater {
             - When evidence supports it, describe point of view, stance, register, contraction use, sentence-length range and variation, coordination versus subordination, punctuation habits, paragraph openings and endings, paragraph movement, and use of questions, lists, or headings. Record only actionable patterns, not a checklist of measurements.
             - Separate durable voice from genre or topic. A frequent construction is not a preference unless independent samples or writer choices show that it recurs across contexts.
             - Treat each saved edit outcome as weak evidence, not a direct instruction.
-            - accepted_unchanged and later_accepted records are preference-only evidence. Their model-written prose is deliberately omitted. Use only repeated, consistent abstract rationale; never infer the writer authored the missing replacement or final text.
             - For accepted_modified and rejected_rewritten records, only the contrast between proposedText and finalText is writer evidence. Never treat unchanged model wording as independently writer-authored.
             - A rule is established only with support from at least 2 independent samples, at least 5 consistent edits across 3 sessions, or a mixture of 1 sample and 3 edits across 2 sessions.
             - A rule may be emerging with 1 sample or at least 3 consistent edits across 2 sessions. Drop weaker patterns.
-            - Count only supplied evidence that directly supports a rule. Never invent counts. sample_count cannot exceed \(evidence.limits.sampleCount), edit_count cannot exceed \(evidence.limits.editCount), and edit_group_count cannot exceed \(evidence.limits.editGroupCount).
+            - For every rule, return the exact supplied sample and edit IDs that directly support it. Never invent IDs or counts. Local code verifies ID membership and derives sample, edit, and independent-session counts from those IDs.
             - Preserve a useful existing rule by repeating its guidance exactly and setting carried_forward=true only when it already appears in the current reviewed profile and the new evidence does not contradict it. The local compiler verifies exact carry-forward matches and preserves their existing status.
             - Do not create the opposite of a rejected suggestion as a positive preference. A rejection is negative evidence unless the writer's preferred alternative is independently supported.
             - Do not generalize from topic-specific wording, factual corrections, targeting mistakes, one-off instructions, or document-specific constraints.
@@ -133,17 +135,29 @@ final class StyleGuideUpdater {
         guard !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw UpdateError.emptyResponse
         }
-        let markdown = try StyleProfileCompiler.compile(
+        let compilation = try StyleProfileCompiler.compileDetailed(
             response: response,
             limits: evidence.limits,
             sourceTexts: evidence.sourceTexts,
             currentProfile: currentPreferences,
             date: today
         )
-        return Proposal(proposedMarkdown: markdown, eventIDs: evidence.eventIDs)
+        let referencedIDs = Set(compilation.ruleEvidence.flatMap {
+            $0.sampleIDs + $0.editIDs
+        })
+        return Proposal(
+            proposedMarkdown: compilation.markdown,
+            eventIDs: evidence.eventIDs,
+            ruleEvidence: compilation.ruleEvidence,
+            evidenceItems: evidence.reviewItems.filter { referencedIDs.contains($0.id) }
+        )
     }
 
     func approve(_ proposal: Proposal) throws {
+        guard !proposal.proposedMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              proposal.proposedMarkdown.count <= StyleProfileCompiler.maximumProfileCharacters,
+              !proposal.eventIDs.isEmpty
+        else { throw StyleProfileCompiler.CompilerError.invalidResponse }
         try recoverInterruptedApproval()
         let journal = ApprovalJournal(
             phase: .pending,
@@ -164,7 +178,7 @@ final class StyleGuideUpdater {
             AuthorStyleReference.reload()
         } catch {
             do {
-                try store.writeLearnedPreferences(journal.previousPreferences)
+                try store.restoreLearnedPreferences(journal.previousPreferences)
                 try store.restoreProcessedIDs(journal.previousProcessedIDs)
                 try? FileManager.default.removeItem(at: approvalJournalURL)
                 AuthorStyleReference.reload()
@@ -189,7 +203,7 @@ final class StyleGuideUpdater {
         )
         let journal = try JSONDecoder().decode(ApprovalJournal.self, from: data)
         if journal.phase == .pending {
-            try store.writeLearnedPreferences(journal.previousPreferences)
+            try store.restoreLearnedPreferences(journal.previousPreferences)
             try store.restoreProcessedIDs(journal.previousProcessedIDs)
             AuthorStyleReference.reload()
         }

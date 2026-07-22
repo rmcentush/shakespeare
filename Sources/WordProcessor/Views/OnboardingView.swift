@@ -39,7 +39,7 @@ struct OnboardingView: View {
     @State private var isConnecting = false
     @State private var connectionError = ""
     @State private var requiresBilling = false
-    @State private var personalizationEnabled = true
+    @State private var personalizationEnabled = false
     @State private var connectionTask: Task<Void, Never>?
     @State private var showWritingSampleImporter = false
     @State private var writingSampleImportMessage = ""
