@@ -39,6 +39,10 @@ open /Applications/Shakespeare.app
 
 ## Getting started
 
+On first launch, choose **Use Offline** to start without an account, or connect
+OpenRouter to enable the optional connected features. The guided tour introduces
+the editor and can be replayed at any time with **Shakespeare → Start Tutorial**.
+
 Create a document or open an existing `.shkdoc` or HTML file. The editor,
 document storage, spelling, notes, recovery, and version history work locally.
 
