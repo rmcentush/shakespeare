@@ -1,0 +1,44 @@
+name: Bug report
+description: Report a reproducible problem with Shakespeare
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a problem. Do not include credentials, private documents, or other personal information.
+  - type: input
+    id: version
+    attributes:
+      label: Shakespeare version or commit
+      placeholder: Version number or commit SHA
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: macOS 15.5
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open…
+        2. Select…
+        3. Observe…
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Add sanitized logs or screenshots if they help explain the problem.

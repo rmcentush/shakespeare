@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest a focused improvement to Shakespeare
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What need would this address?
+      description: Describe the writing workflow or problem, rather than only the proposed implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed improvement
+      description: Explain the behavior you would find useful.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include any current workaround or related approach.

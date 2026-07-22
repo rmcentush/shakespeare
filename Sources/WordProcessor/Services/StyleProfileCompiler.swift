@@ -1,0 +1,625 @@
+import Foundation
+
+enum StyleLearningPolicy {
+    static let minimumConfirmedRewriteCharacters = 60
+
+    /// Durable profile evidence must reflect an active writer choice. Merely
+    /// accepting model prose unchanged is useful interaction history, but it
+    /// must not teach that same prose back to the model as the writer's voice.
+    static func isDurableStyleEvidence(
+        outcome: String?,
+        finalText: String?,
+        trainingEligible: Bool?,
+        confidence: Double?
+    ) -> Bool {
+        guard trainingEligible == true,
+              (confidence ?? 0) >= 0.8,
+              ["accepted_modified", "rejected_rewritten"]
+                .contains(outcome ?? ""),
+              let text = finalText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty
+        else { return false }
+        return true
+    }
+
+    static func isConfirmedUserRewrite(
+        outcome: String?,
+        proposedText: String,
+        finalText: String?
+    ) -> Bool {
+        guard ["accepted_modified", "rejected_rewritten"].contains(outcome ?? ""),
+              let text = finalText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              text.count >= minimumConfirmedRewriteCharacters,
+              isMaterialRewrite(proposedText: proposedText, finalText: text)
+        else { return false }
+        return true
+    }
+
+    /// The runtime example layer quotes the final prose as a positive sample, so
+    /// a punctuation fix or one-word tweak is not enough. Small edits remain
+    /// available to the profile refiner as contrastive edit evidence.
+    private static func isMaterialRewrite(
+        proposedText: String,
+        finalText: String
+    ) -> Bool {
+        let proposedTokens = styleTokens(in: proposedText)
+        let finalTokens = styleTokens(in: finalText)
+        guard !finalTokens.isEmpty else { return false }
+        if proposedTokens.isEmpty { return finalTokens.count >= 8 }
+
+        let differenceCount = finalTokens.difference(from: proposedTokens).count
+        let baseline = max(proposedTokens.count, finalTokens.count)
+        return differenceCount >= 4
+            && Double(differenceCount) / Double(max(baseline, 1)) >= 0.12
+    }
+
+    private static func styleTokens(in text: String) -> [String] {
+        var tokens: [String] = []
+        var word = ""
+
+        func flushWord() {
+            guard !word.isEmpty else { return }
+            tokens.append(word.lowercased())
+            word = ""
+        }
+
+        for character in text {
+            if character.isLetter || character.isNumber {
+                word.append(character)
+            } else {
+                flushWord()
+                if !character.isWhitespace { tokens.append(String(character)) }
+            }
+        }
+        flushWord()
+        return tokens
+    }
+
+}
+
+struct StyleProfileSampleEvidence: Codable, Equatable, Sendable {
+    let id: String
+    let text: String
+}
+
+struct StyleProfileEditEvidence: Codable, Equatable, Sendable {
+    let id: String
+    let decision: String
+    let kind: String
+    let originalText: String
+    let replacementText: String
+    let finalText: String
+    let documentID: String
+    let sessionID: String
+    let timestamp: Double
+}
+
+struct StyleProfileEvidenceReviewItem: Codable, Equatable, Sendable, Identifiable {
+    enum Kind: String, Codable, Sendable { case sample, edit }
+
+    let id: String
+    let kind: Kind
+    let summary: String
+}
+
+struct StyleProfileRuleEvidence: Codable, Equatable, Sendable, Identifiable {
+    var id: String { "\(dimension):\(guidance)" }
+
+    let dimension: String
+    let guidance: String
+    let established: Bool
+    let sampleIDs: [String]
+    let editIDs: [String]
+    let sessionIDs: [String]
+    let carriedForward: Bool
+}
+
+/// Compiles raw local evidence into a deliberately small, provenance-preserving
+/// request. Imported documents are sampled across their beginning, middle, and
+/// end; edit evidence is clipped field-by-field. No complete document or ledger
+/// is ever sent to the profile-refinement request.
+enum StyleProfileEvidenceCompiler {
+    static let maximumSampleCharacters = 8_500
+    static let maximumEditCharacters = 8_000
+    static let maximumSamples = 5
+    static let maximumEdits = 40
+
+    struct Packet: Equatable, Sendable {
+        let samplesJSON: String
+        let editsJSON: String
+        let eventIDs: [String]
+        let sourceTexts: [String]
+        let limits: StyleProfileCompiler.EvidenceLimits
+        let sampleCount: Int
+        let editCount: Int
+        let reviewItems: [StyleProfileEvidenceReviewItem]
+    }
+
+    static func compile(
+        samples: [StyleProfileSampleEvidence],
+        edits: [StyleProfileEditEvidence]
+    ) throws -> Packet {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+
+        var selectedSamples: [StyleProfileSampleEvidence] = []
+        var selectedSampleIDs = Set<String>()
+        for sample in samples.prefix(maximumSamples) {
+            guard !sample.id.isEmpty, selectedSampleIDs.insert(sample.id).inserted else { continue }
+            let excerpt = representativeExcerpt(from: sample.text, maximumCharacters: 1_500)
+            guard excerpt.count >= 240 else { continue }
+            let candidate = StyleProfileSampleEvidence(id: sample.id, text: excerpt)
+            let encoded = try encoder.encode(selectedSamples + [candidate])
+            guard encoded.count <= maximumSampleCharacters else { break }
+            selectedSamples.append(candidate)
+        }
+
+        var selectedEdits: [StyleProfileEditEvidence] = []
+        var selectedEditIDs = Set<String>()
+        for edit in edits.suffix(maximumEdits).reversed() {
+            guard !edit.id.isEmpty, selectedEditIDs.insert(edit.id).inserted else { continue }
+            let candidate = StyleProfileEditEvidence(
+                id: edit.id,
+                decision: bounded(edit.decision, to: 40),
+                kind: bounded(edit.kind, to: 40),
+                originalText: bounded(edit.originalText, to: 240),
+                replacementText: bounded(edit.replacementText, to: 240),
+                finalText: bounded(edit.finalText, to: 280),
+                documentID: bounded(edit.documentID, to: 160),
+                sessionID: bounded(edit.sessionID, to: 160),
+                timestamp: edit.timestamp
+            )
+            let encoded = try encoder.encode(selectedEdits + [candidate])
+            guard encoded.count <= maximumEditCharacters else { break }
+            selectedEdits.append(candidate)
+        }
+
+        let sampleData = try encoder.encode(selectedSamples)
+        let editData = try encoder.encode(selectedEdits)
+        let sampleJSON = String(decoding: sampleData, as: UTF8.self)
+        let editsJSON = String(decoding: editData, as: UTF8.self)
+        let eventIDs = (selectedSamples.map(\.id) + selectedEdits.map(\.id)).reduce(into: [String]()) {
+            if !$0.contains($1) { $0.append($1) }
+        }
+        let sourceTexts = selectedSamples.map(\.text) + selectedEdits.flatMap {
+            [$0.originalText, $0.replacementText, $0.finalText]
+        }.filter { !$0.isEmpty }
+        let reviewItems = selectedSamples.map {
+            StyleProfileEvidenceReviewItem(
+                id: $0.id,
+                kind: .sample,
+                summary: "Imported sample: \(reviewExcerpt($0.text))"
+            )
+        } + selectedEdits.map {
+            let preferred = $0.finalText.isEmpty ? $0.originalText : $0.finalText
+            return StyleProfileEvidenceReviewItem(
+                id: $0.id,
+                kind: .edit,
+                summary: "[\($0.kind)] Preferred \(reviewExcerpt(preferred)) over \(reviewExcerpt($0.replacementText))"
+            )
+        }
+
+        return Packet(
+            samplesJSON: sampleJSON,
+            editsJSON: editsJSON,
+            eventIDs: eventIDs,
+            sourceTexts: sourceTexts,
+            limits: StyleProfileCompiler.EvidenceLimits(
+                sampleIDs: Set(selectedSamples.map(\.id)),
+                editSessionByID: Dictionary(
+                    uniqueKeysWithValues: selectedEdits.compactMap { edit in
+                        guard !edit.sessionID.isEmpty else { return nil }
+                        return (edit.id, edit.sessionID)
+                    }
+                )
+            ),
+            sampleCount: selectedSamples.count,
+            editCount: selectedEdits.count,
+            reviewItems: reviewItems
+        )
+    }
+
+    private static func representativeExcerpt(
+        from rawText: String,
+        maximumCharacters: Int
+    ) -> String {
+        let text = rawText
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return "" }
+
+        let paragraphs = text.components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.count >= 120 }
+        guard !paragraphs.isEmpty else { return bounded(text, to: maximumCharacters) }
+
+        let candidateIndices = [0, paragraphs.count / 2, paragraphs.count - 1]
+        var seen = Set<Int>()
+        var selected: [String] = []
+        var remaining = maximumCharacters
+        for index in candidateIndices where seen.insert(index).inserted {
+            let separatorCost = selected.isEmpty ? 0 : 2
+            guard remaining > separatorCost + 120 else { break }
+            remaining -= separatorCost
+            let excerpt = bounded(paragraphs[index], to: min(500, remaining))
+            selected.append(excerpt)
+            remaining -= excerpt.count
+        }
+        return selected.joined(separator: "\n\n")
+    }
+
+    private static func bounded(_ value: String, to maximumCharacters: Int) -> String {
+        let normalized = value
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.count > maximumCharacters else { return normalized }
+        return String(normalized.prefix(maximumCharacters - 1)).trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ) + "…"
+    }
+
+    private static func reviewExcerpt(_ value: String) -> String {
+        let compact = value
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let excerpt = bounded(compact, to: 180)
+        return excerpt.isEmpty ? "(empty)" : "“\(excerpt)”"
+    }
+}
+
+/// Validates the model-produced profile against the amount of evidence actually
+/// supplied, removes copied prose, and renders one compact file used at runtime.
+/// The model proposes rules; these deterministic gates decide what may survive.
+enum StyleProfileCompiler {
+    static let maximumProfileCharacters = 1_800
+    static let maximumEstablishedRules = 12
+    static let maximumEmergingRules = 6
+
+    struct EvidenceLimits: Equatable, Sendable {
+        let sampleIDs: Set<String>
+        let editSessionByID: [String: String]
+
+        var sampleCount: Int { sampleIDs.count }
+        var editCount: Int { editSessionByID.count }
+        var editGroupCount: Int { Set(editSessionByID.values).count }
+    }
+
+    enum CompilerError: LocalizedError {
+        case invalidResponse
+        case insufficientEvidence
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidResponse:
+                return "The style refiner returned an invalid profile. Nothing was changed."
+            case .insufficientEvidence:
+                return "The evidence did not support a safe style-profile update yet."
+            }
+        }
+    }
+
+    struct ModelProfile: Codable, Equatable, Sendable {
+        let summary: String
+        let rules: [ModelRule]
+    }
+
+    struct ModelRule: Codable, Equatable, Sendable {
+        let dimension: String
+        let guidance: String
+        let supportingSampleIDs: [String]
+        let supportingEditIDs: [String]
+        let carriedForward: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case dimension
+            case guidance
+            case supportingSampleIDs = "supporting_sample_ids"
+            case supportingEditIDs = "supporting_edit_ids"
+            case carriedForward = "carried_forward"
+        }
+    }
+
+    static func outputSchema(limits: EvidenceLimits) -> [String: Any] {
+        [
+            "type": "object",
+            "properties": [
+                "summary": [
+                    "type": "string",
+                    "description": "A compact, topic-free overview of the supported style profile.",
+                    "maxLength": 300,
+                ],
+                "rules": [
+                    "type": "array",
+                    "description": "Only established or emerging style rules supported by the supplied evidence.",
+                    "maxItems": maximumEstablishedRules + maximumEmergingRules,
+                    "items": [
+                        "type": "object",
+                        "properties": [
+                            "dimension": [
+                                "type": "string",
+                                "description": "The single style dimension best represented by this rule.",
+                                "enum": [
+                                    "voice", "tone", "diction", "syntax", "rhythm",
+                                    "paragraphs", "structure", "clarity", "concision", "avoidance",
+                                ],
+                            ],
+                            "guidance": [
+                                "type": "string",
+                                "description": "One concise, actionable, topic-free editing note with no example prose.",
+                                "minLength": 12,
+                                "maxLength": 180,
+                            ],
+                            "supporting_sample_ids": [
+                                "type": "array",
+                                "description": "Distinct supplied sample IDs that directly support this rule. Use only IDs present in the evidence JSON.",
+                                "maxItems": limits.sampleCount,
+                                "items": [
+                                    "type": "string",
+                                    "maxLength": 256,
+                                ],
+                            ],
+                            "supporting_edit_ids": [
+                                "type": "array",
+                                "description": "Distinct supplied writer-edit IDs that directly support this rule. Use only IDs present in the evidence JSON.",
+                                "maxItems": limits.editCount,
+                                "items": [
+                                    "type": "string",
+                                    "maxLength": 256,
+                                ],
+                            ],
+                            "carried_forward": [
+                                "type": "boolean",
+                                "description": "True only when guidance exactly repeats a non-contradicted rule from the current reviewed profile.",
+                            ],
+                        ],
+                        "required": [
+                            "dimension", "guidance", "supporting_sample_ids",
+                            "supporting_edit_ids", "carried_forward",
+                        ],
+                        "additionalProperties": false,
+                    ],
+                ],
+            ],
+            "required": ["summary", "rules"],
+            "additionalProperties": false,
+        ]
+    }
+
+    static func compile(
+        response: String,
+        limits: EvidenceLimits,
+        sourceTexts: [String],
+        currentProfile: String,
+        date: String
+    ) throws -> String {
+        try compileDetailed(
+            response: response,
+            limits: limits,
+            sourceTexts: sourceTexts,
+            currentProfile: currentProfile,
+            date: date
+        ).markdown
+    }
+
+    struct Compilation: Equatable, Sendable {
+        let markdown: String
+        let ruleEvidence: [StyleProfileRuleEvidence]
+    }
+
+    static func compileDetailed(
+        response: String,
+        limits: EvidenceLimits,
+        sourceTexts: [String],
+        currentProfile: String,
+        date: String
+    ) throws -> Compilation {
+        guard let data = jsonData(from: response),
+              let profile = try? JSONDecoder().decode(ModelProfile.self, from: data)
+        else { throw CompilerError.invalidResponse }
+
+        struct AcceptedRule {
+            let line: String
+            let established: Bool
+            let evidence: StyleProfileRuleEvidence
+        }
+
+        let reviewedRules = reviewedRuleStatuses(in: currentProfile)
+        var accepted: [AcceptedRule] = []
+        var seen = Set<String>()
+        for rule in profile.rules {
+            let dimension = rule.dimension.lowercased()
+            guard allowedDimensions.contains(dimension) else { continue }
+            let guidance = compactSentence(rule.guidance, maximumCharacters: 180)
+            guard guidance.count >= 12,
+                  !containsCopiedPhrase(guidance, in: sourceTexts),
+                  seen.insert(guidance.lowercased()).inserted
+            else { continue }
+
+            let sampleIDs = Array(
+                Set(rule.supportingSampleIDs).intersection(limits.sampleIDs)
+            ).sorted()
+            let editIDs = Array(
+                Set(rule.supportingEditIDs).intersection(limits.editSessionByID.keys)
+            ).sorted()
+            let sessionIDs = Array(Set(editIDs.compactMap {
+                limits.editSessionByID[$0]
+            })).sorted()
+            let sampleCount = sampleIDs.count
+            let editCount = editIDs.count
+            let groupCount = sessionIDs.count
+            let reviewedStatus = rule.carriedForward
+                ? reviewedRules[guidance.lowercased()]
+                : nil
+            let carriedEstablished = reviewedStatus == true
+            let carriedEmerging = reviewedStatus == false
+            let established = carriedEstablished
+                || sampleCount >= 2
+                || (editCount >= 5 && groupCount >= 3)
+                || (sampleCount >= 1 && editCount >= 3 && groupCount >= 2)
+            let emerging = carriedEmerging
+                || sampleCount >= 1
+                || (editCount >= 3 && groupCount >= 2)
+            guard established || emerging else { continue }
+
+            var evidence: [String] = []
+            if sampleCount > 0 { evidence.append("\(sampleCount) sample\(sampleCount == 1 ? "" : "s")") }
+            if editCount > 0 { evidence.append("\(editCount) edits/\(groupCount) sessions") }
+            if reviewedStatus != nil && evidence.isEmpty { evidence.append("reviewed") }
+            let suffix = evidence.isEmpty ? "" : " — \(evidence.joined(separator: ", "))"
+            accepted.append(AcceptedRule(
+                line: "- [\(dimension)] \(guidance)\(suffix)",
+                established: established,
+                evidence: StyleProfileRuleEvidence(
+                    dimension: dimension,
+                    guidance: guidance,
+                    established: established,
+                    sampleIDs: sampleIDs,
+                    editIDs: editIDs,
+                    sessionIDs: sessionIDs,
+                    carriedForward: reviewedStatus != nil
+                )
+            ))
+        }
+
+        let established = accepted.filter(\.established).prefix(maximumEstablishedRules)
+        let emerging = accepted.filter { !$0.established }.prefix(maximumEmergingRules)
+        guard !established.isEmpty || !emerging.isEmpty else {
+            throw CompilerError.insufficientEvidence
+        }
+
+        var rendered = "# Learned Style Profile\n\nUpdated: \(date)"
+        let summary = compactSentence(profile.summary, maximumCharacters: 220)
+        if summary.count >= 20, !containsCopiedPhrase(summary, in: sourceTexts) {
+            let candidate = rendered + "\n\nProfile: \(summary)"
+            if candidate.count <= maximumProfileCharacters { rendered = candidate }
+        }
+
+        for (heading, rules) in [
+            ("## Established", established.map(\.line)),
+            ("## Emerging", emerging.map(\.line)),
+        ] where !rules.isEmpty {
+            var section = heading
+            var appendedRule = false
+            for line in rules {
+                let candidateSection = section + "\n" + line
+                let candidateProfile = rendered + "\n\n" + candidateSection
+                guard candidateProfile.count <= maximumProfileCharacters else { break }
+                section = candidateSection
+                appendedRule = true
+            }
+            if appendedRule { rendered += "\n\n" + section }
+        }
+        guard rendered.contains("- [") else { throw CompilerError.insufficientEvidence }
+        let renderedGuidance = Set(
+            rendered.components(separatedBy: .newlines).compactMap { rawLine -> String? in
+                let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard line.hasPrefix("- ["), let bracket = line.firstIndex(of: "]") else {
+                    return nil
+                }
+                var guidance = String(line[line.index(after: bracket)...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if let evidence = guidance.range(of: " — ") {
+                    guidance = String(guidance[..<evidence.lowerBound])
+                }
+                return guidance.lowercased()
+            }
+        )
+        return Compilation(
+            markdown: rendered,
+            ruleEvidence: accepted.map(\.evidence).filter {
+                renderedGuidance.contains($0.guidance.lowercased())
+            }
+        )
+    }
+
+    private static let allowedDimensions: Set<String> = [
+        "voice", "tone", "diction", "syntax", "rhythm",
+        "paragraphs", "structure", "clarity", "concision", "avoidance",
+    ]
+
+    private static func reviewedRuleStatuses(in markdown: String) -> [String: Bool] {
+        var established = true
+        var result: [String: Bool] = [:]
+        for rawLine in markdown.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix("## ") {
+                let heading = line.lowercased()
+                established = !heading.contains("emerging") && !heading.contains("tentative")
+                continue
+            }
+            guard line.hasPrefix("- ") else { continue }
+            var guidance = String(line.dropFirst(2))
+            if guidance.hasPrefix("["), let bracket = guidance.firstIndex(of: "]") {
+                guidance = String(guidance[guidance.index(after: bracket)...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            if let evidence = guidance.range(of: " — ") {
+                guidance = String(guidance[..<evidence.lowerBound])
+            } else if let evidence = guidance.range(of: " (evidence", options: .caseInsensitive) {
+                guidance = String(guidance[..<evidence.lowerBound])
+            }
+            let compact = compactSentence(guidance, maximumCharacters: 180).lowercased()
+            if compact.count >= 12 { result[compact] = established }
+        }
+        return result
+    }
+
+    private static func jsonData(from response: String) -> Data? {
+        var cleaned = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.hasPrefix("```json") { cleaned.removeFirst("```json".count) }
+        else if cleaned.hasPrefix("```") { cleaned.removeFirst(3) }
+        if cleaned.hasSuffix("```") { cleaned.removeLast(3) }
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let first = cleaned.firstIndex(of: "{"), let last = cleaned.lastIndex(of: "}") {
+            cleaned = String(cleaned[first...last])
+        }
+        return cleaned.data(using: .utf8)
+    }
+
+    private static func compactSentence(_ raw: String, maximumCharacters: Int) -> String {
+        let normalized = raw
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .replacingOccurrences(of: "\"", with: "")
+            .replacingOccurrences(of: "“", with: "")
+            .replacingOccurrences(of: "”", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.count > maximumCharacters else { return normalized }
+        let prefix = String(normalized.prefix(maximumCharacters - 1))
+        let boundary = prefix.lastIndex(where: { $0.isWhitespace }) ?? prefix.endIndex
+        return String(prefix[..<boundary]).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+    }
+
+    static func containsCopiedPhrase(
+        _ candidate: String,
+        in sources: [String],
+        minimumWords: Int = 8
+    ) -> Bool {
+        let candidateTokens = tokens(in: candidate)
+        guard candidateTokens.count >= minimumWords else { return false }
+        let candidatePhrases = ngrams(candidateTokens, length: minimumWords)
+        guard !candidatePhrases.isEmpty else { return false }
+        for source in sources {
+            let sourceTokens = tokens(in: source)
+            if !candidatePhrases.isDisjoint(with: ngrams(sourceTokens, length: minimumWords)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func tokens(in text: String) -> [String] {
+        text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+    }
+
+    private static func ngrams(_ tokens: [String], length: Int) -> Set<String> {
+        guard length > 0, tokens.count >= length else { return [] }
+        return Set((0...(tokens.count - length)).map {
+            tokens[$0..<($0 + length)].joined(separator: "\u{001f}")
+        })
+    }
+}
