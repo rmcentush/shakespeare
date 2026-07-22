@@ -19,7 +19,7 @@ else
     fail "releases require macOS"
 fi
 
-for command in git node npm swift xcrun xcodebuild security codesign ditto lipo spctl shasum curl; do
+for command in git node npm swift xcrun security codesign ditto lipo spctl shasum curl; do
     if command -v "$command" >/dev/null 2>&1; then
         pass "$command is installed"
     else
@@ -36,18 +36,18 @@ else
     fail "Node.js 22.13 or newer is required (found $(node --version 2>/dev/null || echo unavailable))"
 fi
 
-xcode_major="$(xcodebuild -version 2>/dev/null | sed -n '1s/^Xcode \([0-9][0-9]*\).*/\1/p')"
-if [[ "$xcode_major" =~ ^[0-9]+$ ]] && [ "$xcode_major" -ge 26 ]; then
-    pass "Xcode 26 or newer"
+macos_sdk_major="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null | sed -n 's/^\([0-9][0-9]*\).*/\1/p')"
+if [[ "$macos_sdk_major" =~ ^[0-9]+$ ]] && [ "$macos_sdk_major" -ge 26 ]; then
+    pass "macOS 26 SDK or newer"
 else
-    fail "select a full Xcode 26+ installation with xcode-select"
+    fail "install or select Apple developer tools with the macOS 26+ SDK"
 fi
 
 for developer_tool in notarytool stapler; do
     if xcrun --find "$developer_tool" >/dev/null 2>&1; then
         pass "Apple $developer_tool tool is available"
     else
-        fail "Xcode is missing $developer_tool"
+        fail "Apple developer tools are missing $developer_tool"
     fi
 done
 

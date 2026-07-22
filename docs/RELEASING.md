@@ -25,8 +25,9 @@ Release archives live in R2 and are selected through
 
 ## Prepare the Mac
 
-Install one Developer ID Application certificate and save notarization
-credentials outside the repository:
+Install Xcode or Apple Command Line Tools with the macOS 26 SDK, install one
+Developer ID Application certificate, and save notarization credentials outside
+the repository:
 
 ```bash
 xcrun notarytool store-credentials shakespeare

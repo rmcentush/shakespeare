@@ -24,7 +24,7 @@ when the first release is ready.
 ### Requirements
 
 - macOS 14 or later
-- Xcode 26 or later
+- Apple developer tools with the macOS 26 SDK
 - Node.js 22 or later and npm
 
 ### Build from source
