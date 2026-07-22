@@ -13,5 +13,5 @@ Do not open a public issue until a fix or disclosure plan is available.
 ## Scope
 
 Security reports may cover the macOS application, document handling, local
-storage, Keychain integration, network requests, website, and release process.
-The latest release and the current `main` branch receive security fixes.
+storage, Keychain integration, network requests, and application build or
+packaging scripts. The current `main` branch receives security fixes.

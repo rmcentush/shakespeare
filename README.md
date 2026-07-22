@@ -17,9 +17,7 @@ preferences remain available without an internet connection.
 
 ## Installation
 
-Shakespeare is currently available as a source build. A signed and notarized
-download will be published on [writeshakespeare.com](https://writeshakespeare.com)
-when the first release is ready.
+Shakespeare is currently distributed as source code.
 
 ### Requirements
 
@@ -75,11 +73,11 @@ guidance and deletion controls.
 ```bash
 make run      # Build and run a debug app
 make check    # Run the complete validation suite
+make package  # Create .build/package/Shakespeare.app
 make install  # Build and install in /Applications
 ```
 
-See [Contributing](CONTRIBUTING.md) for development conventions and
-[Development and releasing](docs/RELEASING.md) for the release process.
+See [Contributing](CONTRIBUTING.md) for development conventions.
 
 ## Security
 
