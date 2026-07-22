@@ -350,8 +350,22 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .toggleFocusMode, object: editorViewModel)) { _ in
                 toggleFocusMode()
             }
-            .onReceive(NotificationCenter.default.publisher(for: .showFeatureTour)) { _ in
-                guard editorViewModel.webView?.window === NSApp.mainWindow else { return }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: .editorMenuActionRequested,
+                    object: editorViewModel
+                )
+            ) { notification in
+                guard let action = notification.userInfo?["action"] as? EditorMenuAction else { return }
+                performEditorMenuAction(action)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .showFeatureTour)) { notification in
+                if let target = notification.object as? EditorViewModel {
+                    guard target === editorViewModel else { return }
+                    editorViewModel.webView?.window?.makeKeyAndOrderFront(nil)
+                } else {
+                    guard editorViewModel.webView?.window === NSApp.mainWindow else { return }
+                }
                 beginFeatureTour(replay: true)
             }
             .onReceive(
@@ -608,7 +622,8 @@ struct ContentView: View {
 
     @ViewBuilder
     private var keyboardShortcuts: some View {
-        // Keep standard editing shortcuts active without exposing a generic Edit menu.
+        // Preserve editor-specific history and pasteboard behavior while the
+        // standard Edit menu keeps these commands discoverable.
         Button("") {
             performHistoryShortcut(command: "undo", fallbackSelectorName: "undo:")
         }
@@ -639,25 +654,6 @@ struct ContentView: View {
         .keyboardShortcut("v", modifiers: .command)
         .hidden()
 
-        // Cmd+\ to toggle sidebar
-        Button("") {
-            toggleSidebar(.chat)
-        }
-        .keyboardShortcut("\\", modifiers: .command)
-        .hidden()
-
-        // Cmd+Option+N to toggle document notes
-        Button("") {
-            toggleSidebar(.notes)
-        }
-        .keyboardShortcut("n", modifiers: [.command, .option])
-        .hidden()
-
-        // Cmd+Shift+F for focus mode
-        Button("") { toggleFocusMode() }
-            .keyboardShortcut("f", modifiers: [.command, .shift])
-            .hidden()
-
         // ESC closes transient UI first, then leaves Focus Mode before acting on suggestions.
         Button("") {
             if showFindBar {
@@ -676,68 +672,56 @@ struct ContentView: View {
         .keyboardShortcut(.escape, modifiers: [])
         .hidden()
 
-        // Cmd+Shift+V for version history
-        Button("") {
-            toggleVersionHistory()
-        }
-        .keyboardShortcut("v", modifiers: [.command, .shift])
-        .hidden()
-
-        // Standard editor zoom shortcuts
-        Button("") { editorViewModel.zoomIn() }
-            .keyboardShortcut("+", modifiers: .command)
-            .hidden()
-
+        // Also accept Command+= for keyboards where "+" requires Shift.
         Button("") { editorViewModel.zoomIn() }
             .keyboardShortcut("=", modifiers: .command)
             .hidden()
+    }
+}
 
-        Button("") { editorViewModel.zoomOut() }
-            .keyboardShortcut("-", modifiers: .command)
-            .hidden()
-
-        Button("") { editorViewModel.resetZoom() }
-            .keyboardShortcut("0", modifiers: .command)
-            .hidden()
-
-        // Cmd+F to open find bar
-        Button("") {
+extension ContentView {
+    private func performEditorMenuAction(_ action: EditorMenuAction) {
+        switch action {
+        case .showFind:
             withAnimation(.easeInOut(duration: 0.15)) {
                 showFindBar = true
                 showReplace = false
                 findBarFocusRequest += 1
             }
-        }
-        .keyboardShortcut("f", modifiers: .command)
-        .hidden()
-
-        // Cmd+Option+F for find & replace
-        Button("") {
+        case .showFindAndReplace:
             withAnimation(.easeInOut(duration: 0.15)) {
                 showFindBar = true
                 showReplace = true
                 findBarFocusRequest += 1
             }
-        }
-        .keyboardShortcut("f", modifiers: [.command, .option])
-        .hidden()
-
-        // Cmd+Shift+M to add comment
-        Button("") {
-            if editorViewModel.selectionState.hasSelection {
-                editorViewModel.addComment()
-                withAnimation(Layout.sidebarAnimation) {
-                    showVersionHistory = false
-                    activeSidebar = .comments
-                }
+        case .addComment:
+            guard editorViewModel.selectionState.hasSelection else { return }
+            editorViewModel.addComment()
+            withAnimation(Layout.sidebarAnimation) {
+                showVersionHistory = false
+                activeSidebar = .comments
             }
+        case .toggleResearch:
+            toggleSidebar(.chat)
+        case .toggleNotes:
+            toggleSidebar(.notes)
+        case .toggleComments:
+            toggleSidebar(.comments)
+        case .toggleVersionHistory:
+            toggleVersionHistory()
+        case .toggleFocusMode:
+            toggleFocusMode()
+        case .zoomIn:
+            editorViewModel.zoomIn()
+        case .zoomOut:
+            editorViewModel.zoomOut()
+        case .resetZoom:
+            editorViewModel.resetZoom()
+        case let .format(command, value):
+            editorViewModel.applyFormat(command, value: value)
         }
-        .keyboardShortcut("m", modifiers: [.command, .shift])
-        .hidden()
     }
-}
 
-extension ContentView {
     private func performHistoryShortcut(command: String, fallbackSelectorName: String) {
         if editorViewModel.isEditorFocused {
             editorViewModel.applyFormat(command)

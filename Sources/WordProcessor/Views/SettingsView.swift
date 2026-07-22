@@ -395,22 +395,11 @@ struct SettingsView: View {
             }
 
             SettingsCard(title: "Dictionary and Privacy") {
-                Text("Spelling is checked locally by Harper. Run an on-demand thorough proofread from the Shakespeare menu or press Command-Option-P.")
+                Text("Spelling is checked locally by Harper. Run an on-demand thorough proofread from the Edit menu or press Command-Option-P.")
                     .settingsDescriptionStyle()
 
                 Button("Reset Learned Words and Ignored Issues") {
                     showResetDictionaryConfirmation = true
-                }
-            }
-
-            SettingsCard(title: "Feature Tour") {
-                HStack(alignment: .center, spacing: 16) {
-                    Text("Review the main writing tools.")
-                        .settingsDescriptionStyle()
-                    Spacer()
-                    Button("Start Tutorial") {
-                        replayFeatureTour()
-                    }
                 }
             }
         }
@@ -842,13 +831,6 @@ struct SettingsView: View {
         openRouterConnectionError = ""
         openRouterConnectionRequiresBilling = false
         NotificationCenter.default.post(name: .openRouterConnectionChanged, object: nil)
-    }
-
-    private func replayFeatureTour() {
-        NSApp.keyWindow?.close()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            NotificationCenter.default.post(name: .showFeatureTour, object: nil)
-        }
     }
 
     private func revealPersonalizationData() {

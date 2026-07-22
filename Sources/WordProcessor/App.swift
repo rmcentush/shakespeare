@@ -6,7 +6,28 @@ enum WordProcessorWindowID {
     static let settings = "settings"
 }
 
+enum EditorMenuAction: Sendable {
+    case showFind
+    case showFindAndReplace
+    case addComment
+    case toggleResearch
+    case toggleNotes
+    case toggleComments
+    case toggleVersionHistory
+    case toggleFocusMode
+    case zoomIn
+    case zoomOut
+    case resetZoom
+    case format(command: String, value: String?)
+}
+
+extension Notification.Name {
+    static let editorMenuActionRequested = Notification.Name("editorMenuActionRequested")
+}
+
 private struct WindowCommandContext {
+    let canEditDocument: Bool
+    let hasSelection: Bool
     let canSaveNamedVersion: Bool
     let canRunThoroughProofread: Bool
     let openDocument: () -> Void
@@ -17,6 +38,7 @@ private struct WindowCommandContext {
     let showSaveNamedVersion: () -> Void
     let runThoroughProofread: () -> Void
     let startTutorial: () -> Void
+    let performEditorMenuAction: (EditorMenuAction) -> Void
 }
 
 private struct WindowCommandContextKey: FocusedValueKey {
@@ -24,15 +46,21 @@ private struct WindowCommandContextKey: FocusedValueKey {
 }
 
 @MainActor
-private final class RecentDocumentRouter {
-    static let shared = RecentDocumentRouter()
+private final class EditorWindowRouter {
+    static let shared = EditorWindowRouter()
 
     private var openHandlers: [UUID: (URL) -> Void] = [:]
+    private var tutorialHandlers: [UUID: () -> Void] = [:]
     private var handlerOrder: [UUID] = []
     private var activeHandlerID: UUID?
 
-    func register(id: UUID, openHandler: @escaping (URL) -> Void) {
+    func register(
+        id: UUID,
+        openHandler: @escaping (URL) -> Void,
+        tutorialHandler: @escaping () -> Void
+    ) {
         openHandlers[id] = openHandler
+        tutorialHandlers[id] = tutorialHandler
         if !handlerOrder.contains(id) {
             handlerOrder.append(id)
         }
@@ -43,6 +71,7 @@ private final class RecentDocumentRouter {
 
     func unregister(id: UUID) {
         openHandlers[id] = nil
+        tutorialHandlers[id] = nil
         handlerOrder.removeAll { $0 == id }
         if activeHandlerID == id {
             activeHandlerID = handlerOrder.last
@@ -65,6 +94,24 @@ private final class RecentDocumentRouter {
             if let openHandler = openHandlers[id] {
                 activeHandlerID = id
                 openHandler(url)
+                return true
+            }
+        }
+
+        return false
+    }
+
+    @discardableResult
+    func startTutorial() -> Bool {
+        if let activeHandlerID, let tutorialHandler = tutorialHandlers[activeHandlerID] {
+            tutorialHandler()
+            return true
+        }
+
+        for id in handlerOrder.reversed() {
+            if let tutorialHandler = tutorialHandlers[id] {
+                activeHandlerID = id
+                tutorialHandler()
                 return true
             }
         }
@@ -110,69 +157,6 @@ private final class DocumentSessionCoordinator {
 @MainActor
 private final class WordProcessorAppDelegate: NSObject, NSApplicationDelegate {
     private var isPreparingForTermination = false
-    private var isMainMenuCleanupScheduled = false
-
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(mainMenuDidAddItem(_:)),
-            name: NSMenu.didAddItemNotification,
-            object: nil
-        )
-        consolidateMainMenu()
-    }
-
-    func applicationDidBecomeActive(_ notification: Notification) {
-        consolidateMainMenu()
-    }
-
-    private func consolidateMainMenu() {
-        guard !isMainMenuCleanupScheduled else { return }
-        isMainMenuCleanupScheduled = true
-        DispatchQueue.main.async { [weak self] in
-            self?.isMainMenuCleanupScheduled = false
-            guard let mainMenu = NSApp.mainMenu else { return }
-
-            // Shakespeare's small command set fits in the application menu. Keep
-            // only that first menu instead of scattering actions across several
-            // mostly empty top-level menus.
-            for item in mainMenu.items.dropFirst() {
-                mainMenu.removeItem(item)
-            }
-
-            if let applicationMenu = mainMenu.items.first?.submenu {
-                self?.removeRedundantSeparators(from: applicationMenu)
-            }
-        }
-    }
-
-    @objc private func mainMenuDidAddItem(_ notification: Notification) {
-        guard let menu = notification.object as? NSMenu,
-              let mainMenu = NSApp.mainMenu,
-              menu === mainMenu || menu === mainMenu.items.first?.submenu
-        else {
-            return
-        }
-        consolidateMainMenu()
-    }
-
-    private func removeRedundantSeparators(from menu: NSMenu) {
-        var previousWasSeparator = true
-        for item in menu.items {
-            guard item.isSeparatorItem else {
-                previousWasSeparator = false
-                continue
-            }
-            if previousWasSeparator {
-                menu.removeItem(item)
-            } else {
-                previousWasSeparator = true
-            }
-        }
-        if let lastItem = menu.items.last, lastItem.isSeparatorItem {
-            menu.removeItem(lastItem)
-        }
-    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !isPreparingForTermination else { return .terminateLater }
@@ -227,7 +211,7 @@ private final class WordProcessorAppDelegate: NSObject, NSApplicationDelegate {
         guard let url = sender.representedObject as? URL else { return }
 
         NSApp.activate(ignoringOtherApps: true)
-        _ = RecentDocumentRouter.shared.open(url)
+        _ = EditorWindowRouter.shared.open(url)
     }
 
     @MainActor
@@ -253,15 +237,15 @@ private struct WordProcessorCommands: Commands {
                 openWindow(id: WordProcessorWindowID.settings)
             }
             .keyboardShortcut(",")
+        }
 
-            Divider()
-
+        CommandGroup(replacing: .newItem) {
             Button("New") {
                 openWindow(id: WordProcessorWindowID.editor)
             }
             .keyboardShortcut("n")
 
-            Button("Open...") {
+            Button("Open…") {
                 windowCommandContext?.openDocument()
             }
             .keyboardShortcut("o")
@@ -280,7 +264,7 @@ private struct WordProcessorCommands: Commands {
                         .disabled(windowCommandContext == nil)
                     }
                     Divider()
-                    Button("Clear Recent Files") {
+                    Button("Clear Menu") {
                         DocumentModel.clearRecentFiles()
                     }
                 }
@@ -288,13 +272,20 @@ private struct WordProcessorCommands: Commands {
 
             Divider()
 
+            Button("Close Window") {
+                NSApp.keyWindow?.performClose(nil)
+            }
+            .keyboardShortcut("w")
+        }
+
+        CommandGroup(replacing: .saveItem) {
             Button("Save") {
                 windowCommandContext?.saveDocument()
             }
             .keyboardShortcut("s")
             .disabled(windowCommandContext == nil)
 
-            Button("Save As...") {
+            Button("Save As…") {
                 windowCommandContext?.saveDocumentAs()
             }
             .keyboardShortcut("s", modifiers: [.command, .shift])
@@ -302,118 +293,199 @@ private struct WordProcessorCommands: Commands {
 
             Divider()
 
-            Button("Export HTML...") {
-                windowCommandContext?.exportHTML()
-            }
-            .keyboardShortcut("e", modifiers: [.command, .option, .shift])
-            .disabled(windowCommandContext == nil)
-
-            Divider()
-
-            Button("Save Named Version...") {
+            Button("Save Named Version…") {
                 windowCommandContext?.showSaveNamedVersion()
             }
             .keyboardShortcut("s", modifiers: [.command, .option])
             .disabled(windowCommandContext?.canSaveNamedVersion != true)
-
-            Divider()
-
-            Button("Run Thorough Proofread") {
-                windowCommandContext?.runThoroughProofread()
-            }
-            .keyboardShortcut("p", modifiers: [.command, .option])
-            .disabled(windowCommandContext?.canRunThoroughProofread != true)
-
-            Divider()
-
-            Button("Start Tutorial") {
-                windowCommandContext?.startTutorial()
-            }
-            .disabled(windowCommandContext == nil)
-        }
-
-        RemovedApplicationAndFileCommands()
-        RemovedEditingAndWindowCommands()
-    }
-}
-
-// Remove macOS groups that are redundant for this focused, single-menu app.
-// About, Settings, and Quit remain in the Shakespeare menu.
-private struct RemovedApplicationAndFileCommands: Commands {
-    var body: some Commands {
-        CommandGroup(replacing: .systemServices) {
-            EmptyView()
-        }
-
-        CommandGroup(replacing: .appVisibility) {
-            EmptyView()
-        }
-
-        CommandGroup(replacing: .newItem) {
-            EmptyView()
-        }
-
-        CommandGroup(replacing: .saveItem) {
-            EmptyView()
         }
 
         CommandGroup(replacing: .importExport) {
-            EmptyView()
+            Button("Export HTML…") {
+                windowCommandContext?.exportHTML()
+            }
+            .keyboardShortcut("e", modifiers: [.command, .option, .shift])
+            .disabled(windowCommandContext == nil)
         }
 
         CommandGroup(replacing: .printItem) {
             EmptyView()
         }
 
-        CommandGroup(replacing: .appTermination) {
-            Button("Quit Shakespeare") {
-                NSApp.terminate(nil)
+        CommandGroup(after: .pasteboard) {
+            Menu("Find") {
+                Button("Find…") {
+                    windowCommandContext?.performEditorMenuAction(.showFind)
+                }
+                .keyboardShortcut("f")
+
+                Button("Find and Replace…") {
+                    windowCommandContext?.performEditorMenuAction(.showFindAndReplace)
+                }
+                .keyboardShortcut("f", modifiers: [.command, .option])
             }
-            .keyboardShortcut("q")
-        }
-    }
-}
-
-private struct RemovedEditingAndWindowCommands: Commands {
-    var body: some Commands {
-        CommandGroup(replacing: .undoRedo) {
-            EmptyView()
+            .disabled(windowCommandContext?.canEditDocument != true)
         }
 
-        CommandGroup(replacing: .pasteboard) {
-            EmptyView()
-        }
+        CommandGroup(after: .textEditing) {
+            Button("Add Comment") {
+                windowCommandContext?.performEditorMenuAction(.addComment)
+            }
+            .keyboardShortcut("m", modifiers: [.command, .shift])
+            .disabled(windowCommandContext?.hasSelection != true)
 
-        CommandGroup(replacing: .textEditing) {
-            EmptyView()
+            Button("Run Thorough Proofread") {
+                windowCommandContext?.runThoroughProofread()
+            }
+            .keyboardShortcut("p", modifiers: [.command, .option])
+            .disabled(windowCommandContext?.canRunThoroughProofread != true)
         }
 
         CommandGroup(replacing: .textFormatting) {
-            EmptyView()
+            Button("Bold") {
+                windowCommandContext?.performEditorMenuAction(.format(command: "bold", value: nil))
+            }
+            .keyboardShortcut("b")
+            .disabled(windowCommandContext?.canEditDocument != true)
+
+            Button("Italic") {
+                windowCommandContext?.performEditorMenuAction(.format(command: "italic", value: nil))
+            }
+            .keyboardShortcut("i")
+            .disabled(windowCommandContext?.canEditDocument != true)
+
+            Button("Underline") {
+                windowCommandContext?.performEditorMenuAction(.format(command: "underline", value: nil))
+            }
+            .keyboardShortcut("u")
+            .disabled(windowCommandContext?.canEditDocument != true)
+
+            Button("Strikethrough") {
+                windowCommandContext?.performEditorMenuAction(.format(command: "strike", value: nil))
+            }
+            .disabled(windowCommandContext?.canEditDocument != true)
+
+            Divider()
+
+            Menu("Paragraph Style") {
+                Button("Body") {
+                    windowCommandContext?.performEditorMenuAction(.format(command: "paragraph", value: nil))
+                }
+                Button("Heading 1") {
+                    windowCommandContext?.performEditorMenuAction(.format(command: "heading", value: "1"))
+                }
+                Button("Heading 2") {
+                    windowCommandContext?.performEditorMenuAction(.format(command: "heading", value: "2"))
+                }
+                Button("Heading 3") {
+                    windowCommandContext?.performEditorMenuAction(.format(command: "heading", value: "3"))
+                }
+                Button("Block Quote") {
+                    windowCommandContext?.performEditorMenuAction(.format(command: "blockquote", value: nil))
+                }
+            }
+            .disabled(windowCommandContext?.canEditDocument != true)
+
+            Menu("Lists") {
+                Button("Bulleted List") {
+                    windowCommandContext?.performEditorMenuAction(.format(command: "bulletList", value: nil))
+                }
+                Button("Numbered List") {
+                    windowCommandContext?.performEditorMenuAction(.format(command: "orderedList", value: nil))
+                }
+            }
+            .disabled(windowCommandContext?.canEditDocument != true)
+
+            Menu("Alignment") {
+                Button("Left") {
+                    windowCommandContext?.performEditorMenuAction(.format(command: "alignLeft", value: nil))
+                }
+                Button("Center") {
+                    windowCommandContext?.performEditorMenuAction(.format(command: "alignCenter", value: nil))
+                }
+                Button("Right") {
+                    windowCommandContext?.performEditorMenuAction(.format(command: "alignRight", value: nil))
+                }
+                Button("Justified") {
+                    windowCommandContext?.performEditorMenuAction(.format(command: "alignJustify", value: nil))
+                }
+            }
+            .disabled(windowCommandContext?.canEditDocument != true)
         }
 
+        WorkspaceAndHelpCommands()
+    }
+}
+
+private struct WorkspaceAndHelpCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+    @FocusedValue(\.windowCommandContext) private var windowCommandContext
+
+    var body: some Commands {
         CommandGroup(replacing: .toolbar) {
-            EmptyView()
+            Button("Zoom In") {
+                windowCommandContext?.performEditorMenuAction(.zoomIn)
+            }
+            .keyboardShortcut("+")
+            .disabled(windowCommandContext?.canEditDocument != true)
+
+            Button("Zoom Out") {
+                windowCommandContext?.performEditorMenuAction(.zoomOut)
+            }
+            .keyboardShortcut("-")
+            .disabled(windowCommandContext?.canEditDocument != true)
+
+            Button("Actual Size") {
+                windowCommandContext?.performEditorMenuAction(.resetZoom)
+            }
+            .keyboardShortcut("0")
+            .disabled(windowCommandContext?.canEditDocument != true)
         }
 
         CommandGroup(replacing: .sidebar) {
-            EmptyView()
-        }
+            Button("Research Chat") {
+                windowCommandContext?.performEditorMenuAction(.toggleResearch)
+            }
+            .keyboardShortcut("\\")
+            .disabled(windowCommandContext?.canEditDocument != true)
 
-        CommandGroup(replacing: .windowSize) {
-            EmptyView()
-        }
+            Button("Notes") {
+                windowCommandContext?.performEditorMenuAction(.toggleNotes)
+            }
+            .keyboardShortcut("n", modifiers: [.command, .option])
+            .disabled(windowCommandContext?.canEditDocument != true)
 
-        CommandGroup(replacing: .windowList) {
-            EmptyView()
-        }
+            Button("Comments") {
+                windowCommandContext?.performEditorMenuAction(.toggleComments)
+            }
+            .disabled(windowCommandContext?.canEditDocument != true)
 
-        CommandGroup(replacing: .windowArrangement) {
-            EmptyView()
+            Button("Version History") {
+                windowCommandContext?.performEditorMenuAction(.toggleVersionHistory)
+            }
+            .keyboardShortcut("v", modifiers: [.command, .shift])
+            .disabled(windowCommandContext?.canEditDocument != true)
+
+            Divider()
+
+            Button("Focus Mode") {
+                windowCommandContext?.performEditorMenuAction(.toggleFocusMode)
+            }
+            .keyboardShortcut("f", modifiers: [.command, .shift])
+            .disabled(windowCommandContext?.canEditDocument != true)
         }
 
         CommandGroup(replacing: .help) {
-            EmptyView()
+            Button("Start Tutorial") {
+                if let windowCommandContext {
+                    windowCommandContext.startTutorial()
+                } else if !EditorWindowRouter.shared.startTutorial() {
+                    openWindow(id: WordProcessorWindowID.editor)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        NotificationCenter.default.post(name: .showFeatureTour, object: nil)
+                    }
+                }
+            }
         }
     }
 }
@@ -422,7 +494,7 @@ private struct EditorWindowRootView: View {
     @Environment(ApplicationStorageStatus.self) private var storageStatus
     @State private var document = DocumentModel()
     @State private var editorViewModel = EditorViewModel()
-    @State private var recentDocumentHandlerID = UUID()
+    @State private var editorWindowHandlerID = UUID()
     @State private var documentSessionID = UUID()
 
     var body: some View {
@@ -441,9 +513,18 @@ private struct EditorWindowRootView: View {
             .environment(editorViewModel)
             .focusedSceneValue(\.windowCommandContext, windowCommandContext)
             .onAppear {
-                RecentDocumentRouter.shared.register(id: recentDocumentHandlerID) { url in
-                    editorViewModel.openFile(url: url, document: document)
-                }
+                EditorWindowRouter.shared.register(
+                    id: editorWindowHandlerID,
+                    openHandler: { url in
+                        editorViewModel.openFile(url: url, document: document)
+                    },
+                    tutorialHandler: {
+                        NotificationCenter.default.post(
+                            name: .showFeatureTour,
+                            object: editorViewModel
+                        )
+                    }
+                )
                 DocumentSessionCoordinator.shared.register(
                     id: documentSessionID,
                     prepare: { await editorViewModel.prepareForTermination(document: document) },
@@ -451,7 +532,7 @@ private struct EditorWindowRootView: View {
                 )
             }
             .onDisappear {
-                RecentDocumentRouter.shared.unregister(id: recentDocumentHandlerID)
+                EditorWindowRouter.shared.unregister(id: editorWindowHandlerID)
                 DocumentSessionCoordinator.shared.unregister(id: documentSessionID)
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
@@ -460,16 +541,19 @@ private struct EditorWindowRootView: View {
                 else {
                     return
                 }
-                RecentDocumentRouter.shared.markActive(id: recentDocumentHandlerID)
+                EditorWindowRouter.shared.markActive(id: editorWindowHandlerID)
             }
             .onOpenURL { url in
-                RecentDocumentRouter.shared.markActive(id: recentDocumentHandlerID)
+                EditorWindowRouter.shared.markActive(id: editorWindowHandlerID)
                 editorViewModel.openFile(url: url, document: document)
             }
     }
 
     private var windowCommandContext: WindowCommandContext {
         WindowCommandContext(
+            canEditDocument: editorViewModel.isEditorReady
+                && !editorViewModel.isDocumentTransitioning,
+            hasSelection: editorViewModel.selectionState.hasSelection,
             canSaveNamedVersion: document.fileURL != nil,
             canRunThoroughProofread: editorViewModel.isEditorReady
                 && !editorViewModel.isDocumentTransitioning
@@ -497,6 +581,13 @@ private struct EditorWindowRootView: View {
             },
             startTutorial: {
                 NotificationCenter.default.post(name: .showFeatureTour, object: editorViewModel)
+            },
+            performEditorMenuAction: { action in
+                NotificationCenter.default.post(
+                    name: .editorMenuActionRequested,
+                    object: editorViewModel,
+                    userInfo: ["action": action]
+                )
             }
         )
     }

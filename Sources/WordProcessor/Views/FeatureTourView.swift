@@ -30,7 +30,7 @@ struct FeatureTourStep: Identifiable, Sendable {
             summary: "Your work stays in familiar, portable files.",
             details: [
                 "Create a document, reopen a recent one, or open .shkdoc and HTML files.",
-                "Click the title to rename. Save, Save As, and Export HTML live in the Shakespeare menu.",
+                "Click the title to rename. Save, Save As, and Export HTML live in the File menu.",
             ],
             shortcut: "⌘S saves · ⇧⌘S saves a copy"
         ),
@@ -62,7 +62,7 @@ struct FeatureTourStep: Identifiable, Sendable {
             title: "Proofread and review",
             summary: "Catch small errors or request a deeper editorial pass.",
             details: [
-                "Local spelling works offline. AI grammar is optional; a thorough proofread is available from the Shakespeare menu.",
+                "Local spelling works offline. AI grammar is optional; a thorough proofread is available from the Edit menu.",
                 "Select text to add a comment. Turn on Ambient Review for suggestions you can apply, resolve, edit, or delete.",
             ],
             shortcut: "⇧⌘M comments · ⌥⌘P proofreads"
@@ -120,7 +120,7 @@ struct FeatureTourStep: Identifiable, Sendable {
                 "Connections manages your key, models, and usage. Typography and Editing control defaults, dialect, spelling, grammar, and corrections.",
                 "My Style lets you add samples, review or edit learned guidance, pause learning, and delete its local history.",
             ],
-            shortcut: "⌘, opens Settings · Start Tutorial replays this tour"
+            shortcut: "⌘, opens Settings · Help → Start Tutorial replays this tour"
         ),
     ]
 }
