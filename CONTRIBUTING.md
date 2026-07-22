@@ -48,6 +48,7 @@ personal paths, app archives, or unrelated generated files.
 | `make editor` | Build the TipTap editor bundle |
 | `make privacy-check` | Check source files for credentials and personal paths |
 | `make evals` | Run Swift regression checks |
+| `OPENROUTER_API_KEY=… make live-writing-evals` | Run four capped live writing and learning checks |
 | `make clean` | Remove generated build output |
 
 Debug and test builds use isolated Application Support and Keychain namespaces.

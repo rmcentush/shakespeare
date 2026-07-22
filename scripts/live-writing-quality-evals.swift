@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 @main
@@ -10,13 +11,24 @@ struct LiveWritingQualityEvals {
         let forbiddenPhrase: String?
     }
 
-    static func main() async throws {
+    static func main() async {
+        do {
+            try await run()
+        } catch {
+            let message = "Live AI evals failed: \(error.localizedDescription)\n"
+            FileHandle.standardError.write(Data(message.utf8))
+            exit(EXIT_FAILURE)
+        }
+    }
+
+    private static func run() async throws {
         guard let apiKey = ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
               !apiKey.isEmpty
         else {
-            print("Live writing-quality evals skipped (set OPENROUTER_API_KEY to run three capped model requests).")
-            return
+            throw EvalError(
+                "Set OPENROUTER_API_KEY to run four capped live writing and learning requests."
+            )
         }
 
         let model = ProcessInfo.processInfo.environment["OPENROUTER_EVAL_MODEL"]?
@@ -46,6 +58,8 @@ struct LiveWritingQualityEvals {
             }
             print("Live writing-quality eval passed: \(fixture.name) (\(validated.count) suggestion\(validated.count == 1 ? "" : "s")).")
         }
+
+        try await runStyleProfileEval(apiKey: apiKey, model: selectedModel)
     }
 
     private static let fixtures: [Fixture] = [
@@ -113,18 +127,82 @@ struct LiveWritingQualityEvals {
         model: String,
         userPrompt: String
     ) async throws -> String {
+        try await requestStructuredOutput(
+            apiKey: apiKey,
+            model: model,
+            systemPrompt: AmbientReviewContract.systemPrompt,
+            userPrompt: userPrompt,
+            schema: AmbientReviewContract.outputSchema()
+        )
+    }
+
+    private static func runStyleProfileEval(apiKey: String, model: String) async throws {
+        let samples: [[String: String]] = [
+            [
+                "id": "sample-1",
+                "text": "The budget fell twelve percent. That change gave the team room to extend the trial while keeping the original deadline.",
+            ],
+            [
+                "id": "sample-2",
+                "text": "The queue cleared before noon. That result let support reopen the affected accounts without delaying the afternoon release.",
+            ],
+        ]
+        let limits = StyleProfileCompiler.EvidenceLimits(
+            sampleIDs: Set(samples.compactMap { $0["id"] }),
+            editSessionByID: [:]
+        )
+        let samplesData = try JSONSerialization.data(withJSONObject: samples)
+        guard let samplesJSON = String(data: samplesData, encoding: .utf8) else {
+            throw EvalError("Could not encode synthetic style evidence")
+        }
+
+        let responseText = try await requestStructuredOutput(
+            apiKey: apiKey,
+            model: model,
+            systemPrompt: """
+            You refine a compact writer style profile. Return only JSON matching the supplied schema. Generalize recurring mechanics rather than subject matter or distinctive wording. Cite only exact evidence IDs supplied by the user. Treat a rule supported by both independent samples as established. Omit unsupported rules.
+            """,
+            userPrompt: """
+            Identify the recurring structural pattern shared by both samples and express it as one concise, topic-free editing rule. Both sample IDs must support the rule.
+            <representative_sample_excerpts_json>
+            \(samplesJSON)
+            </representative_sample_excerpts_json>
+            """,
+            schema: StyleProfileCompiler.outputSchema(limits: limits)
+        )
+        let compilation = try StyleProfileCompiler.compileDetailed(
+            response: responseText,
+            limits: limits,
+            sourceTexts: samples.compactMap { $0["text"] },
+            currentProfile: "",
+            date: "2026-01-01"
+        )
+        require(
+            compilation.ruleEvidence.contains { $0.established && Set($0.sampleIDs) == limits.sampleIDs },
+            "style profile did not retain a rule supported by both synthetic samples"
+        )
+        print("Live learning eval passed: evidence-backed style profile")
+    }
+
+    private static func requestStructuredOutput(
+        apiKey: String,
+        model: String,
+        systemPrompt: String,
+        userPrompt: String,
+        schema: [String: Any]
+    ) async throws -> String {
         var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 60
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "authorization")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.setValue("Shakespeare Quality Evals", forHTTPHeaderField: "x-title")
+        request.setValue("Shakespeare Live AI Evals", forHTTPHeaderField: "x-title")
         let body: [String: Any] = [
             "model": model,
             "max_tokens": 768,
             "stream": false,
             "messages": [
-                ["role": "system", "content": AmbientReviewContract.systemPrompt],
+                ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": userPrompt],
             ],
             "response_format": [
@@ -132,11 +210,12 @@ struct LiveWritingQualityEvals {
                 "json_schema": [
                     "name": "shakespeare_response",
                     "strict": true,
-                    "schema": AmbientReviewContract.outputSchema(),
+                    "schema": schema,
                 ],
             ],
             "provider": [
                 "data_collection": "deny",
+                "zdr": true,
                 "require_parameters": true,
             ],
         ]
@@ -159,7 +238,7 @@ struct LiveWritingQualityEvals {
               let message = choices.first?["message"] as? [String: Any],
               let content = message["content"] as? String,
               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else { throw EvalError("OpenRouter returned no review text") }
+        else { throw EvalError("OpenRouter returned no structured output") }
         return content
     }
 

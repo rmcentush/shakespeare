@@ -1,4 +1,4 @@
-.PHONY: all build strict-concurrency-check run clean editor editor-tests typecheck privacy-check delivery-contract-check release-script-check website-check cloud-ci check swift install update package deploy-site release-readiness release evals document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals storage-runtime-evals style-context-evals language-model-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
+.PHONY: all build strict-concurrency-check run clean editor editor-tests typecheck privacy-check delivery-contract-check release-script-check website-check cloud-ci check swift install update package deploy-site release-readiness release evals document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals storage-runtime-evals style-context-evals language-model-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals live-writing-evals-compile live-writing-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 all: build
 
@@ -119,9 +119,11 @@ gap-fill-evals:
 	swiftc Sources/WordProcessor/Services/GapFillContract.swift scripts/gap-fill-evals.swift -o /tmp/gap-fill-evals
 	/tmp/gap-fill-evals
 
-# Optional and cost-capped: three requests, one selected model, 768 output tokens each.
-live-writing-evals:
-	swiftc -parse-as-library Sources/WordProcessor/Services/AmbientReviewContract.swift scripts/live-writing-quality-evals.swift -o /tmp/live-writing-quality-evals
+# Credentialed and cost-capped: four requests, one selected model, 768 output tokens each.
+live-writing-evals-compile:
+	swiftc -parse-as-library Sources/WordProcessor/Services/AmbientReviewContract.swift Sources/WordProcessor/Services/PackageFileSafety.swift Sources/WordProcessor/Services/StyleProfileCompiler.swift scripts/live-writing-quality-evals.swift -o /tmp/live-writing-quality-evals
+
+live-writing-evals: live-writing-evals-compile
 	/tmp/live-writing-quality-evals
 
 openrouter-connection-evals:
@@ -140,7 +142,7 @@ focus-mode-escape-evals:
 	swiftc -parse-as-library Sources/WordProcessor/Views/FocusModeEscapeMonitor.swift scripts/focus-mode-escape-evals.swift -o /tmp/focus-mode-escape-evals
 	/tmp/focus-mode-escape-evals
 
-evals: release-script-check editor-tests document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals storage-runtime-evals style-context-evals language-model-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
+evals: release-script-check editor-tests document-asset-evals document-package-safety-evals canonical-document-evals document-state-evals version-store-evals storage-layout-evals storage-runtime-evals style-context-evals language-model-context-evals chat-context-evals chat-search-policy-evals assistant-link-policy-evals style-profile-evals ledger-retention-evals writing-quality-evals gap-fill-evals live-writing-evals-compile api-key-store-evals openrouter-connection-evals model-availability-evals language-model-wire-evals focus-mode-escape-evals
 
 # Build release
 build: copy-assets
