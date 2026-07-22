@@ -1,6 +1,16 @@
 # Contributing to Shakespeare
 
-Requirements: macOS 14+, Xcode 26+, Node.js 22+, and npm.
+Thank you for helping improve Shakespeare. Keep changes focused, include tests
+or documentation when behavior changes, and avoid committing personal data or
+credentials.
+
+## Requirements
+
+- macOS 14 or later
+- Xcode 26 or later
+- Node.js 22 or later and npm
+
+## Local setup
 
 ```bash
 git clone https://github.com/rmcentush/shakespeare.git
@@ -10,71 +20,66 @@ make run
 
 ## Workflow
 
-1. Create a focused branch from current `main`.
-2. Keep the change focused and update relevant tests or documentation.
-3. Run `make check`.
-4. Open a pull request and merge only after the independent macOS CI check passes.
+1. Create a focused branch from the current `main` branch.
+2. Make the smallest complete change that addresses the issue.
+3. Add or update relevant tests and documentation.
+4. Run `make check`.
+5. Open a pull request and complete the pull request checklist.
 
 ```bash
 git switch -c feature/describe-the-change origin/main
-# Make one focused change, then run make check.
+# Make and validate the change.
 git add <files>
 git commit -m "Describe the change"
 git push -u origin HEAD
 ```
 
-Delete merged branches after integration and keep dependency changes isolated
-so lockfile updates receive an explicit review.
-
-Commit only durable product, build, release, or licensing documentation. Keep
-temporary notes, credentials, local paths, app archives, and unrelated files
-outside the repository.
+Delete merged branches after integration. Keep dependency updates isolated so
+lockfile changes are easy to review. Do not commit temporary notes, credentials,
+personal paths, app archives, or unrelated generated files.
 
 ## Commands
 
 | Command | Purpose |
-|---|---|
+| --- | --- |
 | `make run` | Build and run a debug app |
-| `make check` | Run all deterministic checks and a strict-concurrency release build |
+| `make check` | Run deterministic checks and a strict-concurrency release build |
 | `make install` | Package and install the app |
 | `make editor` | Build the TipTap editor bundle |
-| `make privacy-check` | Check source for credentials and local paths |
+| `make privacy-check` | Check source files for credentials and personal paths |
 | `make evals` | Run Swift regression checks |
 | `make clean` | Remove generated build output |
 
-`make run` and alternate test bundles use isolated Application Support and
-Keychain namespaces. Only the shipping `com.shakespeare.app` bundle identifier
-can access production app data.
+Debug and test builds use isolated Application Support and Keychain namespaces.
+Only the shipping `com.shakespeare.app` bundle identifier can access production
+app data.
 
-## Architecture and boundaries
+## Architecture
 
-Shakespeare is a SwiftUI app with a TipTap editor inside `WKWebView`.
-`Editor/` contains the TypeScript editor; `Sources/WordProcessor/` contains the
-native app, storage, personalization, and OpenRouter client. The two sides use
-one `editorBridge` handler and methods registered on `window.editorAPI`.
+Shakespeare is a SwiftUI application with a TipTap editor hosted in
+`WKWebView`. TypeScript editor code lives in `Editor/`; the native application,
+storage, and connected services live in `Sources/WordProcessor/`. Communication
+between the two layers goes through the `editorBridge` message handler and the
+methods registered on `window.editorAPI`.
 
 Preserve these product boundaries:
 
-- Route all model purposes through OpenRouter and one Keychain credential.
-- Validate replacement keys before overwriting a working key.
-- Deny provider data collection on every request and require parameters for
-  structured output.
-- Keep model definitions centralized and retain the ordered recovery catalog.
-- Check model status through public metadata without a key or user prose.
-- Keep research read-only and isolated from permanent style data.
-- Keep grammar block-scoped and style-free.
-- Keep style context bounded, local-first, optional, and user-reviewed. Never
-  send the raw ledger or learn from ambiguous outcomes or accepted-unchanged
-  model text.
+- Keep documents, notes, history, and personalization data local by default.
+- Store connection credentials only in the macOS Keychain.
+- Keep research read-only and separate from permanent personal style data.
+- Keep grammar checks style-neutral and scoped to the relevant text.
+- Make every suggested edit reviewable; never apply a suggestion automatically.
+- Keep personal style guidance optional, bounded, reviewable, and deletable.
+- Reject malformed or unsafe document data rather than attempting a partial load.
 
-Do not add another provider, credential, hosted service, or training runtime
-without an explicit product decision. See
+Do not add another provider, credential type, hosted service, or training
+runtime without an explicit product decision. See
 [Personalization](docs/PERSONALIZATION.md) for the user-facing contract.
 
 ## Delivery
 
-GitHub `main` is the source of truth. Pull requests must pass the repository's
-macOS CI check before merge. Cloudflare deploys the website from
-`Website/`; signed macOS releases run only through `make release` from a clean,
-current `main` on a trusted Mac. Never publish an ad-hoc package or uncommitted
-source. See [Development and releasing](docs/RELEASING.md).
+The `main` branch is the source of truth. Pull requests must pass the repository's
+macOS CI check before merge. Cloudflare deploys the website from `Website/`.
+Signed macOS releases run through `make release` from a clean, current `main`
+checkout on a trusted Mac. Never publish an ad-hoc package or uncommitted source.
+See [Development and releasing](docs/RELEASING.md).

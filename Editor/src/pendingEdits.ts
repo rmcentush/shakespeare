@@ -4,7 +4,7 @@ import { Decoration, DecorationSet, EditorView } from '@tiptap/pm/view';
 import { sendToSwift } from './bridge';
 import { getEditorInstance } from './instance';
 import {
-  ACCEPTED_LLM_EDIT_COLOR,
+  ACCEPTED_ASSISTED_EDIT_COLOR,
   MAX_PENDING_EDITS,
   PendingEdit,
   PendingEditKind,
@@ -615,7 +615,7 @@ export function focusRelativePendingEdit(ed: Editor, delta: 1 | -1): boolean {
   return focusPendingEdit(ed, state.edits[nextIndex].id);
 }
 
-function isLLMEdit(edit: PendingEdit): boolean {
+function isAssistedEdit(edit: PendingEdit): boolean {
   return edit.source === 'Assistant' || edit.groupId.startsWith('edit_') || edit.id.startsWith('edit_');
 }
 
@@ -645,8 +645,8 @@ function colorizeHTMLTextNodes(html: string, color: string): string {
 
 function htmlForAcceptedEdit(edit: PendingEdit): string {
   if (edit.groupId.startsWith('edit_gap_')) return edit.newHtml;
-  return isLLMEdit(edit)
-    ? colorizeHTMLTextNodes(edit.newHtml, ACCEPTED_LLM_EDIT_COLOR)
+  return isAssistedEdit(edit)
+    ? colorizeHTMLTextNodes(edit.newHtml, ACCEPTED_ASSISTED_EDIT_COLOR)
     : edit.newHtml;
 }
 

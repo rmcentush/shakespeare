@@ -199,7 +199,7 @@ export const NEARBY_EDIT_CONTEXT_CHARS = 900;
 
 export const TOO_MANY_PENDING_EDITS = -2;
 
-export const ACCEPTED_LLM_EDIT_COLOR = '#319795';
+export const ACCEPTED_ASSISTED_EDIT_COLOR = '#319795';
 export const FOOTNOTE_NODE_NAME = 'footnote';
 export const GENERATED_FOOTNOTES_SELECTOR = 'section[data-generated-footnotes="true"]';
 export const CONTENT_SYNC_DEBOUNCE_MS = 1000;

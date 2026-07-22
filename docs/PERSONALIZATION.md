@@ -1,106 +1,48 @@
 # Personalization
 
-Shakespeare learns through bounded context, not remote fine-tuning. Learning is
-off by default, enabled only by the writer, and can be paused or disabled under
+Shakespeare can adapt writing suggestions to a writer's preferences. This
+feature is local-first, off by default, and controlled under
 **Settings → My Style**.
 
-## What is used
+## Information used
 
-For style-aware writing, Shakespeare may use:
+When personal style guidance is enabled, Shakespeare may use a limited set of:
 
-1. the writer's requested meaning, facts, quotations, and instructions;
-2. compact, reviewed style notes learned from recurring evidence;
-3. a general writing-quality baseline;
-4. relevant sections of the editable style reference;
-5. up to two recent rewrites the writer changed and saved; and
-6. up to two relevant excerpts from deliberately imported samples.
+1. reviewed style notes;
+2. relevant sections of the editable style reference;
+3. recent revisions that the writer changed and saved; and
+4. excerpts from deliberately imported `.txt` or `.md` writing samples.
 
-The style packet is capped at 8,000 characters. A separate 2,600-character map
-provides limited document flow and continuity. Samples are examples of voice,
-not instructions or factual sources, and their distinctive content must not be
-copied.
+The context sent for a writing request is size-limited. Samples are treated as
+examples of voice, not as instructions or factual sources. Research and grammar
+checks do not receive personal style history.
 
-The general baseline is informed by the MIT-licensed
-[Avoid AI Writing](https://github.com/conorbronsdon/avoid-ai-writing) guide and
-cross-checked against Wikipedia's descriptive
-[Signs of AI writing](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing)
-field guide and the [Microsoft](https://learn.microsoft.com/en-us/style-guide/brand-voice-above-all-simple-human)
-and [Google](https://developers.google.com/style/tone) style guides. It treats
-common model habits as contextual editing signals, not proof of authorship or
-hard bans. Reviewed personal notes and deliberate choices in the draft take
-precedence.
+## Review and learning
 
-## Writing-option contracts
+Shakespeare records style evidence only after a successful save. Unchanged
+suggestions do not become examples of the writer's voice. Repeated signals can
+produce a proposed preference, but the writer must review it before it is used.
 
-| Option | Dedicated prompt and guidance | Personal style |
-| --- | --- | --- |
-| Selection feedback | Focused critique, preserve strengths, at most three points | Reviewed notes plus bounded reference, rewrite, and sample excerpts |
-| Inline gap fill | Write only the missing prose, connect both sides, invent no facts | Reviewed notes plus bounded reference, rewrite, and sample excerpts |
-| Ambient review | Sparse, high-signal, anchored suggestions with a silence threshold | Reviewed notes plus bounded reference, rewrite, and sample excerpts |
-| Automatic grammar | Precision-first objective grammar rules plus a conservative verification pass | Deliberately excluded |
-| Thorough proofread | Broader objective inspection without stylistic rewriting | Deliberately excluded |
+Inline gap fills, feedback on selected text, and editorial suggestions can use
+the current reviewed style guidance. Objective grammar and proofreading remain
+style-neutral.
 
-Each option has its own model-service instance and cache-routing session. The
-three personalized options select their own section of the general baseline;
-grammar options use separate style-neutral rules so correctness cannot drift
-with a learned voice profile.
+## Writing samples
 
-Ordinary research chat and grammar checks do not receive permanent style
-context. An explicit **Feedback** request on selected text does, because the
-writer is asking for an editorial comparison to their voice.
-
-## Samples and edits
-
-Use **Add Samples…** to import representative `.txt` or `.md` files. Files stay
-in Shakespeare's owner-only local data folder; only selected excerpts are sent
-for relevant style-aware requests.
-
-Shakespeare waits for a successful save and uses only high-confidence outcomes.
-Accepted-unchanged model prose and model-authored rationales never become style
-evidence. A final passage enters the runtime rewrite-example layer
-only when the writer changed it materially; punctuation or one-word tweaks stay
-contrastive edit evidence instead of turning the surrounding model prose into a
-voice sample. Repeated writer-authored signals can become proposed preferences,
-but the writer must review them before use. Each proposed rule links to the exact
-local sample and edit IDs that support it; sample, edit, and real editing-session
-counts are derived locally rather than accepted from the model. The proposed
-profile condenses those signals into short, actionable notes about voice, syntax,
-rhythm, diction, punctuation, and paragraph movement; it is not a raw-text archive.
+Use **Add Samples…** to import representative `.txt` or `.md` files. The files
+are copied to Shakespeare's owner-only local data folder. Only relevant,
+size-limited excerpts are included when the writer requests a style-aware
+feature.
 
 ## Inline writing gaps
 
-Type `[[a short note about what belongs here]]`, then hover or place the cursor
-in the gap and use the sparkle button. **Command-Return** works too. Shakespeare
-uses the note, nearby prose, document flow, and the reviewed style profile to
-draft one fill. Animated dots stay inside the brackets while it writes. The fill
-remains inline with a **✓** to use it or **×** to leave the brackets in place.
+Type `[[a short note about what belongs here]]`, then place the pointer or cursor
+in the gap and use the sparkle button. **Command-Return** works too. The proposed
+fill remains inline until the writer accepts or dismisses it.
 
-If a used fill is saved unchanged, it remains interaction history and does not
-become style evidence. If the writer changes the fill and saves it, the final
-writer-edited wording becomes higher-quality style evidence. Leaving the gap,
-rewriting it after rejection, or returning to it later is also resolved at save
-time so the outcome reflects what remains in the document.
-
-## Feedback on selected text
-
-Select a passage and use the small sparkle beside the highlight. Shakespeare
-sends the selected text, a bounded view of the surrounding draft, and the
-latest reviewed style context to the writing model. It returns one direct
-assessment and no more than three specific points in the chat sidebar.
-Selection feedback never starts a web search; research remains available as a
-separate follow-up when needed.
-
-Selection feedback, inline gap fills, and ambient editorial suggestions all use
-the current **Writing Model** selection (Gemini Flash by default) and the same live
-style evidence. Each option has its own system prompt, task-selected guidance,
-output contract, and private cache-routing session. Ordinary research chat uses
-the separate **Research Model** selection (Gemini Flash by default). Grammar and
-spelling checks stay
-style-neutral so correctness is not bent toward a personal voice. Automatic
-grammar and the writer-invoked thorough proofread have distinct prompts and
-cache sessions: the automatic option optimizes for interruption-worthy
-precision, while the thorough option inspects more broadly without turning
-style preferences into errors.
+A fill saved without changes remains interaction history and does not become
+style evidence. If the writer revises the fill and saves the document, the final
+writer-edited wording may become style evidence.
 
 ## Storage and deletion
 
@@ -110,30 +52,10 @@ Mutable personalization data is stored under:
 ~/Library/Application Support/Shakespeare/personalization/
 ```
 
-**Delete Learning History** removes samples, events, profile drafts, and learned
-preferences. It keeps the writer-maintained style reference and does not delete
-documents, recovery drafts, versions, settings, or the OpenRouter key.
+**Delete Learning History** removes imported samples, recorded events, proposed
+profiles, and learned preferences. It keeps the writer-maintained style
+reference and does not delete documents, recovery drafts, versions, settings,
+or connection credentials.
 
 The local history and sample library are bounded and compacted automatically.
-The raw ledger is never uploaded as background data.
-
-## Prompt caching
-
-Every model-backed feature uses a private, per-session cache-routing identifier
-and a cacheable instruction prefix. Different writing options do not share a
-cache-routing session. Style-aware requests place the task-selected general
-guidance and current reviewed profile in a stable cacheable block, followed by
-task-relevant reference excerpts, examples, the live selection, nearby prose,
-and document flow as a dynamic suffix. The complete prompt also
-gets a final cache breakpoint so exact retries can reuse it. In general chat,
-the previous and current user turns are cache breakpoints so a growing
-conversation can reuse its history. Because provider caches are
-content-addressed, changing the style profile, conversation, or document
-produces a new entry instead of reusing stale text. Generated suggestions and
-answers are never cached or replayed by Shakespeare.
-
-OpenRouter usage events expose the actual routed model, prompt and completion
-tokens, cache-read and cache-write tokens, billed cost, and request latency.
-Shakespeare stores only aggregate diagnostics—never prompts, responses, or
-document identifiers—so routing, cache behavior, and spend can be reviewed in
-Settings without recording document content.
+They are not uploaded as background data.
