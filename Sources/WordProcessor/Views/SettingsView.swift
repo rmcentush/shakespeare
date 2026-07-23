@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 enum SettingsDestination {
     static let defaultsKey = "settingsSelectedTab"
-    static let apiKeys = "apiKeys"
+    static let connections = "apiKeys"
     static let myStyle = "myStyle"
     static let typography = "typography"
     static let editing = "editing"
@@ -19,7 +19,7 @@ struct SettingsView: View {
     @State private var openRouterConnectionError = ""
     @State private var openRouterConnectionRequiresBilling = false
     @State private var showOpenRouterDisconnectConfirmation = false
-    @AppStorage(SettingsDestination.defaultsKey) private var selectedTab = SettingsDestination.apiKeys
+    @AppStorage(SettingsDestination.defaultsKey) private var selectedTab = SettingsDestination.connections
     @AppStorage(InferenceSettings.writingModelDefaultsKey) private var writingModel = InferenceSettings.defaultWritingModel
     @AppStorage(InferenceSettings.researchModelDefaultsKey) private var researchModel = InferenceSettings.defaultResearchModel
     @AppStorage(PersonalizationSettings.enabledDefaultsKey) private var personalizationEnabled = false
@@ -61,7 +61,7 @@ struct SettingsView: View {
         TabView(selection: $selectedTab) {
             connectionsSettings
                 .tabItem { Label("Connections", systemImage: "link") }
-                .tag(SettingsDestination.apiKeys)
+                .tag(SettingsDestination.connections)
 
             myStyleSettings
                 .tabItem { Label("My Style", systemImage: "person.crop.circle.badge.checkmark") }

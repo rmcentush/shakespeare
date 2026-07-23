@@ -5,6 +5,7 @@ enum StandardDocumentCodecError: LocalizedError {
     case invalidDocument(String)
     case unsupportedFormat(String)
     case embeddedImagesUnsupported(String)
+    case embeddedImagesUnsupportedForImport(String)
 
     var errorDescription: String? {
         switch self {
@@ -14,6 +15,8 @@ enum StandardDocumentCodecError: LocalizedError {
             return "\(format) is not supported for this operation."
         case .embeddedImagesUnsupported(let format):
             return "\(format) export cannot safely preserve embedded images. Export as HTML or RTFD instead."
+        case .embeddedImagesUnsupportedForImport(let format):
+            return "\(format) import cannot safely preserve embedded images. Convert the source to RTFD or self-contained HTML and import that copy instead."
         }
     }
 }
@@ -52,7 +55,8 @@ enum StandardDocumentCodec {
         format: PortableDocumentFormat,
         maximumEntryCount: Int,
         maximumEntryBytes: Int,
-        maximumExpandedBytes: Int
+        maximumExpandedBytes: Int,
+        entryVisitor: ((String) -> Void)? = nil
     ) throws {
         guard maximumEntryCount > 0,
               maximumEntryBytes > 0,
@@ -152,6 +156,7 @@ enum StandardDocumentCodec {
             else {
                 throw StandardDocumentCodecError.invalidDocument(format.displayName)
             }
+            entryVisitor?(filename)
 
             let (newExpandedBytes, expandedOverflow) = expandedBytes.addingReportingOverflow(
                 Int(expandedSize)
@@ -166,6 +171,58 @@ enum StandardDocumentCodec {
         guard cursor == centralEnd else {
             throw StandardDocumentCodecError.invalidDocument(format.displayName)
         }
+    }
+
+    static func containsEmbeddedImagePayload(
+        _ data: Data,
+        format: PortableDocumentFormat
+    ) -> Bool {
+        switch format {
+        case .richText:
+            return data.range(of: Data(#"\pict"#.utf8)) != nil
+        case .legacyWord:
+            let signatures: [[UInt8]] = [
+                [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+                [0xff, 0xd8, 0xff],
+                Array("GIF87a".utf8),
+                Array("GIF89a".utf8),
+                [0x49, 0x49, 0x2a, 0x00],
+                [0x4d, 0x4d, 0x00, 0x2a],
+                [0x20, 0x45, 0x4d, 0x46],
+                [0xd7, 0xcd, 0xc6, 0x9a],
+            ]
+            return containsPlausibleBitmapFile(in: data)
+                || signatures.contains { signature in
+                    data.range(of: Data(signature)) != nil
+                }
+        case .word, .openDocument, .richTextDirectory, .markdown, .plainText, .html:
+            return false
+        }
+    }
+
+    static func archiveEntryContainsEmbeddedImage(
+        _ path: String,
+        format: PortableDocumentFormat
+    ) -> Bool {
+        let normalizedPath = path.lowercased()
+        if format == .word, normalizedPath.hasPrefix("word/media/") {
+            return !normalizedPath.hasSuffix("/")
+        }
+        if format == .openDocument, normalizedPath.hasPrefix("pictures/") {
+            return !normalizedPath.hasSuffix("/")
+        }
+
+        guard let filename = normalizedPath.split(separator: "/").last,
+              let extensionSeparator = filename.lastIndex(of: "."),
+              extensionSeparator != filename.startIndex
+        else {
+            return false
+        }
+        let fileExtension = filename[filename.index(after: extensionSeparator)...]
+        return [
+            "bmp", "emf", "gif", "heic", "heif", "jpeg", "jpg", "pct", "pict",
+            "png", "svg", "tif", "tiff", "webp", "wmf",
+        ].contains(fileExtension)
     }
 
     static func attributedString(
@@ -545,6 +602,32 @@ enum StandardDocumentCodec {
             | (UInt32(data[offset + 1]) << 8)
             | (UInt32(data[offset + 2]) << 16)
             | (UInt32(data[offset + 3]) << 24)
+    }
+
+    private static func containsPlausibleBitmapFile(in data: Data) -> Bool {
+        let signature = Data([0x42, 0x4d])
+        var searchStart = data.startIndex
+        while searchStart < data.endIndex,
+              let range = data.range(of: signature, in: searchStart..<data.endIndex) {
+            let offset = range.lowerBound
+            if offset + 14 <= data.endIndex {
+                let fileSize = Int(littleEndianUInt32(in: data, at: offset + 2))
+                let pixelOffset = Int(littleEndianUInt32(in: data, at: offset + 10))
+                let availableBytes = data.endIndex - offset
+                if data[offset + 6] == 0,
+                   data[offset + 7] == 0,
+                   data[offset + 8] == 0,
+                   data[offset + 9] == 0,
+                   fileSize >= 14,
+                   fileSize <= availableBytes,
+                   pixelOffset >= 14,
+                   pixelOffset < fileSize {
+                    return true
+                }
+            }
+            searchStart = range.upperBound
+        }
+        return false
     }
 
     private static func isSafeArchivePath(_ path: String) -> Bool {

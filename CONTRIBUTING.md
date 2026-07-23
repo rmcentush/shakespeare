@@ -68,7 +68,9 @@ methods registered on `window.editorAPI`.
 must leave their source untouched, bound all input and extracted assets, and
 stage images under the isolated working-document directory. Standard exports
 must exclude private notes and fail rather than silently discard embedded
-content.
+content. Formats whose macOS importers omit embedded media must be rejected
+before conversion; RTFD and self-contained HTML are the supported portable
+paths for image-bearing imports.
 
 Preserve these product boundaries:
 

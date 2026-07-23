@@ -125,7 +125,7 @@ struct AssistantChatView: View {
 
                         Button {
                             UserDefaults.standard.set(
-                                SettingsDestination.apiKeys,
+                                SettingsDestination.connections,
                                 forKey: SettingsDestination.defaultsKey
                             )
                             openWindow(id: WordProcessorWindowID.settings)

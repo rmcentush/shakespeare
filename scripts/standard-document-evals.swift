@@ -82,6 +82,10 @@ private struct StandardDocumentEvals {
               "type": "codeBlock",
               "attrs": {"language": "swift"},
               "content": [{"type": "text", "text": "let answer = 42"}]
+            },
+            {
+              "type": "paragraph",
+              "content": [{"type": "text", "text": "Unicode: 漢字 مرحباً 😀"}]
             }
           ]
         }
@@ -92,11 +96,12 @@ private struct StandardDocumentEvals {
         <ul><li><p>First item</p></li><li><p>Second item</p></li></ul>
         <blockquote><p>Quoted text</p></blockquote>
         <pre><code class="language-swift">let answer = 42</code></pre>
+        <p>Unicode: 漢字 مرحباً 😀</p>
         """
         let snapshot = DocumentFileStore.FileSnapshot(
             canonicalJSON: canonicalJSON,
             htmlContent: html,
-            plainText: "Compatibility\nThis is bold and italic.\nFirst item\nSecond item\nQuoted text\nlet answer = 42",
+            plainText: "Compatibility\nThis is bold and italic.\nFirst item\nSecond item\nQuoted text\nlet answer = 42\nUnicode: 漢字 مرحباً 😀",
             notes: "Private planning note"
         )
 
@@ -120,6 +125,18 @@ private struct StandardDocumentEvals {
             precondition(
                 !loaded.plainText.contains(snapshot.notes),
                 "\(format.displayName) leaked private notes"
+            )
+            precondition(
+                loaded.plainText.contains("漢字"),
+                "\(format.displayName) lost CJK text"
+            )
+            precondition(
+                loaded.plainText.contains("مرحباً"),
+                "\(format.displayName) lost Arabic text"
+            )
+            precondition(
+                loaded.plainText.contains("😀"),
+                "\(format.displayName) lost emoji text"
             )
             precondition(loaded.notes.isEmpty, "\(format.displayName) imported notes")
         }
@@ -196,6 +213,89 @@ private struct StandardDocumentEvals {
             // Expected: compressed standard documents are bounded before parsing.
         }
 
+        let imageWordData = archiveByRenamingCentralEntry(
+            in: originalWordData,
+            toPathWithPrefix: "word/media/"
+        )
+        let imageWordURL = scratchURL.appendingPathComponent("Image-bearing.docx")
+        try imageWordData.write(to: imageWordURL, options: .atomic)
+        do {
+            _ = try await DocumentFileStore.shared.load(from: imageWordURL)
+            preconditionFailure("a Word import silently discarded embedded media")
+        } catch StandardDocumentCodecError.embeddedImagesUnsupportedForImport {
+            // Expected: AppKit drops Word attachments, so reject before conversion.
+        }
+
+        let openDocumentURL = scratchURL.appendingPathComponent("Compatibility.odt")
+        let originalOpenDocumentData = try Data(contentsOf: openDocumentURL)
+        let imageOpenDocumentData = archiveByRenamingCentralEntry(
+            in: originalOpenDocumentData,
+            toPathWithPrefix: "Pictures/"
+        )
+        let imageOpenDocumentURL = scratchURL.appendingPathComponent("Image-bearing.odt")
+        try imageOpenDocumentData.write(to: imageOpenDocumentURL, options: .atomic)
+        do {
+            _ = try await DocumentFileStore.shared.load(from: imageOpenDocumentURL)
+            preconditionFailure("an OpenDocument import silently discarded embedded media")
+        } catch StandardDocumentCodecError.embeddedImagesUnsupportedForImport {
+            // Expected: AppKit drops OpenDocument attachments.
+        }
+        precondition(
+            StandardDocumentCodec.archiveEntryContainsEmbeddedImage(
+                "CustomAssets/illustration.png",
+                format: .word
+            ),
+            "Word image detection missed a nonstandard package location"
+        )
+        precondition(
+            StandardDocumentCodec.archiveEntryContainsEmbeddedImage(
+                "Assets/illustration.svg",
+                format: .openDocument
+            ),
+            "OpenDocument image detection missed a nonstandard package location"
+        )
+        precondition(
+            !StandardDocumentCodec.archiveEntryContainsEmbeddedImage(
+                "word/document.xml",
+                format: .word
+            ),
+            "Word image detection rejected ordinary document XML"
+        )
+
+        let richTextWithImageURL = scratchURL.appendingPathComponent("Image-bearing.rtf")
+        try #"{\rtf1\ansi{\pict\pngblip 89504e470d0a1a0a}}"#.write(
+            to: richTextWithImageURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        do {
+            _ = try await DocumentFileStore.shared.load(from: richTextWithImageURL)
+            preconditionFailure("an RTF import silently discarded embedded media")
+        } catch StandardDocumentCodecError.embeddedImagesUnsupportedForImport {
+            // Expected: reject RTF picture groups before conversion.
+        }
+
+        let legacyWordURL = scratchURL.appendingPathComponent("Compatibility.doc")
+        var legacyWordWithImage = try Data(contentsOf: legacyWordURL)
+        legacyWordWithImage.append(contentsOf: [
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+        ])
+        let imageLegacyWordURL = scratchURL.appendingPathComponent("Image-bearing.doc")
+        try legacyWordWithImage.write(to: imageLegacyWordURL, options: .atomic)
+        do {
+            _ = try await DocumentFileStore.shared.load(from: imageLegacyWordURL)
+            preconditionFailure("a legacy Word import silently discarded embedded media")
+        } catch StandardDocumentCodecError.embeddedImagesUnsupportedForImport {
+            // Expected: reject recognizable embedded raster payloads.
+        }
+        precondition(
+            !StandardDocumentCodec.containsEmbeddedImagePayload(
+                Data("A harmless BM sequence".utf8),
+                format: .legacyWord
+            ),
+            "legacy Word image detection rejected ordinary text"
+        )
+
         let imageDataURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL1WQAAAABJRU5ErkJggg=="
         let imageHTMLURL = scratchURL.appendingPathComponent("Picture.html")
         try """
@@ -259,5 +359,41 @@ private struct StandardDocumentEvals {
             "Standard-document evals passed "
                 + "(Word, OpenDocument, RTF/RTFD, Markdown, text, HTML, notes, and images)."
         )
+    }
+
+    private static func archiveByRenamingCentralEntry(
+        in data: Data,
+        toPathWithPrefix prefix: String
+    ) -> Data {
+        var result = data
+        let header = Data([0x50, 0x4b, 0x01, 0x02])
+        var searchStart = result.startIndex
+
+        while searchStart < result.endIndex,
+              let range = result.range(
+                of: header,
+                in: searchStart..<result.endIndex
+              ) {
+            let filenameLengthOffset = range.lowerBound + 28
+            guard filenameLengthOffset + 2 <= result.endIndex else { break }
+            let filenameLength = Int(result[filenameLengthOffset])
+                | (Int(result[filenameLengthOffset + 1]) << 8)
+            let prefixLength = prefix.utf8.count
+            if filenameLength > prefixLength {
+                let replacement = prefix
+                    + String(repeating: "x", count: filenameLength - prefixLength)
+                let filenameStart = range.lowerBound + 46
+                let filenameEnd = filenameStart + filenameLength
+                guard filenameEnd <= result.endIndex else { break }
+                result.replaceSubrange(
+                    filenameStart..<filenameEnd,
+                    with: Data(replacement.utf8)
+                )
+                return result
+            }
+            searchStart = range.upperBound
+        }
+
+        preconditionFailure("the generated archive had no replaceable central entry")
     }
 }
