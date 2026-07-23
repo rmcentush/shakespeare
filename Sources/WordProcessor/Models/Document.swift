@@ -159,6 +159,18 @@ final class DocumentModel: @unchecked Sendable {
         Self.addToRecentFiles(url)
     }
 
+    func importDocument(
+        snapshot: DocumentFileStore.FileSnapshot,
+        suggestedName: String,
+        sourceURL: URL
+    ) {
+        documentGeneration &+= 1
+        let trimmedName = suggestedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        unsavedDisplayName = trimmedName.isEmpty ? "Imported Document" : trimmedName
+        applySnapshot(snapshot, fileURL: nil, markDirty: true, resetRevision: true)
+        Self.addToRecentFiles(sourceURL)
+    }
+
     func recoverDraft(snapshot: DocumentFileStore.FileSnapshot, originalFileURL: URL?) {
         documentGeneration &+= 1
         applySnapshot(snapshot, fileURL: originalFileURL, markDirty: true, resetRevision: true)

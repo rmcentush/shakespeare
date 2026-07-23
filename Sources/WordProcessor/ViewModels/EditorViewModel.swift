@@ -2392,7 +2392,8 @@ final class EditorViewModel {
 
     func openDocument(document: DocumentModel) {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.shakespeareDocument, .html]
+        panel.allowedContentTypes = [.shakespeareDocument]
+            + PortableDocumentFormat.importFormats.map(\.contentType)
         panel.allowsMultipleSelection = false
 
         panel.begin { [weak self] response in
@@ -2417,6 +2418,11 @@ final class EditorViewModel {
                 // editable during slow-volume I/O. Freeze only for the short
                 // flush-and-commit transaction.
                 let candidate = try await DocumentFileStore.shared.load(from: url)
+                let candidateAssetBaseURL = try await DocumentFileStore.shared.assetBaseURL(
+                    for: candidate,
+                    sourceURL: url
+                )
+                let isNativeDocument = DocumentFileStore.isNativeDocumentURL(url)
                 setEditorEditable(false)
 
                 guard await flushBeforeDocumentChange(document: document) else {
@@ -2434,8 +2440,16 @@ final class EditorViewModel {
                     }
                 }
 
-                document.load(snapshot: candidate, from: url)
-                assetBaseURL = DocumentFileStore.isNativeDocumentURL(url) ? url : nil
+                if isNativeDocument {
+                    document.load(snapshot: candidate, from: url)
+                } else {
+                    document.importDocument(
+                        snapshot: candidate,
+                        suggestedName: url.deletingPathExtension().lastPathComponent,
+                        sourceURL: url
+                    )
+                }
+                assetBaseURL = candidateAssetBaseURL
                 if editorWasReady {
                     beginPersonalizationSession(documentID: candidate.documentID)
                     pendingSnapshot = nil
@@ -2446,19 +2460,27 @@ final class EditorViewModel {
                     // Queue the already-validated snapshot for editorReady.
                     loadSnapshot(candidate)
                 }
-                do {
-                    try await VersionStore.shared.saveVersion(
-                        filePath: url.path,
-                        snapshot: candidate,
-                        sourceDocumentURL: url
-                    )
-                    markAutoSaveCheckpointCreated(for: candidate.documentID)
-                    setPersistenceStatus("Opened \(url.lastPathComponent)", isError: false)
-                } catch {
+                if isNativeDocument {
+                    do {
+                        try await VersionStore.shared.saveVersion(
+                            filePath: url.path,
+                            snapshot: candidate,
+                            sourceDocumentURL: url
+                        )
+                        markAutoSaveCheckpointCreated(for: candidate.documentID)
+                        setPersistenceStatus("Opened \(url.lastPathComponent)", isError: false)
+                    } catch {
+                        setPersistenceStatus(
+                            "Opened \(url.lastPathComponent), but version history is unavailable: \(error.localizedDescription)",
+                            isError: true
+                        )
+                    }
+                } else {
                     setPersistenceStatus(
-                        "Opened \(url.lastPathComponent), but version history is unavailable: \(error.localizedDescription)",
-                        isError: true
+                        "Imported \(url.lastPathComponent) — save as .\(DocumentFileStore.documentPackageExtension) to keep editing",
+                        isError: false
                     )
+                    schedulePersistence(document: document)
                 }
             } catch {
                 setPersistenceStatus("Open failed: \(error.localizedDescription)", isError: true)
@@ -2524,10 +2546,13 @@ final class EditorViewModel {
         }
     }
 
-    func exportHTML(document: DocumentModel) {
+    func exportDocument(
+        document: DocumentModel,
+        format: PortableDocumentFormat
+    ) {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.html]
-        panel.nameFieldStringValue = document.displayName + ".html"
+        panel.allowedContentTypes = [format.contentType]
+        panel.nameFieldStringValue = document.displayName + ".\(format.filenameExtension)"
 
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
@@ -2538,8 +2563,9 @@ final class EditorViewModel {
                     return
                 }
                 do {
-                    _ = try await DocumentFileStore.shared.save(
+                    try await DocumentFileStore.shared.export(
                         snapshot,
+                        as: format,
                         to: url,
                         sourceDocumentURL: self.assetBaseURL ?? document.fileURL
                     )

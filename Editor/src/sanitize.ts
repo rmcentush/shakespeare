@@ -59,10 +59,16 @@ function stripUnsafeURLs(root: ParentNode): void {
 
 export function sanitizeDocumentHTML(html: string): string {
   const parsed = new DOMParser().parseFromString(stripGeneratedFootnotesSection(html), 'text/html');
-  parsed.querySelectorAll('script, noscript').forEach((element) => element.remove());
+  parsed.querySelectorAll('script, style, noscript, iframe, object, embed, link, meta, base')
+    .forEach((element) => element.remove());
   parsed.body.querySelectorAll('*').forEach((element) => {
     Array.from(element.attributes).forEach((attribute) => {
-      if (attribute.name.toLowerCase().startsWith('on')) {
+      const name = attribute.name.toLowerCase();
+      if (
+        name.startsWith('on') ||
+        name === 'srcdoc' ||
+        (name === 'style' && /url\s*\(/i.test(attribute.value))
+      ) {
         element.removeAttribute(attribute.name);
       }
     });

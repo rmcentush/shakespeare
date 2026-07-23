@@ -29,8 +29,8 @@ struct FeatureTourStep: Identifiable, Sendable {
             title: "Documents",
             summary: "Your work stays in familiar, portable files.",
             details: [
-                "Create a document, reopen a recent one, or open .shkdoc and HTML files.",
-                "Click the title to rename. Save, Save As, and Export HTML live in the File menu.",
+                "Create a document, reopen a recent one, or import Word, OpenDocument, RTF, Markdown, text, and HTML files.",
+                "Click the title to rename. Save, Save As, and standard-format exports live in the File menu.",
             ],
             shortcut: "⌘S saves · ⇧⌘S saves a copy"
         ),
@@ -85,7 +85,7 @@ struct FeatureTourStep: Identifiable, Sendable {
             summary: "Store context beside the draft—not inside it.",
             details: [
                 "Notes travel inside .shkdoc files and save with the document.",
-                "They are excluded from model requests and HTML exports.",
+                "They are excluded from model requests and standard-format exports.",
             ],
             shortcut: "⌥⌘N opens Notes"
         ),
