@@ -47,6 +47,11 @@ Create a document, open an existing `.shkdoc`, or import DOCX, DOC, ODT, RTF,
 RTFD, Markdown, plain-text, or HTML files. Imports become unsaved Shakespeare
 documents, so the source file is never overwritten. Save as `.shkdoc` to retain
 the complete editable document, including private notes and embedded assets.
+Word, OpenDocument, and RTF imports preserve supported text and formatting.
+Because the macOS conversion layer does not expose their embedded media safely,
+Shakespeare refuses image-bearing files in those formats instead of silently
+discarding pictures. Convert those sources to RTFD or self-contained HTML
+before importing them.
 
 Use **File → Export As** to create DOCX, DOC, ODT, RTF, RTFD, Markdown,
 plain-text, or HTML copies. HTML, RTFD, and self-contained Markdown preserve

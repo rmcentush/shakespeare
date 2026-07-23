@@ -420,6 +420,7 @@ actor DocumentFileStore {
                 from: url,
                 maximumBytes: Self.maximumImportedDocumentBytes
             )
+            var containsEmbeddedImages = false
             if format == .word || format == .openDocument {
                 try StandardDocumentCodec.validateArchive(
                     data,
@@ -427,6 +428,23 @@ actor DocumentFileStore {
                     maximumEntryCount: Self.maximumPackageAssetCount,
                     maximumEntryBytes: Self.maximumDocumentContentBytes,
                     maximumExpandedBytes: Self.maximumPackageAssetBytes
+                ) { entryPath in
+                    if StandardDocumentCodec.archiveEntryContainsEmbeddedImage(
+                        entryPath,
+                        format: format
+                    ) {
+                        containsEmbeddedImages = true
+                    }
+                }
+            } else {
+                containsEmbeddedImages = StandardDocumentCodec.containsEmbeddedImagePayload(
+                    data,
+                    format: format
+                )
+            }
+            guard !containsEmbeddedImages else {
+                throw StandardDocumentCodecError.embeddedImagesUnsupportedForImport(
+                    format.displayName
                 )
             }
             let attributedString = try StandardDocumentCodec.attributedString(
