@@ -8,7 +8,7 @@ preferences remain available without an internet connection.
 
 ## Features
 
-- Native long-form editor with `.shkdoc` documents and HTML import and export
+- Native `.shkdoc` documents with Word, OpenDocument, RTF, Markdown, text, and HTML compatibility
 - Reviewable writing and proofreading suggestions that are never applied automatically
 - Source-backed research chat with linked references
 - Document notes, image alt text, and accessibility controls
@@ -43,8 +43,15 @@ On first launch, choose **Use Offline** to start without an account, or connect
 OpenRouter to enable the optional connected features. The guided tour introduces
 the editor and can be replayed at any time with **Help → Start Tutorial**.
 
-Create a document or open an existing `.shkdoc` or HTML file. The editor,
-document storage, spelling, notes, recovery, and version history work locally.
+Create a document, open an existing `.shkdoc`, or import DOCX, DOC, ODT, RTF,
+RTFD, Markdown, plain-text, or HTML files. Imports become unsaved Shakespeare
+documents, so the source file is never overwritten. Save as `.shkdoc` to retain
+the complete editable document, including private notes and embedded assets.
+
+Use **File → Export As** to create DOCX, DOC, ODT, RTF, RTFD, Markdown,
+plain-text, or HTML copies. HTML, RTFD, and self-contained Markdown preserve
+embedded images; Shakespeare blocks an export when the selected format would
+silently discard them.
 
 Connected writing and research features are optional. They can be configured
 during setup or later under **Settings → Connections** using an
@@ -62,12 +69,13 @@ Shakespeare stores application data with owner-only permissions under:
 ~/Library/Application Support/Shakespeare/
 ```
 
-Files saved by the writer remain in the chosen location. Connection credentials
-are stored in the macOS Keychain. When a connected feature is used, Shakespeare
-sends only the context required for that request and asks the provider not to
-retain it. Document notes remain local, are excluded from connected requests,
-and are omitted from HTML exports. Research does not receive writing samples or
-personal style history.
+Files saved by the writer remain in the chosen location. Imported source files
+are read locally and left unchanged. Connection credentials are stored in the
+macOS Keychain. When a connected feature is used, Shakespeare sends only the
+context required for that request and asks the provider not to retain it.
+Document notes remain local, are excluded from connected requests, and are
+omitted from every standard-format export. Research does not receive writing
+samples or personal style history.
 
 See [Personalization](docs/PERSONALIZATION.md) for details about optional style
 guidance and deletion controls.

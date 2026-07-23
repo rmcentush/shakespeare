@@ -58,14 +58,35 @@
         </dict>
         <dict>
             <key>CFBundleTypeName</key>
-            <string>HTML Document</string>
-            <key>CFBundleTypeExtensions</key>
+            <string>Imported Writing Document</string>
+            <key>LSItemContentTypes</key>
             <array>
-                <string>html</string>
-                <string>htm</string>
+                <string>org.openxmlformats.wordprocessingml.document</string>
+                <string>com.microsoft.word.doc</string>
+                <string>org.oasis-open.opendocument.text</string>
+                <string>public.rtf</string>
+                <string>net.daringfireball.markdown</string>
+                <string>public.plain-text</string>
+                <string>public.html</string>
             </array>
             <key>CFBundleTypeRole</key>
-            <string>Editor</string>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Rich Text Document with Attachments</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.apple.rtfd</string>
+            </array>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSTypeIsPackage</key>
+            <true/>
         </dict>
     </array>
 </dict>

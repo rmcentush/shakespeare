@@ -34,7 +34,7 @@ private struct WindowCommandContext {
     let openRecentFile: (URL) -> Void
     let saveDocument: () -> Void
     let saveDocumentAs: () -> Void
-    let exportHTML: () -> Void
+    let exportDocument: (PortableDocumentFormat) -> Void
     let showSaveNamedVersion: () -> Void
     let runThoroughProofread: () -> Void
     let startTutorial: () -> Void
@@ -301,10 +301,39 @@ private struct WordProcessorCommands: Commands {
         }
 
         CommandGroup(replacing: .importExport) {
-            Button("Export HTML…") {
-                windowCommandContext?.exportHTML()
+            Menu("Export As") {
+                Button(PortableDocumentFormat.word.exportMenuTitle) {
+                    windowCommandContext?.exportDocument(.word)
+                }
+                Button(PortableDocumentFormat.openDocument.exportMenuTitle) {
+                    windowCommandContext?.exportDocument(.openDocument)
+                }
+                Button(PortableDocumentFormat.richText.exportMenuTitle) {
+                    windowCommandContext?.exportDocument(.richText)
+                }
+                Button(PortableDocumentFormat.richTextDirectory.exportMenuTitle) {
+                    windowCommandContext?.exportDocument(.richTextDirectory)
+                }
+
+                Divider()
+
+                Button(PortableDocumentFormat.markdown.exportMenuTitle) {
+                    windowCommandContext?.exportDocument(.markdown)
+                }
+                Button(PortableDocumentFormat.plainText.exportMenuTitle) {
+                    windowCommandContext?.exportDocument(.plainText)
+                }
+                Button(PortableDocumentFormat.html.exportMenuTitle) {
+                    windowCommandContext?.exportDocument(.html)
+                }
+                .keyboardShortcut("e", modifiers: [.command, .option, .shift])
+
+                Divider()
+
+                Button(PortableDocumentFormat.legacyWord.exportMenuTitle) {
+                    windowCommandContext?.exportDocument(.legacyWord)
+                }
             }
-            .keyboardShortcut("e", modifiers: [.command, .option, .shift])
             .disabled(windowCommandContext == nil)
         }
 
@@ -570,8 +599,8 @@ private struct EditorWindowRootView: View {
             saveDocumentAs: {
                 editorViewModel.saveDocumentAs(document: document)
             },
-            exportHTML: {
-                editorViewModel.exportHTML(document: document)
+            exportDocument: { format in
+                editorViewModel.exportDocument(document: document, format: format)
             },
             showSaveNamedVersion: {
                 NotificationCenter.default.post(name: .showSaveNamedVersion, object: editorViewModel)

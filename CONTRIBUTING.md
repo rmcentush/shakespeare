@@ -63,6 +63,13 @@ storage, and connected services live in `Sources/WordProcessor/`. Communication
 between the two layers goes through the `editorBridge` message handler and the
 methods registered on `window.editorAPI`.
 
+`DocumentFileStore` owns the native package boundary and
+`StandardDocumentCodec` owns local standard-format conversion. Standard imports
+must leave their source untouched, bound all input and extracted assets, and
+stage images under the isolated working-document directory. Standard exports
+must exclude private notes and fail rather than silently discard embedded
+content.
+
 Preserve these product boundaries:
 
 - Keep documents, notes, history, and personalization data local by default.

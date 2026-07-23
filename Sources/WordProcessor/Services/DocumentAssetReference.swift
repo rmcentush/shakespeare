@@ -100,7 +100,9 @@ enum DocumentAssetReference {
             .resolvingSymlinksInPath()
             .standardizedFileURL
 
-        guard candidate.deletingLastPathComponent() == resolvedDirectory else { return nil }
+        guard candidate.deletingLastPathComponent().path == resolvedDirectory.path else {
+            return nil
+        }
         return candidate
     }
 }

@@ -17,6 +17,7 @@ actor DocumentFileStore {
     static let maximumImageFrameCount = 500
     static let maximumManifestBytes = 64 * 1024
     static let maximumDocumentContentBytes = 32 * 1024 * 1024
+    static let maximumImportedDocumentBytes = 32 * 1024 * 1024
     static let maximumPlainTextPreviewBytes = 16 * 1024 * 1024
     static let maximumDocumentNotesBytes = 4 * 1024 * 1024
 
@@ -169,6 +170,7 @@ actor DocumentFileStore {
         case imageDimensionsTooLarge(maximumPixels: Int, maximumDimension: Int)
         case packageAssetsTooLarge(maximumMegabytes: Int)
         case incompletePackageWrite(String)
+        case unsupportedDocumentFormat(String)
 
         var errorDescription: String? {
             switch self {
@@ -192,6 +194,9 @@ actor DocumentFileStore {
                 return "Document assets must total \(maximumMegabytes) MB or less."
             case .incompletePackageWrite(let detail):
                 return "The document was not saved completely (\(detail))."
+            case .unsupportedDocumentFormat(let fileExtension):
+                let suffix = fileExtension.isEmpty ? "this file type" : ".\(fileExtension)"
+                return "Shakespeare cannot open or save \(suffix)."
             }
         }
     }
@@ -201,21 +206,7 @@ actor DocumentFileStore {
             if Self.isNativeDocumentURL(url) {
                 return try loadPackage(from: url)
             }
-
-            let html = try PackageFileSafety.readUTF8String(
-                from: url,
-                maximumBytes: Self.maximumDocumentContentBytes
-            )
-            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-            let createdAt = attributes?[.creationDate] as? Date ?? Date()
-            let modifiedAt = attributes?[.modificationDate] as? Date ?? createdAt
-            return FileSnapshot(
-                canonicalJSON: nil,
-                htmlContent: html,
-                documentID: UUID().uuidString,
-                createdAt: createdAt,
-                modifiedAt: modifiedAt
-            )
+            return try loadPortableDocument(from: url)
         }
     }
 
@@ -257,11 +248,507 @@ actor DocumentFileStore {
                 return preparedPackage.snapshot
             }
 
+            guard PortableDocumentFormat.format(for: url) == .html else {
+                throw FileStoreError.unsupportedDocumentFormat(url.pathExtension.lowercased())
+            }
             let exportableHTML = try htmlForExport(from: updated, sourceDocumentURL: sourceDocumentURL)
             updated.htmlContent = exportableHTML
             try exportableHTML.write(to: url, atomically: true, encoding: .utf8)
             return updated
         }
+    }
+
+    func export(
+        _ snapshot: FileSnapshot,
+        as format: PortableDocumentFormat,
+        to url: URL,
+        sourceDocumentURL: URL?
+    ) throws {
+        let accessURLs = [url, sourceDocumentURL].compactMap { $0 }
+        try withSecurityScopedAccess(to: accessURLs) {
+            switch format {
+            case .html:
+                let html = try htmlForExport(
+                    from: snapshot,
+                    sourceDocumentURL: sourceDocumentURL
+                )
+                try html.write(to: url, atomically: true, encoding: .utf8)
+
+            case .plainText:
+                try snapshot.plainText.write(to: url, atomically: true, encoding: .utf8)
+
+            case .markdown:
+                guard let canonicalJSON = snapshot.canonicalJSON else {
+                    throw StandardDocumentCodecError.invalidDocument("structured")
+                }
+                try CanonicalDocumentValidator.validate(canonicalJSON)
+                let markdown = try StandardDocumentCodec.markdown(
+                    fromCanonicalJSON: canonicalJSON
+                ) { source in
+                    try portableImageSource(
+                        source,
+                        sourceDocumentURL: sourceDocumentURL
+                    )
+                }
+                try markdown.write(to: url, atomically: true, encoding: .utf8)
+
+            case .word, .legacyWord, .openDocument, .richText, .richTextDirectory:
+                let html = try htmlForExport(
+                    from: snapshot,
+                    sourceDocumentURL: sourceDocumentURL
+                )
+                let attributedString = try StandardDocumentCodec.attributedString(fromHTML: html)
+                if format != .richTextDirectory,
+                   StandardDocumentCodec.containsAttachments(attributedString) {
+                    throw StandardDocumentCodecError.embeddedImagesUnsupported(format.displayName)
+                }
+
+                if format == .richTextDirectory {
+                    let wrapper = try StandardDocumentCodec.rtfdWrapper(from: attributedString)
+                    let originalContentsURL = FileManager.default.fileExists(atPath: url.path)
+                        ? url
+                        : nil
+                    try wrapper.write(
+                        to: url,
+                        options: [.atomic, .withNameUpdating],
+                        originalContentsURL: originalContentsURL
+                    )
+                } else {
+                    let data = try StandardDocumentCodec.encodedData(
+                        from: attributedString,
+                        format: format
+                    )
+                    try data.write(to: url, options: .atomic)
+                }
+            }
+        }
+    }
+
+    func assetBaseURL(for snapshot: FileSnapshot, sourceURL: URL) throws -> URL? {
+        if Self.isNativeDocumentURL(sourceURL) {
+            return sourceURL
+        }
+
+        var filenames = DocumentAssetReference.filenames(in: snapshot.htmlContent)
+        if let canonicalJSON = snapshot.canonicalJSON {
+            filenames.formUnion(
+                DocumentAssetReference.filenames(inCanonicalJSON: canonicalJSON)
+            )
+        }
+        guard !filenames.isEmpty else { return nil }
+
+        let workingURL = try workingDocumentURL(for: snapshot.documentID)
+        try validateReferencedAssets(in: snapshot, packageURL: workingURL)
+        return workingURL
+    }
+
+    private func loadPortableDocument(from url: URL) throws -> FileSnapshot {
+        guard let format = PortableDocumentFormat.format(for: url) else {
+            throw FileStoreError.unsupportedDocumentFormat(url.pathExtension.lowercased())
+        }
+
+        let documentID = UUID().uuidString
+        var importedAssets: [String: Data] = [:]
+        let importedContent: StandardDocumentCodec.ImportedContent
+
+        switch format {
+        case .html:
+            let html = try PackageFileSafety.readUTF8String(
+                from: url,
+                maximumBytes: Self.maximumImportedDocumentBytes
+            )
+            importedContent = try importExternalHTML(
+                html,
+                sourceURL: url,
+                documentID: documentID,
+                assets: &importedAssets
+            )
+
+        case .markdown:
+            let markdown = try PackageFileSafety.readUTF8String(
+                from: url,
+                maximumBytes: Self.maximumImportedDocumentBytes
+            )
+            importedContent = try StandardDocumentCodec.importedMarkdown(
+                markdown,
+                baseURL: url.deletingLastPathComponent()
+            ) { imageURL, _ in
+                guard let image = try externalImage(
+                    from: imageURL.absoluteString,
+                    relativeTo: url.deletingLastPathComponent()
+                ) else {
+                    return nil
+                }
+                return try stageImportedImage(
+                    image.data,
+                    suggestedFilename: image.filename,
+                    documentID: documentID,
+                    assets: &importedAssets
+                )
+            }
+
+        case .plainText:
+            let text = try PackageFileSafety.readUTF8String(
+                from: url,
+                maximumBytes: Self.maximumImportedDocumentBytes
+            )
+            importedContent = StandardDocumentCodec.ImportedContent(
+                html: StandardDocumentCodec.htmlFromPlainText(text),
+                plainText: text
+            )
+
+        case .richTextDirectory:
+            try validateExternalDocumentPackage(at: url)
+            let attributedString = try StandardDocumentCodec.attributedString(
+                from: url,
+                format: format
+            )
+            importedContent = try StandardDocumentCodec.importedContent(
+                from: attributedString
+            ) { data, filename in
+                guard isImageAttachment(data, filename: filename) else { return nil }
+                return try stageImportedImage(
+                    data,
+                    suggestedFilename: filename,
+                    documentID: documentID,
+                    assets: &importedAssets
+                )
+            }
+
+        case .word, .legacyWord, .openDocument, .richText:
+            let data = try PackageFileSafety.readData(
+                from: url,
+                maximumBytes: Self.maximumImportedDocumentBytes
+            )
+            if format == .word || format == .openDocument {
+                try StandardDocumentCodec.validateArchive(
+                    data,
+                    format: format,
+                    maximumEntryCount: Self.maximumPackageAssetCount,
+                    maximumEntryBytes: Self.maximumDocumentContentBytes,
+                    maximumExpandedBytes: Self.maximumPackageAssetBytes
+                )
+            }
+            let attributedString = try StandardDocumentCodec.attributedString(
+                from: data,
+                format: format
+            )
+            importedContent = try StandardDocumentCodec.importedContent(
+                from: attributedString
+            ) { data, filename in
+                guard isImageAttachment(data, filename: filename) else { return nil }
+                return try stageImportedImage(
+                    data,
+                    suggestedFilename: filename,
+                    documentID: documentID,
+                    assets: &importedAssets
+                )
+            }
+        }
+
+        guard importedContent.html.utf8.count <= Self.maximumDocumentContentBytes else {
+            throw PackageFileSafetyError.fileTooLarge(
+                filename: url.lastPathComponent,
+                maximumBytes: Self.maximumDocumentContentBytes
+            )
+        }
+        guard importedContent.plainText.utf8.count <= Self.maximumPlainTextPreviewBytes else {
+            throw PackageFileSafetyError.fileTooLarge(
+                filename: url.lastPathComponent,
+                maximumBytes: Self.maximumPlainTextPreviewBytes
+            )
+        }
+        try validatePackageAssetTotal(importedAssets)
+        if !importedAssets.isEmpty {
+            try stageImportedAssets(importedAssets, documentID: documentID)
+        }
+
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let createdAt = attributes?[.creationDate] as? Date ?? Date()
+        let modifiedAt = attributes?[.modificationDate] as? Date ?? createdAt
+        return FileSnapshot(
+            canonicalJSON: nil,
+            htmlContent: importedContent.html,
+            plainText: importedContent.plainText,
+            documentID: documentID,
+            createdAt: createdAt,
+            modifiedAt: modifiedAt
+        )
+    }
+
+    private func importExternalHTML(
+        _ html: String,
+        sourceURL: URL,
+        documentID: String,
+        assets: inout [String: Data]
+    ) throws -> StandardDocumentCodec.ImportedContent {
+        let expression = try NSRegularExpression(
+            pattern: #"<img\b[^>]*>"#,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        )
+        var rewritten = html
+        let sourceDirectory = sourceURL.deletingLastPathComponent()
+        let matches = expression.matches(
+            in: html,
+            range: NSRange(html.startIndex..., in: html)
+        )
+
+        for match in matches.reversed() {
+            guard let range = Range(match.range, in: html) else { continue }
+            let tag = String(html[range])
+            let source = htmlAttribute(named: "src", in: tag)
+            let altText = htmlAttribute(named: "alt", in: tag)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let replacement: String
+
+            if let source,
+               let image = try externalImage(from: source, relativeTo: sourceDirectory) {
+                let stagedSource = try stageImportedImage(
+                    image.data,
+                    suggestedFilename: image.filename,
+                    documentID: documentID,
+                    assets: &assets
+                )
+                replacement = #"<img src="\#(escapeHTMLAttribute(stagedSource))" alt="\#(escapeHTMLAttribute(altText))">"#
+            } else {
+                replacement = altText.isEmpty ? "" : escapeHTMLText("[Image: \(altText)]")
+            }
+            rewritten.replaceSubrange(range, with: replacement)
+        }
+
+        let plainText = FileSnapshot(
+            canonicalJSON: nil,
+            htmlContent: rewritten
+        ).plainText
+        return StandardDocumentCodec.ImportedContent(
+            html: rewritten,
+            plainText: plainText
+        )
+    }
+
+    private func htmlAttribute(named name: String, in tag: String) -> String? {
+        let escapedName = NSRegularExpression.escapedPattern(for: name)
+        let expression = try? NSRegularExpression(
+            pattern: #"\b\#(escapedName)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))"#,
+            options: [.caseInsensitive]
+        )
+        guard let expression,
+              let match = expression.firstMatch(
+                in: tag,
+                range: NSRange(tag.startIndex..., in: tag)
+              )
+        else {
+            return nil
+        }
+
+        for index in 1..<match.numberOfRanges where match.range(at: index).location != NSNotFound {
+            if let range = Range(match.range(at: index), in: tag) {
+                return String(tag[range])
+                    .replacingOccurrences(of: "&amp;", with: "&")
+                    .replacingOccurrences(of: "&quot;", with: "\"")
+                    .replacingOccurrences(of: "&#39;", with: "'")
+            }
+        }
+        return nil
+    }
+
+    private func externalImage(
+        from source: String,
+        relativeTo baseURL: URL
+    ) throws -> (data: Data, filename: String)? {
+        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if trimmed.lowercased().hasPrefix("data:") {
+            let payload = try dataFromDataURL(
+                trimmed,
+                maximumBytes: Self.maximumImportedImageBytes
+            )
+            return (payload.data, "image.\(payload.fileExtension)")
+        }
+
+        let candidateURL: URL
+        if let parsed = URL(string: trimmed), parsed.scheme != nil {
+            guard parsed.isFileURL else { return nil }
+            candidateURL = parsed
+        } else {
+            let decoded = trimmed.removingPercentEncoding ?? trimmed
+            candidateURL = baseURL.appendingPathComponent(decoded)
+        }
+
+        let resolvedBase = baseURL.resolvingSymlinksInPath().standardizedFileURL
+        let resolvedCandidate = candidateURL.resolvingSymlinksInPath().standardizedFileURL
+        let basePath = resolvedBase.path.hasSuffix("/")
+            ? resolvedBase.path
+            : resolvedBase.path + "/"
+        guard resolvedCandidate.path.hasPrefix(basePath) else { return nil }
+
+        let data = try imageAssetData(contentsOf: resolvedCandidate)
+        return (data, resolvedCandidate.lastPathComponent)
+    }
+
+    private func isImageAttachment(_ data: Data, filename: String) -> Bool {
+        if let type = UTType(filenameExtension: URL(fileURLWithPath: filename).pathExtension),
+           type.conforms(to: .image) {
+            return true
+        }
+        return CGImageSourceCreateWithData(data as CFData, nil) != nil
+    }
+
+    private func stageImportedImage(
+        _ data: Data,
+        suggestedFilename: String,
+        documentID: String,
+        assets: inout [String: Data]
+    ) throws -> String {
+        guard data.count <= Self.maximumImportedImageBytes else {
+            throw FileStoreError.assetTooLarge(
+                maximumMegabytes: Self.maximumImportedImageBytes / 1_024 / 1_024
+            )
+        }
+        try validateDecodedImage(data)
+        let fileExtension = decodedImageFileExtension(
+            data,
+            fallbackFilename: suggestedFilename
+        )
+        let filename = assetFilename(for: data, fileExtension: fileExtension)
+        assets[filename] = data
+        guard assets.count <= Self.maximumPackageAssetCount else {
+            throw FileStoreError.invalidDocumentContent("too many imported images")
+        }
+        try validatePackageAssetTotal(assets)
+        return DocumentAssetReference.urlString(for: filename)
+    }
+
+    private func decodedImageFileExtension(
+        _ data: Data,
+        fallbackFilename: String
+    ) -> String {
+        if let source = CGImageSourceCreateWithData(data as CFData, nil),
+           let identifier = CGImageSourceGetType(source) as String?,
+           let fileExtension = UTType(identifier)?.preferredFilenameExtension {
+            return fileExtension.lowercased()
+        }
+
+        let fallback = URL(fileURLWithPath: fallbackFilename).pathExtension.lowercased()
+        return fallback.isEmpty ? "png" : fallback
+    }
+
+    private func stageImportedAssets(
+        _ assets: [String: Data],
+        documentID: String
+    ) throws {
+        try validateAssetDictionary(assets)
+        let workingURL = try workingDocumentURL(for: documentID)
+        let assetsURL = workingURL.appendingPathComponent(
+            DocumentAssetReference.assetsDirectoryName,
+            isDirectory: true
+        )
+        do {
+            try FileManager.default.createDirectory(
+                at: assetsURL,
+                withIntermediateDirectories: true
+            )
+            for (filename, data) in assets {
+                guard let destination = DocumentAssetReference.containedFileURL(
+                    named: filename,
+                    in: assetsURL
+                ) else {
+                    throw FileStoreError.invalidPackagePath(filename)
+                }
+                try data.write(to: destination, options: .atomic)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: workingURL)
+            throw error
+        }
+    }
+
+    private func validateExternalDocumentPackage(at url: URL) throws {
+        let rootValues = try url.resourceValues(
+            forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+        )
+        guard rootValues.isDirectory == true, rootValues.isSymbolicLink != true else {
+            throw PackageFileSafetyError.notRegularFile(url.lastPathComponent)
+        }
+
+        let keys: [URLResourceKey] = [
+            .isDirectoryKey,
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+            .fileSizeKey,
+        ]
+        guard let enumerator = FileManager.default.enumerator(
+            at: url,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles]
+        ) else {
+            throw PackageFileSafetyError.notRegularFile(url.lastPathComponent)
+        }
+
+        var fileCount = 0
+        var totalBytes = 0
+        for case let entry as URL in enumerator {
+            let values = try entry.resourceValues(forKeys: Set(keys))
+            guard values.isSymbolicLink != true else {
+                throw PackageFileSafetyError.notRegularFile(entry.lastPathComponent)
+            }
+            if values.isDirectory == true { continue }
+            guard values.isRegularFile == true else {
+                throw PackageFileSafetyError.notRegularFile(entry.lastPathComponent)
+            }
+            fileCount += 1
+            guard fileCount <= Self.maximumPackageAssetCount else {
+                throw FileStoreError.invalidDocumentContent("too many RTFD files")
+            }
+            let fileSize = values.fileSize ?? 0
+            guard fileSize <= Self.maximumPackageAssetFileBytes else {
+                throw PackageFileSafetyError.fileTooLarge(
+                    filename: entry.lastPathComponent,
+                    maximumBytes: Self.maximumPackageAssetFileBytes
+                )
+            }
+            totalBytes += fileSize
+            guard totalBytes <= Self.maximumPackageAssetBytes else {
+                throw FileStoreError.packageAssetsTooLarge(
+                    maximumMegabytes: Self.maximumPackageAssetBytes / 1_024 / 1_024
+                )
+            }
+        }
+    }
+
+    private func portableImageSource(
+        _ source: String,
+        sourceDocumentURL: URL?
+    ) throws -> String? {
+        if source.hasPrefix("data:") {
+            _ = try dataFromDataURL(
+                source,
+                maximumBytes: Self.maximumImportedImageBytes
+            )
+            return source
+        }
+        guard let filename = DocumentAssetReference.filename(from: source),
+              let data = try existingAssetData(
+                named: filename,
+                from: sourceDocumentURL
+              )
+        else {
+            return nil
+        }
+        return dataURL(for: data, filename: filename)
+    }
+
+    private func escapeHTMLText(_ value: String) -> String {
+        value.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+
+    private func escapeHTMLAttribute(_ value: String) -> String {
+        escapeHTMLText(value)
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
     }
 
     func inlineHTMLForExternalTransfer(_ html: String, sourceDocumentURL: URL?) throws -> String {
